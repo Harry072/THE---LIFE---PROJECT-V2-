@@ -1,0 +1,341 @@
+/* ===================================================
+   FOUNDER'S STORY PAGE — Design System
+   =================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:wght@300;400;500&display=swap');
+
+.story-page {
+  --bg-primary: #0A0F0D;
+  --bg-card: rgba(16, 26, 20, 0.85);
+  --bg-card-hover: rgba(22, 38, 28, 0.92);
+  --border-default: rgba(46, 204, 113, 0.15);
+  --border-active: rgba(46, 204, 113, 0.40);
+  --accent-green: #2ECC71;
+  --text-primary: #E8E6E1;
+  --text-dim: rgba(232, 230, 225, 0.55);
+  --green-glow: rgba(46, 204, 113, 0.12);
+  font-family: 'DM Sans', sans-serif;
+  color: var(--text-primary);
+  min-height: 100vh;
+  position: relative;
+  background: var(--bg-primary);
+  overflow-x: hidden;
+}
+
+/* --- Background Layers --- */
+.story-bg-image {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  transition: opacity 1.2s ease;
+}
+
+.story-bg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background: rgba(10, 15, 13, 0.72);
+}
+
+.story-bg-tint {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  transition: background 1s ease;
+  pointer-events: none;
+}
+
+/* --- Progress Bar --- */
+.story-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  height: 3px;
+  background: rgba(46, 204, 113, 0.1);
+}
+
+.story-progress-fill {
+  height: 100%;
+  background: var(--accent-green);
+  transition: width 0.5s ease;
+  box-shadow: 0 0 8px var(--green-glow);
+}
+
+/* --- Back Button --- */
+.story-back-btn {
+  position: fixed;
+  top: 1.5rem;
+  left: 1.5rem;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  color: var(--text-primary);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-decoration: none;
+}
+
+.story-back-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-active);
+  transform: translateX(-2px);
+}
+
+/* --- Content Container --- */
+.story-content {
+  position: relative;
+  z-index: 10;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 5rem 2rem 4rem;
+}
+
+/* --- Title Section --- */
+.story-title-section {
+  text-align: center;
+  padding: 4rem 0 5rem;
+}
+
+.story-main-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 400;
+  font-style: italic;
+  font-size: 3.2rem;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+  line-height: 1.15;
+}
+
+.story-main-subtitle {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+/* --- Timeline --- */
+.story-timeline {
+  position: relative;
+  padding-left: 3rem;
+}
+
+.story-timeline::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--border-default) 10%,
+    var(--border-default) 90%,
+    transparent
+  );
+}
+
+/* --- Timeline Dot --- */
+.story-dot {
+  position: absolute;
+  left: -3rem;
+  top: 0.5rem;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  border: 2px solid var(--border-default);
+  cursor: pointer;
+  transition: all 0.4s ease;
+  z-index: 5;
+}
+
+.story-dot.active {
+  border-color: var(--accent-green);
+  background: var(--accent-green);
+  box-shadow: 0 0 12px var(--green-glow), 0 0 24px var(--green-glow);
+}
+
+.story-dot:hover:not(.active) {
+  border-color: rgba(46, 204, 113, 0.5);
+  transform: scale(1.2);
+}
+
+/* --- Chapter Card --- */
+.chapter-block {
+  position: relative;
+  margin-bottom: 4rem;
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+
+.chapter-block.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.chapter-phase {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--accent-green);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  margin-bottom: 0.5rem;
+}
+
+.chapter-period {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 400;
+  font-style: italic;
+  font-size: 1.8rem;
+  color: var(--text-primary);
+  margin-bottom: 1.25rem;
+  line-height: 1.2;
+}
+
+.chapter-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-default);
+  border-radius: 20px;
+  padding: 2rem 2rem 1.75rem;
+  transition: all 0.4s ease;
+}
+
+.chapter-card:hover {
+  border-color: rgba(46, 204, 113, 0.25);
+  background: var(--bg-card-hover);
+}
+
+.chapter-narrative {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1rem;
+  font-weight: 300;
+  color: var(--text-primary);
+  line-height: 1.9;
+  margin-bottom: 1.5rem;
+}
+
+/* --- Emotion Quote --- */
+.emotion-quote {
+  border-left: 3px solid var(--accent-green);
+  padding-left: 1.25rem;
+  margin: 0;
+}
+
+.emotion-quote p {
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  font-weight: 300;
+  font-size: 1.15rem;
+  color: var(--text-primary);
+  line-height: 1.6;
+  opacity: 0.9;
+}
+
+/* --- Closing Statement --- */
+.story-closing {
+  text-align: center;
+  padding: 4rem 0;
+  margin-top: 2rem;
+}
+
+.closing-quote {
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.8rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+  max-width: 600px;
+  margin: 0 auto 2rem;
+}
+
+.closing-divider {
+  width: 60px;
+  height: 1px;
+  background: var(--accent-green);
+  margin: 2rem auto;
+  opacity: 0.5;
+}
+
+.closing-tagline {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  margin-bottom: 2.5rem;
+  line-height: 1.6;
+}
+
+.closing-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 2.5rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2ECC71, #1a9f55);
+  color: #0A0F0D;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 1rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 20px rgba(46, 204, 113, 0.3);
+  text-decoration: none;
+}
+
+.closing-cta:hover {
+  box-shadow: 0 6px 30px rgba(46, 204, 113, 0.45);
+  transform: translateY(-2px);
+}
+
+/* --- Responsive --- */
+@media (max-width: 600px) {
+  .story-content {
+    padding: 4rem 1.25rem 3rem;
+  }
+
+  .story-main-title {
+    font-size: 2rem;
+  }
+
+  .chapter-period {
+    font-size: 1.4rem;
+  }
+
+  .chapter-card {
+    padding: 1.5rem;
+    border-radius: 16px;
+  }
+
+  .chapter-narrative {
+    font-size: 0.93rem;
+  }
+
+  .closing-quote {
+    font-size: 1.3rem;
+  }
+
+  .story-timeline {
+    padding-left: 2.5rem;
+  }
+}

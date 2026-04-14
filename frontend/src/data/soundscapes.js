@@ -1,0 +1,38 @@
+export const SOUNDSCAPES = [
+  {
+    id: "forest",
+    label: "Forest",
+    icon: "🌲",
+    frequencies: [174, 220, 261, 330],
+    detune: [0, -5, 3, -2],
+    volume: 0.04,
+    filterFreq: 800,
+  },
+  {
+    id: "ocean",
+    label: "Ocean",
+    icon: "🌊",
+    frequencies: [110, 165, 196, 247],
+    detune: [2, -3, 5, -1],
+    volume: 0.05,
+    filterFreq: 600,
+  },
+  {
+    id: "rain",
+    label: "Rain",
+    icon: "🌧️",
+    frequencies: [300, 400, 500, 600],
+    detune: [0, 0, 0, 0],
+    volume: 0.02,
+    filterFreq: 1200,
+  },
+  {
+    id: "cosmic",
+    label: "Cosmic",
+    icon: "✦",
+    frequencies: [60, 90, 120, 180],
+    detune: [-4, 2, -1, 3],
+    volume: 0.06,
+    filterFreq: 400,
+  },
+];

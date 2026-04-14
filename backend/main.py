@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 from datetime import timedelta
 import random
 
-from . import models, schemas, auth
-from .database import engine, get_db
+import models
+import schemas
+import auth
+from database import engine, get_db
 
 models.Base.metadata.create_all(bind=engine)
 

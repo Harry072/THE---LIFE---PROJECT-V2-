@@ -5,6 +5,7 @@ import GrowthTree from '../components/GrowthTree';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GlassCard, PremiumButton, PageTransition } from '../components/common/ThemeUI';
 import { CheckCircle, Circle, RefreshCw, LogOut, TrendingUp, Calendar, MessageSquare } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const MOCK_TASKS = [
   { id: 't1', domain: 'Cognitive', content: 'Observe one moment of frustration today without reacting. Just notice the physical sensation.', completed_at: null },
@@ -18,6 +19,7 @@ function Dashboard() {
   const [reflectionAnswers, setReflectionAnswers] = useState(["", "", ""]);
   const [reflectionSubmitted, setReflectionSubmitted] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (user) fetchTasks();
@@ -118,7 +120,47 @@ function Dashboard() {
             </motion.p>
             <h1 className="text-gradient" style={{ fontSize: '2.5rem' }}>The Loop</h1>
           </div>
-          <div style={{ display: 'flex', gap: '1rem' }}>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            {/* Meditation */}
+            <button onClick={() => navigate("/meditation")}
+              title="Meditation & Music"
+              aria-label="Open meditation page"
+              style={{
+                width: 44, height: 44, borderRadius: "50%",
+                background: "rgba(46,204,113,0.1)",
+                border: "1px solid var(--border-default)",
+                color: "var(--accent-green)", cursor: "pointer",
+                display: "flex", alignItems: "center",
+                justifyContent: "center",
+              }}>
+              <svg width="20" height="20" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="12" cy="6" r="3"/>
+                <path d="M12 9v3"/>
+                <path d="M8 17c0-2.2 1.8-4 4-4s4 1.8 4 4"/>
+                <path d="M4 21h16"/>
+              </svg>
+            </button>
+            
+            {/* Founder Story */}
+            <button onClick={() => navigate("/story")}
+              title="Founder's Story"
+              aria-label="Read the founder's journey"
+              style={{
+                width: 44, height: 44, borderRadius: "50%",
+                background: "rgba(46,204,113,0.1)",
+                border: "1px solid var(--border-default)",
+                color: "var(--accent-green)", cursor: "pointer",
+                display: "flex", alignItems: "center",
+                justifyContent: "center",
+              }}>
+              <svg width="18" height="18" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
+            </button>
+
             <button 
                 onClick={fetchTasks} 
                 className="btn-secondary" 

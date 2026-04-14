@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-from . import models, schemas
-from .database import get_db
+import models
+import schemas
+from database import get_db
 
 SECRET_KEY = "dummy-secret-key-for-mvp-phase-1" # In production, set via env
 ALGORITHM = "HS256"

@@ -3,7 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useUserStore } from './store/userStore';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
-
+import MeditationPage from './pages/MeditationPage';
+import FounderStoryPage from './pages/FounderStoryPage';
 const ProtectedRoute = ({ children }) => {
   const user = useUserStore(state => state.user);
   if (!user) {
@@ -22,6 +23,22 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/meditation" 
+        element={
+          <ProtectedRoute>
+            <MeditationPage />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/story" 
+        element={
+          <ProtectedRoute>
+            <FounderStoryPage />
           </ProtectedRoute>
         } 
       />
