@@ -1,0 +1,76 @@
+:root {
+  /* Background */
+  --bg:             #0A0F0D;
+  --bg-sidebar:     #0D1310;
+  --bg-card:        rgba(16, 26, 20, 0.72);
+  --bg-card-solid:  #12201A;
+  --bg-row-hover:   rgba(255, 255, 255, 0.02);
+ 
+  /* Borders */
+  --border:         rgba(46, 204, 113, 0.10);
+  --border-strong:  rgba(46, 204, 113, 0.28);
+ 
+  /* Accents */
+  --green:          #1A9A5A;
+  --green-bright:   #2ECC71;
+  --green-dim:      rgba(46, 204, 113, 0.55);
+  --green-glow:     rgba(46, 204, 113, 0.22);
+  --amber:          #F0A500;
+  --amber-glow:     rgba(240, 165, 0, 0.20);
+ 
+  /* Text */
+  --text:           #E8E8E3;
+  --text-dim:       rgba(232, 232, 227, 0.55);
+  --text-faint:     rgba(232, 232, 227, 0.30);
+ 
+  /* Radii */
+  --r-sm:           12px;
+  --r-md:           16px;
+  --r-lg:           20px;
+ 
+  /* Shadows */
+  --shadow-soft:    0 4px 12px rgba(0, 0, 0, 0.20);
+  --shadow-lift:    0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-glow:    0 0 32px rgba(46, 204, 113, 0.18);
+ 
+  /* Fonts */
+  --font-display:   'Cormorant Garamond', Georgia, serif;
+  --font-body:      'DM Sans', system-ui, sans-serif;
+}
+ 
+* { box-sizing: border-box; }
+ 
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+ 
+/* Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(46, 204, 113, 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(46, 204, 113, 0.3);
+}
+ 
+/* Keyframes used globally */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; } to { opacity: 1; }
+}
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 16px var(--green-glow); }
+  50%      { box-shadow: 0 0 28px var(--green-glow); }
+}
+@keyframes eqBar {
+  from { height: 20%; } to { height: 90%; }
+}
