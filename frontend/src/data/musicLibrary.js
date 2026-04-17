@@ -1,99 +1,157 @@
-export const MUSIC_TRACKS = [
+// Single source of truth for all tracks.
+// Every track MUST have a real audio file in public/audio/
+// Every path MUST start with a leading slash.
+
+export const CATEGORIES = [
+  { id: "all",          label: "All" },
+  { id: "calm",         label: "Calm" },
+  { id: "focus",        label: "Focus" },
+  { id: "sleep",        label: "Sleep" },
+  { id: "nature",       label: "Nature" },
+  { id: "instrumental", label: "Instrumental" },
+];
+
+export const MUSIC_LIBRARY = [
   {
-    id: "forest-dawn",
-    title: "Forest at Dawn",
+    id: "calm-forest",
+    title: "Calm Forest",
     artist: "The Life Project",
-    category: "nature",
-    duration: 720,
-    coverImage: "https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=forest-lullaby-110624.mp3",
+    category: "calm",
+    duration: 721, // 12:01
+    src: "/audio/calm/calm-forest.mp3",
+    audioSrc: "/audio/calm/calm-forest.mp3",
+    cover: "/media/covers/calm-forest.png",
+    coverImage: "/media/covers/calm-forest.png",
+    recommendedFor: ["stress", "anxiety", "morning"],
     mood: "calm",
-    description: "Wake with the forest as dawn light filters through ancient canopy",
+  },
+  {
+    id: "peaceful-piano",
+    title: "Peaceful Piano",
+    artist: "The Life Project",
+    category: "calm",
+    duration: 239, // 3:59
+    src: "/audio/calm/peaceful-piano.mp3",
+    audioSrc: "/audio/calm/peaceful-piano.mp3",
+    cover: "https://images.unsplash.com/photo-1520523839897-bd0b52f945a0?auto=format&fit=crop&w=800&q=80",
+    coverImage: "https://images.unsplash.com/photo-1520523839897-bd0b52f945a0?auto=format&fit=crop&w=800&q=80",
+    recommendedFor: ["reading", "reflection"],
+    mood: "calm",
+  },
+  {
+    id: "deep-focus",
+    title: "Deep Focus",
+    artist: "The Life Project",
+    category: "focus",
+    duration: 260, // 4:20
+    src: "/audio/focus/deep-focus.mp3",
+    audioSrc: "/audio/focus/deep-focus.mp3",
+    cover: "https://images.unsplash.com/photo-1499750310107-5fef28a66643?auto=format&fit=crop&w=800&q=80",
+    coverImage: "https://images.unsplash.com/photo-1499750310107-5fef28a66643?auto=format&fit=crop&w=800&q=80",
+    recommendedFor: ["study", "work", "writing"],
+    mood: "uplifting",
+  },
+  {
+    id: "concentration",
+    title: "Pure Concentration",
+    artist: "The Life Project",
+    category: "focus",
+    duration: 248, // 4:08
+    src: "/audio/focus/concentration.mp3",
+    audioSrc: "/audio/focus/concentration.mp3",
+    cover: "https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80",
+    coverImage: "https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80",
+    recommendedFor: ["coding", "deep-work"],
+    mood: "uplifting",
   },
   {
     id: "midnight-rain",
     title: "Midnight Rain",
     artist: "The Life Project",
     category: "sleep",
-    duration: 1800,
-    coverImage: "https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2021/08/09/audio_82c5f1cdfe.mp3?filename=rain-and-thunder-16705.mp3",
+    duration: 127, // 2:07
+    src: "/audio/sleep/midnight-rain.mp3",
+    audioSrc: "/audio/sleep/midnight-rain.mp3",
+    cover: "/media/misty-lake.jpg",
+    coverImage: "/media/misty-lake.jpg",
+    recommendedFor: ["sleep", "insomnia"],
     mood: "deep",
-    description: "Gentle rain on a dark night, washing away the noise of the day",
   },
   {
-    id: "mountain-stillness",
-    title: "Mountain Stillness",
+    id: "rain-thunder",
+    title: "Rain & Thunder",
     artist: "The Life Project",
-    category: "ambient",
-    duration: 600,
-    coverImage: "https://images.unsplash.com/photo-1454496522488-7a8e488e8606?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2022/02/07/audio_67fa805cb3.mp3?filename=ambient-piano-amp-strings-10711.mp3",
-    mood: "calm",
-    description: "The profound silence found only at altitude",
-  },
-  {
-    id: "piano-solitude",
-    title: "Piano in Solitude",
-    artist: "The Life Project",
-    category: "instrumental",
-    duration: 480,
-    coverImage: "https://images.unsplash.com/photo-1520523839897-bd0b52f945a0?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2021/11/23/audio_0ed20c8de2.mp3?filename=empty-mind-118973.mp3",
-    mood: "dreamy",
-    description: "A lone piano echoing through an empty hall",
+    category: "sleep",
+    duration: 463, // 7:43
+    src: "/audio/sleep/rain-thunder.mp3",
+    audioSrc: "/audio/sleep/rain-thunder.mp3",
+    cover: "/media/lantern-dock.jpg",
+    coverImage: "/media/lantern-dock.jpg",
+    recommendedFor: ["sleep", "deep-rest"],
+    mood: "deep",
   },
   {
     id: "ocean-breath",
     title: "Ocean Breath",
     artist: "The Life Project",
     category: "nature",
-    duration: 900,
-    coverImage: "https://images.unsplash.com/photo-1439405326854-014607f694d7?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2021/08/04/audio_34b3e7dd02.mp3?filename=ocean-wave-1-6831.mp3",
-    mood: "deep",
-    description: "Rhythmic waves matching the pace of your breath",
-  },
-  {
-    id: "deep-focus-flow",
-    title: "Deep Focus Flow",
-    artist: "The Life Project",
-    category: "focus",
-    duration: 1500,
+    duration: 188, // 3:08
+    src: "/audio/nature/ocean-breath.mp3",
+    audioSrc: "/audio/nature/ocean-breath.mp3",
+    cover: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80",
     coverImage: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=atmosphere-of-a-dream-116047.mp3",
-    mood: "uplifting",
-    description: "Engineered frequencies for sustained concentration",
+    recommendedFor: ["meditation", "breathing"],
+    mood: "deep",
   },
   {
-    id: "northern-lights",
-    title: "Northern Lights",
+    id: "forest-dawn",
+    title: "Forest at Dawn",
     artist: "The Life Project",
-    category: "ambient",
-    duration: 1200,
-    coverImage: "https://images.unsplash.com/photo-1531366936337-7c912a458b1c?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2021/04/24/audio_dbabe1204c.mp3?filename=into-the-night-20928.mp3",
-    mood: "dreamy",
-    description: "Ethereal tones inspired by aurora borealis",
+    category: "nature",
+    duration: 336, // 5:36
+    src: "/audio/nature/forest-dawn.mp3",
+    audioSrc: "/audio/nature/forest-dawn.mp3",
+    cover: "/media/hero-forest-walker.jpg",
+    coverImage: "/media/hero-forest-walker.jpg",
+    recommendedFor: ["morning", "gratitude"],
+    mood: "calm",
+  },
+  {
+    id: "healing-frequencies",
+    title: "Healing Frequencies",
+    artist: "The Life Project",
+    category: "instrumental",
+    duration: 310, // 5:10
+    src: "/audio/instrumental/healing-frequencies.mp3",
+    audioSrc: "/audio/instrumental/healing-frequencies.mp3",
+    cover: "https://images.unsplash.com/photo-1514222134-b57cbb8ce073?auto=format&fit=crop&w=800&q=80",
+    coverImage: "https://images.unsplash.com/photo-1514222134-b57cbb8ce073?auto=format&fit=crop&w=800&q=80",
+    recommendedFor: ["healing", "recovery"],
+    mood: "calm",
   },
   {
     id: "temple-bells",
     title: "Temple Bells at Sunset",
     artist: "The Life Project",
     category: "instrumental",
-    duration: 540,
-    coverImage: "https://images.unsplash.com/photo-1514222134-b57cbb8ce073?auto=format&fit=crop&w=800&q=80",
-    audioSrc: "https://cdn.pixabay.com/download/audio/2022/03/15/audio_277ea0eb25.mp3?filename=tibetan-bowls-114490.mp3",
+    duration: 287, // 4:47
+    src: "/audio/instrumental/temple-bells.mp3",
+    audioSrc: "/audio/instrumental/temple-bells.mp3",
+    cover: "https://images.unsplash.com/photo-1528127269322-539801943592?auto=format&fit=crop&w=800&q=80",
+    coverImage: "https://images.unsplash.com/photo-1528127269322-539801943592?auto=format&fit=crop&w=800&q=80",
+    recommendedFor: ["meditation", "evening"],
     mood: "calm",
-    description: "Ancient bells resonating through golden hour light",
   },
 ];
 
-export const CATEGORIES = [
-  { id: "all", label: "All" },
-  { id: "ambient", label: "Ambient" },
-  { id: "instrumental", label: "Instrumental" },
-  { id: "nature", label: "Nature" },
-  { id: "sleep", label: "Sleep" },
-  { id: "focus", label: "Focus" },
-];
+// Compatibility exports
+export const MUSIC_TRACKS = MUSIC_LIBRARY;
+
+// Helper lookups
+export const getTrackById = (id) =>
+  MUSIC_LIBRARY.find(t => t.id === id);
+
+export const getTracksByCategory = (category) =>
+  category === "all"
+    ? MUSIC_LIBRARY
+    : MUSIC_LIBRARY.filter(t => t.category === category);

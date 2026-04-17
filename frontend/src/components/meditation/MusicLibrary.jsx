@@ -1,22 +1,15 @@
 import React, { useState } from "react";
 import { MUSIC_TRACKS, CATEGORIES } from "../../data/musicLibrary";
 import TrackCard from "./TrackCard";
-import NowPlayingBar from "./NowPlayingBar";
-import { useMusicPlayer } from "../../hooks/useMusicPlayer";
+import { useAppState } from "../../contexts/AppStateContext";
 
 export default function MusicLibrary() {
   const [activeCategory, setActiveCategory] = useState("all");
   const {
     currentTrack,
     isPlaying,
-    progress,
-    duration,
-    volume,
     play,
-    togglePlay,
-    seek,
-    setVolume,
-  } = useMusicPlayer();
+  } = useAppState();
 
   const filteredTracks =
     activeCategory === "all"
@@ -57,18 +50,6 @@ export default function MusicLibrary() {
           <p>More tracks coming soon</p>
         </div>
       )}
-
-      {/* Now Playing Bar */}
-      <NowPlayingBar
-        track={currentTrack}
-        isPlaying={isPlaying}
-        progress={progress}
-        duration={duration}
-        volume={volume}
-        onPlayPause={togglePlay}
-        onSeek={seek}
-        onVolumeChange={setVolume}
-      />
     </div>
   );
 }

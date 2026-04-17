@@ -2,11 +2,10 @@ import { useNavigate } from "react-router-dom";
 
 export default function NightReflection() {
   const navigate = useNavigate();
-  const goToReflection = () => navigate("/loop#reflection");
 
   return (
     <div
-      onClick={goToReflection}
+      onClick={() => navigate("/reflection")}
       style={{
         position: "relative",
         borderRadius: "var(--r-md)",
@@ -61,7 +60,7 @@ export default function NightReflection() {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            goToReflection();
+            navigate("/reflection");
           }}
           style={{
             padding: "9px 22px",

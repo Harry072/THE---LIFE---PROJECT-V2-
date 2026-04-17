@@ -4,6 +4,7 @@ import {
 } from "react";
 import { supabase } from "../lib/supabase";
 import { useUserStore } from "../store/userStore";
+import { useMusicPlayer } from "../hooks/useMusicPlayer";
 
 const AppStateContext = createContext(null);
 
@@ -41,9 +42,10 @@ export function AppStateProvider({ children }) {
   const [focusSession, setFocusSession] = useState(null);
 
   // Music player (global)
-  const [currentTrack, setCurrentTrack] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const audioRef = useRef(null);
+  const music = useMusicPlayer();
+  const {
+    currentTrack, isPlaying, play: playTrack, pause: pauseTrack,
+  } = music;
 
   // Reading list
   const [readingList, setReadingList] = useState([]);
@@ -149,27 +151,6 @@ export function AppStateProvider({ children }) {
     if (!demoMode) loadStats();
   }, [focusSession, user, demoMode]);
 
-  // ─── Music Player ───
-  const playTrack = useCallback((track) => {
-    if (!audioRef.current) audioRef.current = new Audio();
-    const audio = audioRef.current;
-
-    if (currentTrack?.id === track.id) {
-      if (isPlaying) { audio.pause(); setIsPlaying(false); }
-      else { audio.play().catch(() => {}); setIsPlaying(true); }
-      return;
-    }
-    audio.src = track.audioSrc || "";
-    audio.play().catch(() => {});
-    setCurrentTrack(track);
-    setIsPlaying(true);
-  }, [currentTrack, isPlaying]);
-
-  const pauseTrack = useCallback(() => {
-    audioRef.current?.pause();
-    setIsPlaying(false);
-  }, []);
-
   // ─── Reading List ───
   const loadReadingList = async () => {
     if (!user || demoMode) return;
@@ -239,7 +220,7 @@ export function AppStateProvider({ children }) {
   const value = {
     tasks, toggleTask, loadTasks,
     focusSession, startFocus, endFocus,
-    currentTrack, isPlaying, playTrack, pauseTrack, audioRef,
+    ...music,
     readingList, addToReadingList,
     stats, loadStats,
     demoMode,

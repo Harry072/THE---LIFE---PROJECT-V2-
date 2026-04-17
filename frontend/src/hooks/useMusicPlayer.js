@@ -1,100 +1,189 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-
+import {
+  useRef, useState, useEffect, useCallback,
+} from "react";
+import { MUSIC_LIBRARY, getTrackById }
+  from "../data/musicLibrary";
+ 
 export function useMusicPlayer() {
+  // FIX #3: Audio element created ONCE, ref-stable.
   const audioRef = useRef(null);
-  const [currentTrack, setCurrentTrack] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.7);
-
-  // Create audio element on mount
-  useEffect(() => {
+  if (!audioRef.current && typeof window !== "undefined") {
     audioRef.current = new Audio();
-    audioRef.current.volume = 0.7;
-
+    audioRef.current.preload = "auto";
+  }
+ 
+  const [currentTrack, setCurrentTrack] = useState(null);
+  const [isPlaying, setIsPlaying]       = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [duration, setDuration]         = useState(0);
+  const [volume, setVolumeState]        = useState(0.7);
+  const [error, setError]               = useState(null);
+ 
+  // Guard against overlapping play() calls (FIX #5)
+  const playPromiseRef = useRef(null);
+ 
+  // ─── Attach permanent event listeners ───
+  useEffect(() => {
     const audio = audioRef.current;
-    const onTime = () => setProgress(audio.currentTime);
-    const onMeta = () => setDuration(audio.duration);
-    const onEnd = () => {
+    if (!audio) return;
+ 
+    const onTime   = () => setProgress(audio.currentTime);
+    const onMeta   = () => setDuration(audio.duration || 0);
+    const onEnded  = () => { setIsPlaying(false); playNext(); };
+    const onError  = (e) => {
+      console.error("Audio error:", e, audio.error);
+      setError(audio.error?.message || "Playback failed");
       setIsPlaying(false);
-      setProgress(0);
+      // Auto-skip broken track after 1.2s
+      setTimeout(() => playNext(), 1200);
     };
-
-    audio.addEventListener("timeupdate", onTime);
-    audio.addEventListener("loadedmetadata", onMeta);
-    audio.addEventListener("ended", onEnd);
-
+    const onPlay   = () => setIsPlaying(true);
+    const onPause  = () => setIsPlaying(false);
+ 
+    audio.addEventListener("timeupdate",      onTime);
+    audio.addEventListener("loadedmetadata",  onMeta);
+    audio.addEventListener("ended",           onEnded);
+    audio.addEventListener("error",           onError);
+    audio.addEventListener("play",            onPlay);
+    audio.addEventListener("pause",           onPause);
+ 
     return () => {
-      audio.removeEventListener("timeupdate", onTime);
+      audio.removeEventListener("timeupdate",     onTime);
       audio.removeEventListener("loadedmetadata", onMeta);
-      audio.removeEventListener("ended", onEnd);
+      audio.removeEventListener("ended",          onEnded);
+      audio.removeEventListener("error",          onError);
+      audio.removeEventListener("play",           onPlay);
+      audio.removeEventListener("pause",          onPause);
       audio.pause();
-      audio.src = "";
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const play = useCallback(
-    (track) => {
-      const audio = audioRef.current;
-      if (!audio) return;
-
-      // Toggle play/pause if same track
-      if (currentTrack?.id === track.id) {
-        if (isPlaying) {
-          audio.pause();
-          setIsPlaying(false);
-        } else {
-          audio.play().catch(() => {});
-          setIsPlaying(true);
-        }
-        return;
+ 
+  // ─── CORE: play a track ───
+  // Handles FIX #1, #2, #5
+  const play = useCallback(async (trackOrId) => {
+    const track = typeof trackOrId === "string"
+      ? getTrackById(trackOrId)
+      : trackOrId;
+    if (!track) {
+      setError("Track not found");
+      return;
+    }
+ 
+    const audio = audioRef.current;
+    if (!audio) return;
+ 
+    // Toggle if same track
+    if (currentTrack?.id === track.id) {
+      if (audio.paused) {
+        try {
+          playPromiseRef.current = audio.play();
+          await playPromiseRef.current;
+        } catch (e) { handlePlayError(e); }
+      } else {
+        audio.pause();
       }
-
-      // New track
-      audio.src = track.audioSrc;
-      audio.volume = volume;
-      audio.play().catch(() => {});
-      setCurrentTrack(track);
-      setIsPlaying(true);
-      setProgress(0);
-    },
-    [currentTrack, isPlaying, volume]
-  );
-
-  const togglePlay = useCallback(() => {
+      return;
+    }
+ 
+    // FIX #5: wait for any previous play() to settle
+    if (playPromiseRef.current) {
+      try { await playPromiseRef.current; } catch (e) {}
+    }
+ 
+    // Reset UI immediately
+    setError(null);
+    setProgress(0);
+    setDuration(0);
+    setCurrentTrack(track);
+ 
+    // FIX #1: swap src AND call load()
+    audio.pause();
+    audio.src = track.src;
+    audio.load();           // <-- critical line
+    audio.volume = volume;
+ 
+    // FIX #5: capture new play() promise
+    try {
+      playPromiseRef.current = audio.play();
+      await playPromiseRef.current;
+    } catch (e) {
+      handlePlayError(e);
+    }
+  }, [currentTrack, volume]);
+ 
+  const handlePlayError = (e) => {
+    // AbortError is expected when switching fast — ignore
+    if (e?.name === "AbortError") return;
+    console.error("play() rejected:", e);
+    setError(e?.message || "Could not play track");
+    setIsPlaying(false);
+  };
+ 
+  // ─── Pause ───
+  const pause = useCallback(() => {
+    audioRef.current?.pause();
+  }, []);
+ 
+  // ─── Resume / toggle ───
+  const toggle = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
-    if (isPlaying) {
-      audio.pause();
-      setIsPlaying(false);
+    if (audio.paused) {
+      try {
+        playPromiseRef.current = audio.play();
+        await playPromiseRef.current;
+      } catch (e) { handlePlayError(e); }
     } else {
-      audio.play().catch(() => {});
-      setIsPlaying(true);
+      audio.pause();
     }
-  }, [currentTrack, isPlaying]);
-
+  }, [currentTrack]);
+ 
+  // ─── Next / Previous (within full library or queue) ───
+  const queueRef = useRef(MUSIC_LIBRARY);
+  const setQueue = useCallback((tracks) => {
+    queueRef.current = tracks.length ? tracks : MUSIC_LIBRARY;
+  }, []);
+ 
+  const playNext = useCallback(() => {
+    if (!currentTrack) return;
+    const q = queueRef.current;
+    const i = q.findIndex(t => t.id === currentTrack.id);
+    const next = q[(i + 1) % q.length];
+    if (next) play(next);
+  }, [currentTrack, play]);
+ 
+  const playPrev = useCallback(() => {
+    if (!currentTrack) return;
+    const q = queueRef.current;
+    const i = q.findIndex(t => t.id === currentTrack.id);
+    const prev = q[(i - 1 + q.length) % q.length];
+    if (prev) play(prev);
+  }, [currentTrack, play]);
+ 
+  // ─── Seek ───
   const seek = useCallback((time) => {
-    if (!audioRef.current) return;
-    audioRef.current.currentTime = time;
-    setProgress(time);
+    if (audioRef.current) {
+      audioRef.current.currentTime = time;
+      setProgress(time);
+    }
   }, []);
-
-  const setVol = useCallback((v) => {
-    if (!audioRef.current) return;
-    audioRef.current.volume = v;
-    setVolume(v);
+ 
+  // ─── Volume ───
+  const setVolume = useCallback((v) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    if (audioRef.current) audioRef.current.volume = clamped;
+    setVolumeState(clamped);
   }, []);
-
+ 
   return {
-    currentTrack,
-    isPlaying,
-    progress,
-    duration,
-    volume,
-    play,
-    togglePlay,
-    seek,
-    setVolume: setVol,
+    // State
+    currentTrack, isPlaying, progress, duration,
+    volume, error,
+    // Actions
+    play, pause, toggle, playNext, playPrev,
+    seek, setVolume, setQueue,
+    // Provide a togglePlay alias for compatibility with existing components
+    togglePlay: toggle,
   };
 }
