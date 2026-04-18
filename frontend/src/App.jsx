@@ -10,7 +10,7 @@ import GlobalNowPlaying from './components/GlobalNowPlaying';
 import ReflectionPage from './pages/ReflectionPage';
 
 // TODO: These pages need to be built — routes are declared but will fallback
-// import TheLoopPage from './pages/TheLoopPage';
+import TheLoopPage from './pages/TheLoopPage';
 // import MusicPage from './pages/MusicPage';
 // import BooksPage from './pages/BooksPage';
 // import ProgressPage from './pages/ProgressPage';
@@ -49,7 +49,7 @@ function AppRoutes() {
 
         {/* Protected — TODO pages (redirect to dashboard until built) */}
         <Route path="/loop" element={
-          <ProtectedRoute><Dashboard /></ProtectedRoute>
+          <ProtectedRoute><TheLoopPage /></ProtectedRoute>
         } />
         <Route path="/music" element={
           <ProtectedRoute><MeditationPage /></ProtectedRoute>
