@@ -1,5 +1,7 @@
 import Icon from "../Icon";
+import GrowthTree from "../GrowthTree";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useUserStore } from "../../store/userStore";
 
 const NAV = [
   { id: "dashboard", label: "Dashboard",     icon: "dashboard", path: "/dashboard" },
@@ -58,6 +60,10 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const activePath = location.pathname;
+  const user = useUserStore(state => state.user);
+  const profile = useUserStore(state => state.profile);
+  const displayName = profile?.display_name || user?.email?.split('@')[0] || "Explorer";
+  const initials = displayName.charAt(0).toUpperCase();
 
   return (
     <aside style={{
@@ -108,43 +114,17 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Growing Widget — navigates to progress */}
+      {/* Growing Widget — compact tree */}
       <div
         onClick={() => navigate("/progress")}
         style={{
           margin: "16px 0",
-          padding: "16px 14px",
-          background: "var(--bg-card)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-md)",
-          textAlign: "center",
           cursor: "pointer",
+          borderRadius: "var(--r-md)",
+          overflow: "hidden",
         }}
       >
-        <p style={{ margin: 0, fontSize: 13,
-          color: "var(--text)", fontWeight: 500 }}>
-          You&rsquo;re Growing <Icon name="sparkle" size={12}
-            color="var(--green-bright)" filled
-            style={{ display: "inline-block",
-              verticalAlign: "middle" }} />
-        </p>
-        <p style={{ margin: "2px 0 12px", fontSize: 11,
-          color: "var(--text-faint)" }}>
-          Keep Going!
-        </p>
-        <div style={{
-          width: 48, height: 56, margin: "0 auto",
-          position: "relative",
-        }}>
-          <Icon name="sprout" size={48}
-            color="var(--green-bright)" />
-          <div style={{
-            position: "absolute", inset: 0,
-            background: "radial-gradient(circle, "
-              + "var(--green-glow), transparent 70%)",
-            zIndex: -1,
-          }} />
-        </div>
+        <GrowthTree compact />
       </div>
 
       {/* Footer */}
@@ -171,16 +151,17 @@ export default function Sidebar() {
           <div style={{
             width: 36, height: 36, borderRadius: "50%",
             background: "linear-gradient(135deg, "
-              + "#3a4a3a, #1a2a1a)",
+              + "var(--green), #1a2a1a)",
             display: "flex", alignItems: "center",
             justifyContent: "center",
-            fontSize: 14, color: "var(--green-bright)",
+            fontSize: 14, color: "var(--text)",
             fontFamily: "var(--font-display)",
-          }}>A</div>
+            fontWeight: 600,
+          }}>{initials}</div>
           <div>
             <p style={{ margin: 0, fontSize: 13,
               color: "var(--text)", fontWeight: 500 }}>
-              Arjun
+              {displayName}
             </p>
             <p style={{ margin: 0, fontSize: 11,
               color: "var(--text-faint)" }}>

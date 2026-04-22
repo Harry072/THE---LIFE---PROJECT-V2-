@@ -2,27 +2,11 @@ import {
   createContext, useContext, useState,
   useEffect, useCallback, useRef,
 } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase, isSupabaseConfigured } from "../lib/supabase";
 import { useUserStore } from "../store/userStore";
 import { useMusicPlayer } from "../hooks/useMusicPlayer";
 
 const AppStateContext = createContext(null);
-
-// Default tasks used for demo mode and new-user seeding
-const DEMO_TASKS = [
-  { id: "demo-1", content: "Morning Journaling", domain: "awareness",
-    assigned_date: new Date().toISOString().split("T")[0],
-    completed_at: new Date().toISOString(), created_at: new Date().toISOString() },
-  { id: "demo-2", content: "Workout & Movement", domain: "action",
-    assigned_date: new Date().toISOString().split("T")[0],
-    completed_at: null, created_at: new Date().toISOString() },
-  { id: "demo-3", content: "Read 20 Pages", domain: "awareness",
-    assigned_date: new Date().toISOString().split("T")[0],
-    completed_at: null, created_at: new Date().toISOString() },
-  { id: "demo-4", content: "Night Reflection", domain: "meaning",
-    assigned_date: new Date().toISOString().split("T")[0],
-    completed_at: null, created_at: new Date().toISOString() },
-];
 
 // Map domain labels for display
 const DOMAIN_LABELS = {
@@ -33,7 +17,6 @@ const DOMAIN_LABELS = {
 
 export function AppStateProvider({ children }) {
   const user = useUserStore(state => state.user);
-  const demoMode = useUserStore(state => state.demoMode);
 
   // Tasks
   const [tasks, setTasks] = useState([]);
@@ -59,37 +42,38 @@ export function AppStateProvider({ children }) {
 
   // ─── Load data when user logs in ───
   useEffect(() => {
-    if (!user) {
+    if (!user || !isSupabaseConfigured) {
       setTasks([]);
       setStats({ streak: 0, lifeScore: 0, tasksCompleted: 0 });
       setReadingList([]);
       return;
     }
-    if (demoMode) {
-      setTasks(DEMO_TASKS);
-      setStats({ streak: 5, lifeScore: 42, tasksCompleted: 1 });
-      setReadingList([]);
-      return;
-    }
+    
+    // REAL MODE: Always load from Cloud Supabase
     loadTasks();
     loadStats();
     loadReadingList();
-  }, [user, demoMode]);
+  }, [user]);
 
   // ─── Tasks ───
   const loadTasks = async () => {
-    if (!user || demoMode) return;
-    const today = new Date().toISOString().split("T")[0];
-    const { data, error } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("assigned_date", today)
-      .order("created_at", { ascending: true });
-    if (!error) setTasks(data || []);
+    if (!user || !isSupabaseConfigured) return;
+    try {
+      const localDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD local
+      const { data, error } = await supabase
+        .from("loop_tasks")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("for_date", localDate);
+      
+      if (!error) setTasks(data || []);
+    } catch (err) {
+      console.error("Failed to load tasks:", err);
+    }
   };
 
   const toggleTask = useCallback(async (id) => {
+    if (!isSupabaseConfigured) return;
     const task = tasks.find(t => t.id === id);
     if (!task) return;
     const wasDone = task.completed_at != null;
@@ -99,29 +83,27 @@ export function AppStateProvider({ children }) {
     setTasks(prev => prev.map(t =>
       t.id === id ? { ...t, completed_at: newCompletedAt } : t));
 
-    if (demoMode) {
-      // In demo mode update stats locally
-      const completed = tasks.filter(t =>
-        t.id === id ? !wasDone : t.completed_at != null).length;
-      setStats(prev => ({ ...prev, tasksCompleted: completed }));
-      return;
-    }
-
     const update = wasDone
       ? { completed_at: null }
       : { completed_at: newCompletedAt };
-    const { error } = await supabase
-      .from("tasks")
-      .update(update)
-      .eq("id", id);
-    if (error) {
+      
+    try {
+      const { error } = await supabase
+        .from("loop_tasks")
+        .update(update)
+        .eq("id", id);
+        
+      if (error) {
+        throw error;
+      }
+      loadStats();
+    } catch (err) {
+      console.error("Failed to update task:", err);
       // Revert on failure
       setTasks(prev => prev.map(t =>
         t.id === id ? { ...t, completed_at: wasDone ? task.completed_at : null } : t));
-    } else {
-      loadStats();
     }
-  }, [tasks, demoMode]);
+  }, [tasks]);
 
   // ─── Focus Timer ───
   const startFocus = useCallback((minutes = 25) => {
@@ -138,7 +120,9 @@ export function AppStateProvider({ children }) {
       (Date.now() - new Date(focusSession.startedAt)) / 1000
     );
 
-    if (!demoMode && user) {
+    /* 
+    TABLE MISSING: Disabling focus_sessions insert
+    if (user && isSupabaseConfigured) {
       await supabase.from("focus_sessions").insert({
         user_id: user.id,
         duration_seconds: elapsed,
@@ -146,74 +130,81 @@ export function AppStateProvider({ children }) {
         started_at: focusSession.startedAt,
       });
     }
+    */
 
     setFocusSession(null);
-    if (!demoMode) loadStats();
-  }, [focusSession, user, demoMode]);
+    loadStats();
+  }, [focusSession, user]);
 
   // ─── Reading List ───
   const loadReadingList = async () => {
-    if (!user || demoMode) return;
-    const { data } = await supabase
-      .from("reading_list")
-      .select("book_id")
-      .eq("user_id", user.id);
-    setReadingList((data || []).map(r => r.book_id));
+    // TABLE MISSING: Disabling for now to prevent 404s
+    setReadingList([]);
+    /*
+    if (!user || !isSupabaseConfigured) return;
+    try {
+      const { data, error } = await supabase
+        .from("reading_list")
+        .select("book_id")
+        .eq("user_id", user.id);
+      if (error) throw error;
+      setReadingList((data || []).map(r => r.book_id));
+    } catch (err) {
+      console.warn("Reading_list table missing or inaccessible:", err);
+      setReadingList([]);
+    }
+    */
   };
 
   const addToReadingList = useCallback(async (bookId) => {
+    if (!isSupabaseConfigured) return;
     if (readingList.includes(bookId)) return;
     setReadingList(prev => [...prev, bookId]);
-    if (demoMode || !user) return;
-    const { error } = await supabase
-      .from("reading_list")
-      .insert({ user_id: user.id, book_id: bookId });
-    if (error) {
+    if (!user) return;
+    try {
+      const { error } = await supabase
+        .from("reading_list")
+        .insert({ user_id: user.id, book_id: bookId });
+      if (error) throw error;
+    } catch (err) {
+      console.error("Failed to add to reading list:", err);
       setReadingList(prev => prev.filter(id => id !== bookId));
     }
-  }, [readingList, user, demoMode]);
+  }, [readingList, user]);
 
   // ─── Stats ───
   const loadStats = async () => {
-    if (!user || demoMode) return;
+    if (!user || !isSupabaseConfigured) return;
     try {
-      // Tasks completed today
-      const today = new Date().toISOString().split("T")[0];
-      const { count: tasksCompleted } = await supabase
-        .from("tasks")
-        .select("*", { count: "exact", head: true })
+      const localDate = new Date().toLocaleDateString('en-CA');
+      
+      // 1. Fetch from user_tree
+      const { data: treeData, error: treeError } = await supabase
+        .from("user_tree")
+        .select("cumulative_score, streak, vitality")
         .eq("user_id", user.id)
-        .eq("assigned_date", today)
+        .maybeSingle();
+
+      if (treeError) throw treeError;
+
+      // 2. Fetch completed tasks count for today
+      const { count: tasksCompleted, error: taskError } = await supabase
+        .from("loop_tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .eq("for_date", localDate)
         .not("completed_at", "is", null);
 
-      // Streak
-      let streak = 0;
-      try {
-        const { data: streakData } = await supabase.rpc(
-          "get_user_streak", { uid: user.id }
-        );
-        streak = streakData || 0;
-      } catch {
-        // RPC may not exist yet — fall back to profile streak_count
-        const profile = useUserStore.getState().profile;
-        streak = profile?.streak_count || 0;
-      }
+      if (taskError) throw taskError;
 
-      // Life Score
-      const { data: focusData } = await supabase
-        .from("focus_sessions")
-        .select("duration_seconds")
-        .eq("user_id", user.id)
-        .eq("completed", true);
-      const focusMins = (focusData || [])
-        .reduce((a, s) => a + s.duration_seconds, 0) / 60;
-      const lifeScore = Math.round(
-        (tasksCompleted || 0) * 3 + streak * 5 + focusMins / 5
-      );
-
-      setStats({ streak, lifeScore, tasksCompleted: tasksCompleted || 0 });
+      setStats({
+        streak: treeData?.streak || 0,
+        lifeScore: treeData?.cumulative_score || 0,
+        tasksCompleted: tasksCompleted || 0,
+        vitality: treeData?.vitality || 50
+      });
     } catch (err) {
-      console.error("Failed to load stats:", err);
+      console.error("Failed to load stats (global):", err);
     }
   };
 
@@ -222,8 +213,7 @@ export function AppStateProvider({ children }) {
     focusSession, startFocus, endFocus,
     ...music,
     readingList, addToReadingList,
-    stats, loadStats,
-    demoMode,
+    stats, loadStats, setStats,
     DOMAIN_LABELS,
   };
 

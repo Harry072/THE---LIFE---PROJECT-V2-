@@ -1,199 +1,210 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from datetime import timedelta
-import random
+from supabase import create_client, Client
+from pydantic import BaseModel
+from dotenv import load_dotenv
+import google.generativeai as genai
+import random, os, json, logging
+from datetime import datetime, timezone
+from auth import get_user_id
 
-import models
-import schemas
-import auth
-from database import engine, get_db
+# Load environment variables
+load_dotenv()
 
-models.Base.metadata.create_all(bind=engine)
+# Supabase Config
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    logging.error("CRITICAL: SUPABASE_URL or SUPABASE_KEY missing from environment.")
+    supabase = None
+else:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+HAS_AI_KEY = bool(os.environ.get("GEMINI_API_KEY"))
+if HAS_AI_KEY:
+    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
 app = FastAPI(title="The Life Project API")
 
-# Update CORS for local frontend testing
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For dev only
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.post("/token", response_model=schemas.Token)
-def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = auth.get_user(db, email=form_data.username)
-    if not user or not auth.verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = auth.create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+class TaskRequest(BaseModel):
+    user_id: str
+    local_date: str
+    context: dict = {}
 
-@app.post("/users/", response_model=schemas.User, status_code=status.HTTP_201_CREATED)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = auth.get_user(db, email=user.email)
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
+@app.get("/api/get-loop-tasks")
+async def get_loop_tasks(
+    for_date: str = None,
+    user_id: str = Depends(get_user_id)
+):
+    today_str = for_date or datetime.now().strftime("%Y-%m-%d")
     
-    hashed_password = auth.get_password_hash(user.password)
-    db_user = models.User(
-        email=user.email,
-        hashed_password=hashed_password,
-        struggle_profile=user.struggle_profile
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    # Fetch from Supabase
+    response = supabase.table("loop_tasks") \
+        .select("*") \
+        .eq("user_id", user_id) \
+        .eq("for_date", today_str) \
+        .execute()
     
-    # Create initial growth tree
-    initial_tree = models.GrowthTree(user_id=db_user.id)
-    db.add(initial_tree)
+    tasks = response.data or []
     
-    # Generate initial tasks based on struggles
-    domains = ["awareness", "action", "meaning"]
-    for domain in domains:
-        db_task = models.Task(
-            user_id=db_user.id,
-            domain=domain,
-            content=f"Initial {domain} task focusing on {random.choice(user.struggle_profile) if user.struggle_profile else 'general growth'}."
-        )
-        db.add(db_task)
-        
-    db.commit()
-    db.refresh(db_user)
-    return db_user
-
-@app.get("/users/me/", response_model=schemas.User)
-def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
-    return current_user
-
-@app.get("/tasks/", response_model=list[schemas.Task])
-def read_tasks(current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    tasks = db.query(models.Task).filter(models.Task.user_id == current_user.id).all()
-    return tasks
-
-@app.post("/tasks/{task_id}/complete")
-def complete_task(task_id: int, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    task = db.query(models.Task).filter(models.Task.id == task_id, models.Task.user_id == current_user.id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    from datetime import datetime, timezone
-    task.completed_at = datetime.now(timezone.utc)
-    db.commit()
-    return {"status": "success"}
-
-@app.post("/reflections/", response_model=schemas.Reflection)
-def create_reflection(reflection: schemas.ReflectionCreate, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    db_reflection = models.Reflection(
-        user_id=current_user.id,
-        answers=reflection.answers,
-        pattern_tags=reflection.pattern_tags
-    )
-    db.add(db_reflection)
-    
-    # Update Growth Tree logic (simplified for MVP)
-    tree = db.query(models.GrowthTree).filter(models.GrowthTree.user_id == current_user.id).first()
-    if tree:
-        tree.leaf_density += 1
-        if tree.leaf_density > 5:
-            tree.leaf_density = 1
-            tree.branch_level += 1
-            
-    db.commit()
-    db.refresh(db_reflection)
-    return db_reflection
+    return {
+        "tasks": [
+            {
+                "id": t["id"],
+                "title": t["title"],
+                "subtitle": t["subtitle"],
+                "category": t["category"],
+                "why_this_helps": t["why"],
+                "estimated_duration_mins": t["duration_minutes"],
+                "supportive_tone_line": t.get("detail_description"),
+                "done": t["done"]
+            } for t in tasks
+        ],
+        "insight": "Your path is unfolding as it should."
+    }
 
 @app.post("/api/generate-loop-tasks")
-async def generate_loop_tasks(payload: dict):
-    # This endpoint receives the context and chooses tasks.
-    # In a real app, this would call Claude/GPT.
-    # Here, we return a smart selection based on the context rules.
+async def generate_loop_tasks(
+    payload: TaskRequest, 
+    user_id_from_token: str = Depends(get_user_id) # kept for security verification
+):
+    context = payload.context
+    struggle_profile = context.get("struggle_profile", ["general_growth"])
+    for_date = payload.local_date
     
-    context = payload.get("context", {})
-    recent_titles = context.get("recentTitles", [])
-    moods = context.get("moods", [])
-    completion_rate = context.get("completionRate", 50)
+    def get_fallback_tasks():
+        return [
+            {"title": "Digital Space", "category": "focus", "why_this_helps": "Dopamine reset.", "estimated_duration_mins": 60, "detail_description": "Put your phone away."},
+            {"title": "One Curious Thing", "category": "meaning", "why_this_helps": "Alignment.", "estimated_duration_mins": 10, "detail_description": "Explore a new topic."},
+            {"title": "Breath Work", "category": "mental", "why_this_helps": "Calm.", "estimated_duration_mins": 5, "detail_description": "Five deep breaths."}
+        ]
+
+    tasks_to_generate = []
+    if not HAS_AI_KEY:
+        tasks_to_generate = get_fallback_tasks()
+    else:
+        prompt = f"""You are the Philosophical Guide Engine for "The Life Project" — an app designed to cure digital distraction by helping users rediscover their own existence and purpose.
+
+A user is struggling with: {', '.join(struggle_profile)}.
+
+Generate exactly 4 daily therapeutic tasks. Each task MUST be rooted in ONE of these four frameworks (use all four across the set):
+
+1. **Logotherapy** (Viktor Frankl): Finding meaning even in suffering, boredom, or emptiness. The task should help the user discover that their discomfort is a compass pointing toward what matters. Suffering without meaning is unbearable; suffering with meaning becomes a passage.
+
+2. **Morita Therapy**: Accept feelings as they are — do not fight anxiety, boredom, or restlessness. Instead, take purpose-driven action regardless of emotional state. The task should embody "action before motivation." Feelings are weather; purpose is the mountain.
+
+3. **Flow State** (Csikszentmihalyi): Design a task that demands just enough challenge to pull the user beyond the shallow waters of distraction into deep, single-pointed engagement. The task should be a doorway out of the "2D dopamine loop" — the endless scroll, the flat screen — into the vast 3D landscape of real experience.
+
+4. **Ikigai**: Align the task with the intersection of what the user loves, what they are good at, what the world needs, and what gives them a quiet sense of aliveness. The task should whisper: "This is why you are here."
+
+**TONE RULES:**
+- Write as if you are an ancient sage who also understands neuroscience.
+- Use metaphors of vast mental landscapes: oceans of attention, mountains of discipline, forests of curiosity.
+- Reference the "dopamine loop" as a flat, grey prison — and these tasks as keys to a world with depth, color, and texture.
+- Each task's "why_this_helps" field must feel like a personal letter — not clinical advice, but a whispered truth.
+- The "detail_description" should be what a wise mentor would say after the user completes the task.
+
+**STRUCTURAL RULES:**
+- Duration should range from 5 to 60 minutes, appropriate to the task depth.
+
+Return a JSON array of exactly 4 objects with these exact keys:
+category, title, estimated_duration_mins, why_this_helps, detail_description
+
+Categories MUST be one of: focus, meaning, reflection, discipline, action, emotional-reset, awareness, health.
+
+Return ONLY the JSON array, no markdown wrapping."""
+        try:
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+            tasks_to_generate = json.loads(res.text)
+        except Exception as e:
+            print(f"Gemini API Error: {str(e)}")
+            raise HTTPException(status_code=500, detail="AI generation failed.")
+
+    today_str = for_date
     
-    # Simple rule-based generation to mimic AI for now
-    # (The frontend already handles fallback, but this gives the 'backend AI' feel)
+    # 1. Clear existing tasks for today in Supabase
+    supabase.table("loop_tasks") \
+        .delete() \
+        .eq("user_id", payload.user_id) \
+        .eq("for_date", today_str) \
+        .execute()
     
-    # Rule: If mood is heavy, keep it light
-    is_low_energy = any(m in ["heavy", "drained"] for m in moods)
-    
-    # Rule: Diversity
-    categories = ["focus", "discipline", "emotional-reset", "reflection", "health", "sleep", "meaning", "awareness", "action", "connection"]
-    random.shuffle(categories)
-    
-    # Sample data mapping categories to cinematic titles and descriptions
-    CINEMATIC_DATA = {
-        "focus": {
-            "title": "Misty Forest Focus",
-            "desc": "Before the world pours in, find stillness in the misty forest of your mind.",
-            "why": "Deep focus activates the brain's saliency network, allowing you to filter out noise and prioritize what truly matters."
-        },
-        "discipline": {
-            "title": "Dawn Breaking Commitment",
-            "desc": "Like the sun rising over the ridge, your discipline is a reliable force.",
-            "why": "Discipline is the bridge between goals and accomplishment. Small acts of commitment rewire your brain for long-term reward."
-        },
-        "awareness": {
-            "title": "Rain on Leaves presence",
-            "desc": "Notice the details. The world is rich with information if you stop to look.",
-            "why": "Mindful awareness reduces the size of the amygdala and increases gray matter in the prefrontal cortex."
-        },
-        "reflection": {
-            "title": "Lantern on the Water",
-            "desc": "Close the day by reflecting on the light you found in the darkness.",
-            "why": "Refining your experiences through reflection turns raw events into wisdom and emotional resilience."
-        },
-        "health": {
-            "title": "Vitality in the clearing",
-            "desc": "Move your body to clear your mind. Strength starts with a single stretch.",
-            "why": "Physical movement releases BDNF, a protein that acts as fertilizer for your brain cells."
-        }
-    }
-    
-    tasks = []
-    # 3 Core Tasks
-    selected_cats = categories[:3]
-    for i, cat in enumerate(selected_cats):
-        cin = CINEMATIC_DATA.get(cat, CINEMATIC_DATA["awareness"])
-        tasks.append({
-            "title": f"{cat.capitalize()} Session",
-            "subtitle": f"10 minutes of {cat}.",
-            "category": cat,
-            "detail_title": cin["title"],
-            "detail_description": cin["desc"],
-            "why": cin["why"],
-            "inline_quote": "The path is made by walking it." if i == 0 else None,
-            "duration_minutes": 10 if is_low_energy else 20,
-            "preferred_time": "morning" if i == 0 else "afternoon",
-            "intensity": "light" if is_low_energy else "medium",
+    # 2. Insert new tasks
+    insert_data = []
+    for idx, t in enumerate(tasks_to_generate):
+        insert_data.append({
+            "user_id": payload.user_id,
+            "for_date": today_str,
+            "title": t.get("title"),
+            "subtitle": t.get("category", "").title(), # Fallback visual formatting
+            "category": t.get("category"),
+            "why": t.get("why_this_helps"),
+            "detail_title": t.get("title"),
+            "detail_description": t.get("detail_description"),
+            "duration_minutes": t.get("estimated_duration_mins", 15),
+            "intensity": "medium",
+            "is_optional": idx == 3, # Makes the 4th task optional automatically
+            "preferred_time": "morning",
+            "done": False
         })
-        
-    # 1 Optional Task
-    cin = CINEMATIC_DATA["reflection"]
-    tasks.append({
-        "title": "Daily Integration",
-        "subtitle": "An optional space for your mind.",
-        "category": "reflection",
-        "detail_title": cin["title"],
-        "detail_description": cin["desc"],
-        "why": cin["why"],
-        "inline_quote": None,
-        "duration_minutes": 15,
-        "preferred_time": "evening",
-        "intensity": "medium",
-    })
     
-    return tasks
+    try:
+        response = supabase.table("loop_tasks").insert(insert_data).execute()
+        saved_tasks = response.data or []
+    except Exception as e:
+        print(f"Supabase Insert Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(e)}")
+    
+    return {
+        "tasks": [
+            {
+                "id": t["id"],
+                "title": t["title"],
+                "subtitle": t["subtitle"],
+                "category": t["category"],
+                "why_this_helps": t["why"],
+                "estimated_duration_mins": t["duration_minutes"],
+                "supportive_tone_line": t.get("detail_description"),
+                "done": t["done"]
+            } for t in saved_tasks
+        ],
+        "insight": "A new path is set."
+    }
+
+
+@app.post("/api/toggle-task/{task_id}")
+async def toggle_task(
+    task_id: str,
+    user_id: str = Depends(get_user_id)
+):
+    # Call the production RPC for task completion to trigger scoring pipeline
+    # complete_loop_task_v4(p_task_id UUID)
+    try:
+        response = supabase.rpc("complete_loop_task_v4", {"p_task_id": task_id}).execute()
+        if response.data and response.data.get("status") == "success":
+            return {"status": "success", "done": True}
+        
+        # Fallback for un-completing (if not handled by RPC yet)
+        # Note: complete_loop_task_v4 is designed for completion. 
+        # If we need to toggle OFF, we do it manually.
+        current = supabase.table("loop_tasks").select("done").eq("id", task_id).single().execute()
+        new_state = not current.data["done"]
+        supabase.table("loop_tasks").update({"done": new_state, "completed_at": datetime.utcnow().isoformat() if new_state else None}).eq("id", task_id).execute()
+        return {"status": "success", "done": new_state}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

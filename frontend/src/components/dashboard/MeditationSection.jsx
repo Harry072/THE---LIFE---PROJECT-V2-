@@ -1,6 +1,7 @@
 import Icon from "../Icon";
 import { useNavigate } from "react-router-dom";
 import { useAppState } from "../../contexts/AppStateContext";
+import SafeImage from "../common/SafeImage";
 
 const CALM_FOREST_TRACK = {
   id: "calm-forest",
@@ -51,7 +52,7 @@ export function MeditationCard() {
         cursor: "pointer",
       }}
     >
-      <img
+      <SafeImage
         src="/media/calm-forest-stream.jpg"
         alt=""
         style={{

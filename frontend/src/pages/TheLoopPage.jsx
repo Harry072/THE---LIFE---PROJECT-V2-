@@ -1,161 +1,273 @@
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLoopTasks } from "../hooks/useLoopTasks";
-import LoopTaskRow from "../components/loop/LoopTaskRow";
+import LoopTaskCard from "../components/loop/LoopTaskCard";
 import LoopDetailPanel from "../components/loop/LoopDetailPanel";
-import Icon from "../components/Icon";
- 
+
 export default function TheLoopPage() {
   const navigate = useNavigate();
-  const { tasks, loading, generating, toggleTask, refresh } = useLoopTasks();
+  // Destructure correctly: hook returns { tasks: { tasks, insight }, loading, ... }
+  const { data: loopData, loading, error, generating, refresh, toggleTask, clearError } = useLoopTasks();
+  
+  const tasks = loopData?.tasks || [];
+  const dailyInsight = loopData?.insight || "Your path is unfolding as it should.";
   const [activeId, setActiveId] = useState(null);
- 
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(clearError, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [error, clearError]);
+
   // Sort: uncompleted first, then completed
   const sorted = [...tasks].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
-    return a.sort_order - b.sort_order;
+    return 0; // maintain original order
   });
 
   const activeTask = tasks.find(t => t.id === activeId) || sorted[0] || null;
-  const allDone = tasks.length > 0 && tasks.every(t => t.done);
- 
+
+  const handleRefresh = async () => {
+    try {
+      await refresh();
+    } catch (err) {
+      // Error managed by hook
+    }
+  };
+
   return (
-    <div style={{
+    <div className="the-loop-page" style={{
       minHeight: "100vh",
-      background: "var(--bg-main)",
-      color: "var(--text)",
-      padding: "32px 24px",
+      width: "100%",
+      padding: "40px 20px",
+      background: "var(--bg-main, #0A0F0D)", // Fallback to deep dark if variable missing
+      color: "var(--text, #FFFFFF)",
+      display: "flex",
+      flexDirection: "column",
+      boxSizing: "border-box",
+      overflowX: "hidden"
     }}>
-      <div style={{
-        maxWidth: 1100,
-        margin: "0 auto",
+      <div style={{ 
+        maxWidth: 1200, 
+        margin: "0 auto", 
+        width: "100%", 
+        flex: 1, 
+        display: "flex", 
+        flexDirection: "column",
+        minHeight: 0 // Crucial for inner scroll
       }}>
-        {/* Master-detail container */}
-        <div className="loop-container" style={{
-          display: "grid",
-          gridTemplateColumns: "1.2fr 1fr",
-          gap: 0,
-          background: "var(--bg-card)",
-          border: "1px solid var(--border)",
-          borderRadius: 20,
-          overflow: "hidden",
-          minHeight: 600,
-          boxShadow: "var(--shadow-lift)",
-        }}>
-          {/* LEFT: Task list */}
-          <div style={{ borderRight: "1px solid var(--border)" }}>
-            {/* Header */}
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "24px 24px 16px",
+
+        {/* Header with Daily Insight */}
+        <header style={{ marginBottom: 40 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
+            <h1 style={{
+              fontSize: "clamp(32px, 5vw, 48px)",
+              fontFamily: "var(--font-display, serif)",
+              fontWeight: 800,
+              margin: 0,
+              letterSpacing: -1,
+              color: "var(--text)"
             }}>
-              <h2 style={{
-                margin: 0, fontSize: 11, fontWeight: 500,
-                letterSpacing: 2.5,
-                textTransform: "uppercase",
-                color: "var(--text-faint)",
+              Today's <span style={{ color: "var(--green-bright, #2ECC71)" }}>Loop</span>
+            </h1>
+            <button
+              onClick={() => navigate("/dashboard")}
+              style={{ 
+                background: "rgba(255,255,255,0.05)", 
+                border: "1px solid rgba(255,255,255,0.1)", 
+                color: "var(--text-dim, #AAA)", 
+                padding: "8px 16px",
+                borderRadius: 20,
+                cursor: "pointer", 
+                fontSize: 12,
+                transition: "all 0.2s"
+              }}
+            >
+              ← Dashboard
+            </button>
+          </div>
+
+          <div className="insight-card" style={{
+            padding: "20px 24px",
+            borderRadius: 20,
+            background: "rgba(46, 204, 113, 0.03)",
+            borderLeft: "4px solid var(--green-bright, #2ECC71)",
+            boxShadow: "inset 0 0 40px rgba(0,0,0,0.2)"
+          }}>
+            <p style={{ 
+              margin: 0, 
+              fontSize: 16, 
+              color: "var(--text-dim)", 
+              fontStyle: "italic", 
+              lineHeight: 1.6,
+              opacity: 0.9
+            }}>
+              "{dailyInsight}"
+            </p>
+          </div>
+        </header>
+
+        {error && (
+          <div style={{
+            marginBottom: 24,
+            padding: "14px 20px",
+            borderRadius: 14,
+            background: "rgba(231, 76, 60, 0.1)",
+            border: "1px solid rgba(231, 76, 60, 0.2)",
+            color: "#e74c3c",
+            fontSize: 14,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center"
+          }}>
+            <span>{error}</span>
+            <button onClick={clearError} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 5 }}>✕</button>
+          </div>
+        )}
+
+        {/* Main Content Layout */}
+        <div style={{ 
+          display: "grid", 
+          gridTemplateColumns: "1fr 420px", 
+          gap: 40, 
+          flex: 1, 
+          minHeight: 0 
+        }}>
+          
+          {/* Left Column: Tasks */}
+          <div style={{ 
+            overflowY: "auto", 
+            paddingRight: 10, 
+            display: "flex", 
+            flexDirection: "column", 
+            gap: 20,
+            scrollbarWidth: "none" // Hide scrollbar for cleaner cinematic look
+          }}>
+            {generating || loading ? (
+              <div style={{
+                height: 400,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "rgba(255,255,255,0.02)",
+                borderRadius: 28,
+                padding: 48,
+                textAlign: "center",
+                color: "var(--text-dim)",
+                border: "1px solid rgba(255,255,255,0.05)"
               }}>
-                Today's Plan
-              </h2>
-              <button
-                onClick={() => navigate("/loop/all")}
-                style={{
-                  background: "none", border: "none",
-                  color: "var(--green-bright)",
-                  fontSize: 13, cursor: "pointer",
-                  fontFamily: "var(--font-body)",
-                }}
-              >
-                View All Tasks &rarr;
-              </button>
-            </div>
- 
-            {/* Task rows */}
-            <div style={{ paddingBottom: 20 }}>
-              {loading || generating ? (
-                <div style={{
-                  padding: 48, textAlign: "center",
-                  color: "var(--text-dim)",
-                }}>
-                  <div className="spinning" style={{ marginBottom: 16 }}>
-                    <Icon name="loop" size={32} color="var(--green-bright)" />
-                  </div>
-                  <p style={{
-                    fontStyle: "italic",
-                    fontFamily: "var(--font-display)",
-                    fontSize: 16,
-                  }}>
-                    {generating ? "Weaving your path..." : "Loading tasks..."}
-                  </p>
-                </div>
-              ) : (
-                sorted.map(task => (
-                  <LoopTaskRow
+                <div className="spinner" style={{ 
+                  width: 40, height: 40, 
+                  border: "3px solid rgba(46, 204, 113, 0.1)", 
+                  borderTopColor: "var(--green-bright)", 
+                  borderRadius: "50%",
+                  animation: "spin 1s linear infinite",
+                  marginBottom: 20
+                }}></div>
+                <p style={{ fontSize: 18, fontFamily: "var(--font-display)" }}>Curating your daily path...</p>
+              </div>
+            ) : sorted.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {sorted.map((task) => (
+                  <LoopTaskCard
                     key={task.id}
                     task={task}
-                    isActive={activeTask?.id === task.id}
+                    isActive={activeId === task.id || (!activeId && task.id === sorted[0]?.id)}
                     onHover={() => setActiveId(task.id)}
-                    onToggle={() => toggleTask(task.id)}
+                    onToggle={toggleTask}
                   />
-                ))
-              )}
-            </div>
-            
-            {/* Refresh Button - Footer of Left Panel */}
+                ))}
+              </div>
+            ) : (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: 80, 
+                color: 'var(--text-faint)',
+                background: "rgba(255,255,255,0.01)",
+                borderRadius: 28,
+                border: "1px dashed rgba(255,255,255,0.05)"
+              }}>
+                <p style={{ fontSize: 16, marginBottom: 24 }}>No tasks found for today.</p>
+                <button 
+                  onClick={handleRefresh} 
+                  style={{ 
+                    padding: "12px 32px", 
+                    borderRadius: 12, 
+                    background: "var(--green-bright)", 
+                    border: "none", 
+                    color: "black", 
+                    fontWeight: 600, 
+                    cursor: "pointer" 
+                  }}
+                >
+                  Generate Loop
+                </button>
+              </div>
+            )}
+
+            {/* Regeneration Action Area */}
             <div style={{
-              padding: "16px 24px",
-              borderTop: "1px solid var(--border)",
-              display: "flex",
-              justifyContent: "center"
+              marginTop: 20,
+              padding: "32px",
+              borderRadius: 24,
+              border: "1px dashed var(--border, rgba(255,255,255,0.1))",
+              textAlign: "center",
+              background: "rgba(0,0,0,0.1)"
             }}>
-              <button 
-                onClick={refresh}
+              <p style={{ margin: "0 0 20px", color: "var(--text-dim)", fontSize: 14 }}>
+                Not feeling these? You can recalibrate your daily tasks.
+              </p>
+              <button
+                onClick={handleRefresh}
                 disabled={generating}
                 style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-faint)",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6
+                  padding: "12px 28px",
+                  borderRadius: 14,
+                  background: "var(--bg-card, rgba(255,255,255,0.05))",
+                  border: "1px solid var(--border)",
+                  color: "var(--text)",
+                  fontSize: 14,
+                  cursor: generating ? "not-allowed" : "pointer",
+                  fontWeight: 600,
+                  transition: "all 0.2s",
+                  opacity: generating ? 0.6 : 1
                 }}
               >
-                <Icon name="loop" size={14} className={generating ? "spinning" : ""} />
-                Regenerate Daily Tasks
+                {generating ? "Calibrating..." : "Regenerate Daily Tasks"}
               </button>
             </div>
           </div>
- 
-          {/* RIGHT: Detail panel */}
-          <div className="detail-panel-desktop" style={{ height: "100%" }}>
-            <LoopDetailPanel task={activeTask} allDone={allDone} />
+
+          {/* Right Column: Detail Panel */}
+          <div style={{ 
+            height: "100%", 
+            position: "sticky",
+            top: 0,
+            borderRadius: 28,
+            overflow: "hidden",
+            background: "var(--bg-card, #0D1310)",
+            border: "1px solid rgba(255,255,255,0.05)",
+            boxShadow: "0 20px 40px rgba(0,0,0,0.3)"
+          }}>
+            <LoopDetailPanel task={activeTask} />
           </div>
         </div>
       </div>
 
       <style>{`
-        @media (max-width: 900px) {
-          .loop-container {
-            grid-template-columns: 1fr !important;
-            min-height: auto !important;
-          }
-          .detail-panel-desktop {
-            display: none !important;
-          }
-        }
         @keyframes spin {
-          from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
-        .spinning {
-          animation: spin 3s linear infinite;
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .the-loop-page * {
+          box-sizing: border-box;
         }
       `}</style>
     </div>
   );
 }
-

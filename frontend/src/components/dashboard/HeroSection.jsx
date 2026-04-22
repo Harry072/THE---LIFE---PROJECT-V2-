@@ -1,8 +1,53 @@
-export default function HeroSection({ userName = "Arjun" }) {
+import { useState, useEffect } from "react";
+import SafeImage from "../common/SafeImage";
+
+// ── Utility: Time-based greeting ──
+function getGreetingByTime() {
   const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good Morning"
-    : hour < 17 ? "Good Afternoon" : "Good Evening";
- 
+  if (hour >= 5  && hour < 12) return "GOOD MORNING";
+  if (hour >= 12 && hour < 17) return "GOOD AFTERNOON";
+  if (hour >= 17 && hour < 21) return "GOOD EVENING";
+  return "GOOD NIGHT";
+}
+
+// ── Utility: Extract clean first name from user/profile data ──
+function getDisplayName(user, profile) {
+  // 1. Try profile display_name first
+  if (profile?.display_name && profile.display_name !== "Explorer") {
+    return profile.display_name.split(" ")[0].toUpperCase();
+  }
+
+  // 2. Try full_name from profile
+  if (profile?.full_name) {
+    return profile.full_name.split(" ")[0].toUpperCase();
+  }
+
+  // 3. Derive from email — take the part before @, clean it
+  if (user?.email) {
+    const local = user.email.split("@")[0];
+    // Remove numbers, dots, underscores and capitalize
+    const cleaned = local.replace(/[._0-9-]/g, " ").trim().split(" ")[0];
+    if (cleaned.length >= 2) {
+      return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toUpperCase();
+    }
+  }
+
+  // 4. Graceful fallback
+  return "FRIEND";
+}
+
+export default function HeroSection({ user, profile }) {
+  const [greeting, setGreeting] = useState(getGreetingByTime());
+  const displayName = getDisplayName(user, profile);
+
+  // Update greeting every minute so it stays accurate without page reload
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setGreeting(getGreetingByTime());
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <section style={{
       display: "grid",
@@ -21,7 +66,7 @@ export default function HeroSection({ userName = "Arjun" }) {
           color: "var(--text-faint)",
           fontFamily: "var(--font-body)",
         }}>
-          {greeting}, {userName}
+          {greeting}, {displayName}
         </p>
         <h1 style={{
           margin: "12px 0 16px",
@@ -58,10 +103,9 @@ export default function HeroSection({ userName = "Arjun" }) {
         overflow: "hidden",
         boxShadow: "var(--shadow-lift)",
       }}>
-        <img
+        <SafeImage
           src="/media/hero-forest-walker.jpg"
-          alt="A person walking through a misty forest
-            with sunrays"
+          alt="A person walking through a misty forest with sunrays"
           style={{
             width: "100%", height: "100%",
             objectFit: "cover",

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { useUserStore } from "../store/userStore";
 import { getDailyQuestions } from "../data/reflectionQuestions";
+import { awardTreePoints, checkAllTasksBonus } from "../services/treeScoring";
 
 export function useReflection() {
   const user = useUserStore(state => state.user);
@@ -28,7 +29,7 @@ export function useReflection() {
       // Check if already saved today
       const { data: existing, error } = await supabase
         .from("reflections")
-        .select("*")
+        .select("id, user_id, for_date, questions, mood, pattern_tags")
         .eq("user_id", user.id)
         .eq("for_date", today)
         .maybeSingle();
@@ -121,6 +122,11 @@ export function useReflection() {
 
       setSavedToday(true);
       loadPast(); // Refresh history grid
+
+      // Award tree points for reflection
+      awardTreePoints(user.id, 'REFLECTION');
+      checkAllTasksBonus(user.id);
+
       return { success: true };
     } catch (error) {
       console.error("Save error:", error);
@@ -136,7 +142,7 @@ export function useReflection() {
     try {
       const { data } = await supabase
         .from("reflections")
-        .select("*")
+        .select("id, for_date, questions, mood")
         .eq("user_id", user.id)
         .order("for_date", { ascending: false })
         .limit(14);

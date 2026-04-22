@@ -43,7 +43,7 @@ export default function LoopDetailContent({ task, isMobile = false }) {
       }}>
         {task.preferred_time}
         {" · "}
-        {task.duration_minutes} Minutes
+        {task.duration_minutes || task.estimated_duration_mins} Minutes
       </p>
  
       {/* Why this helps button */}

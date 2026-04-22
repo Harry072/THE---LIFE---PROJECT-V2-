@@ -1,6 +1,39 @@
 import Icon from "../Icon";
 import { useNavigate } from "react-router-dom";
-import { useAppState } from "../../contexts/AppStateContext";
+import { useEffect } from "react";
+import { useLoopTasks } from "../../hooks/useLoopTasks";
+
+function ErrorMessage({ message, onDismiss }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 6000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div style={{
+      padding: "10px 14px",
+      marginBottom: 12,
+      borderRadius: "var(--r-sm)",
+      background: "rgba(239, 68, 68, 0.1)",
+      border: "1px solid rgba(239, 68, 68, 0.2)",
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      animation: "fadeIn 0.3s ease-out",
+    }}>
+      <Icon name="alert" size={14} color="#ef4444" />
+      <p style={{ 
+        margin: 0, 
+        fontSize: 13, 
+        color: "#f87171",
+        fontFamily: "var(--font-body)",
+        lineHeight: 1.4,
+      }}>
+        {message}
+      </p>
+    </div>
+  );
+}
 
 function EmptyState({ onClick }) {
   return (
@@ -27,7 +60,7 @@ function EmptyState({ onClick }) {
 }
 
 function TaskRow({ task, onToggle, onOpen }) {
-  const done = task.completed_at != null;
+  const done = task.done;
   return (
     <div
       onClick={onOpen}
@@ -73,27 +106,23 @@ function TaskRow({ task, onToggle, onOpen }) {
           textDecoration: done ? "line-through" : "none",
           transition: "all 0.3s",
         }}>
-          {task.content || task.title}
+          {task.title}
         </p>
         <p style={{
           margin: "2px 0 0", fontSize: 12,
           color: "var(--text-faint)",
         }}>
-          {task.subtitle || (task.domain ? {
-            awareness: "5 minutes reflection",
-            action: "30 minutes",
-            meaning: "Gratitude & Growth",
-          }[task.domain] || task.domain : "")}
+          {task.subtitle || task.category}
         </p>
       </div>
 
-      {/* Domain badge */}
+      {/* Category badge */}
       <span style={{
         fontSize: 12, color: "var(--text-faint)",
         fontFamily: "var(--font-body)",
         textTransform: "capitalize",
       }}>
-        {task.domain || ""}
+        {task.category || ""}
       </span>
     </div>
   );
@@ -101,10 +130,11 @@ function TaskRow({ task, onToggle, onOpen }) {
 
 export default function TodaysPlan() {
   const navigate = useNavigate();
-  const { tasks, toggleTask } = useAppState();
+  const { data, toggleTask, loading, error, clearError } = useLoopTasks();
+  const tasks = data?.tasks || [];
 
   // Show top 4 tasks for today on the dashboard
-  const displayed = tasks.slice(0, 4);
+  const displayed = tasks.filter(t => !t.skipped).slice(0, 4);
 
   return (
     <div style={{
@@ -113,6 +143,7 @@ export default function TodaysPlan() {
       border: "1px solid var(--border)",
       borderRadius: "var(--r-md)",
       padding: "24px",
+      minHeight: 280,
     }}>
       {/* Header */}
       <div style={{
@@ -146,7 +177,14 @@ export default function TodaysPlan() {
       {/* Tasks */}
       <div style={{ display: "flex", flexDirection: "column",
         gap: 4 }}>
-        {displayed.length > 0
+        
+        {error && <ErrorMessage message={error} onDismiss={clearError} />}
+
+        {loading ? (
+          <div style={{ padding: 24, textAlign: "center", color: "var(--text-faint)" }}>
+             Loading...
+          </div>
+        ) : displayed.length > 0
           ? displayed.map(t => (
               <TaskRow
                 key={t.id}

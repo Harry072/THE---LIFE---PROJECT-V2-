@@ -17,8 +17,8 @@ export async function seedNewUser(userId) {
     content: t.content,
     domain: t.domain,
     user_id: userId,
-    assigned_date: today,
+    for_date: today,
   }));
-  const { error } = await supabase.from("tasks").insert(rows);
+  const { error } = await supabase.from("loop_tasks").insert(rows);
   if (error) console.error("Seed failed:", error);
 }

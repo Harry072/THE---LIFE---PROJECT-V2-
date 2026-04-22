@@ -1,5 +1,6 @@
 import "../styles/tokens.css";
 import { useNavigate } from "react-router-dom";
+import { useUserStore } from "../store/userStore";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
 import HeroSection from "../components/dashboard/HeroSection";
@@ -11,13 +12,15 @@ import { MeditationCard, QuickPlaylist }
 import BooksGrid from "../components/dashboard/BooksGrid";
 import NightReflection
   from "../components/dashboard/NightReflection";
-import GrowthChart
-  from "../components/dashboard/GrowthChart";
+import GrowthTree
+  from "../components/GrowthTree";
 import QuoteFooter
   from "../components/dashboard/QuoteFooter";
  
 export default function Dashboard() {
   const navigate = useNavigate();
+  const user = useUserStore(state => state.user);
+  const profile = useUserStore(state => state.profile);
   return (
     <div style={{
       minHeight: "100vh",
@@ -50,7 +53,7 @@ export default function Dashboard() {
           margin: "0 auto",
           padding: "8px 32px 48px",
         }}>
-          <HeroSection userName="Arjun" />
+          <HeroSection user={user} profile={profile} />
  
           {/* Row 2: Plan + Focus */}
           <section style={{
@@ -126,7 +129,7 @@ export default function Dashboard() {
             animation: "fadeUp 0.6s ease 0.65s both",
           }}>
             <NightReflection />
-            <GrowthChart />
+            <GrowthTree />
           </section>
  
           {/* Row 7: Quote */}

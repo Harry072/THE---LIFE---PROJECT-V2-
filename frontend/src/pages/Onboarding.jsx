@@ -26,7 +26,7 @@ function Onboarding() {
   const [isLogin, setIsLogin] = useState(false);
   const [error, setError] = useState(null);
   
-  const { register, login, demoMode, toggleDemoMode } = useUserStore();
+  const { register, login } = useUserStore();
   const navigate = useNavigate();
 
   const toggleStruggle = (struggle) => {
@@ -60,7 +60,7 @@ function Onboarding() {
     if (success) {
       navigate('/dashboard');
     } else {
-      setError("Authentication failed. " + (demoMode ? "Demo mode error?" : "Please check your network or credentials."));
+      setError("Authentication failed. Please check your network connection or credentials.");
     }
   };
 
@@ -102,23 +102,6 @@ function Onboarding() {
                   <PremiumButton onClick={() => setStep(1)} style={{ width: '100%', maxWidth: '280px' }}>
                     Begin Journey <ArrowRight size={20} style={{ marginLeft: '0.5rem' }} />
                   </PremiumButton>
-                  
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.5 }}
-                    style={{ marginTop: '2rem' }}
-                  >
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                      <input 
-                        type="checkbox" 
-                        checked={demoMode} 
-                        onChange={(e) => toggleDemoMode(e.target.checked)}
-                        style={{ accentColor: 'var(--emerald)' }}
-                      />
-                      <span>Enable Demo Mode (Run without Supabase)</span>
-                    </label>
-                  </motion.div>
                 </div>
               </div>
             </PageTransition>
