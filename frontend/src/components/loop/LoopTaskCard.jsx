@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import Icon from "../Icon";
 import { getCinematicImage } from "../../utils/imageMapping";
+import { supabase } from "../../lib/supabase";
+import { useAppState } from "../../contexts/AppStateContext";
 
 const CAT_COLORS = {
   focus: "#4DA8FF", discipline: "#FF9A4D",
@@ -16,26 +18,95 @@ const INTENSITY = {
   deep: { color: "#FF8C42", label: "Deep" },
 };
 
+const isLegacyDoneColumnError = (error) => {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  return message.includes("column") && message.includes("done");
+};
+
 export default function LoopTaskCard({
   task, onToggle, onSkip, onReplace, onHover,
 }) {
+  const { updateTreeStats } = useAppState();
   const [expanded, setExpanded] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDone, setIsDone] = useState(Boolean(task.done ?? task.completed_at));
   const contentRef = useRef(null);
   const [contentHeight, setContentHeight] = useState(0);
 
-  const handleToggle = async (id) => {
-    if (isSubmitting || task.done) return;
+  const handleComplete = async (id) => {
+    if (isSubmitting || isDone) return;
+
     setIsSubmitting(true);
-    try {
-      await onToggle(id);
-      // We don't necessarily reset isSubmitting if the component unmounts or re-renders
-      // but the optimistic update will handle the visual swap to 'done' anyway.
-    } catch (err) {
-      console.error("Interaction failed:", err);
-      setIsSubmitting(false);
+    setIsDone(true);
+
+    if (onToggle) {
+      try {
+        await onToggle(id);
+      } catch (err) {
+        console.error("Interaction failed:", err);
+        setIsDone(false);
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
     }
+
+    let responseData;
+
+    try {
+      const { data, error } = await supabase.rpc("complete_loop_task_v4", {
+        p_task_id: id,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      responseData = data;
+    } catch (err) {
+      if (!isLegacyDoneColumnError(err)) {
+        console.error("Interaction failed:", err);
+        setIsDone(false);
+        setIsSubmitting(false);
+        return;
+      }
+
+      const completedAt = new Date().toISOString();
+      const { data: fallbackTask, error: updateError } = await supabase
+        .from("loop_tasks")
+        .update({ completed_at: completedAt })
+        .eq("id", id)
+        .is("completed_at", null)
+        .select("*")
+        .maybeSingle();
+
+      if (updateError || !fallbackTask) {
+        console.error("Interaction failed:", updateError ?? err);
+        setIsDone(false);
+        setIsSubmitting(false);
+        return;
+      }
+
+      responseData = {
+        task: fallbackTask,
+      };
+    }
+
+    updateTreeStats?.({
+      vitality: responseData?.new_vitality,
+      cumulative_score: responseData?.new_score,
+      streak: responseData?.new_streak,
+      tasksCompletedDelta: 1,
+    });
+
+    try {
+      onToggle?.(id, responseData?.task);
+    } catch (err) {
+      console.error("Failed to sync parent loop state:", err);
+    }
+
+    setIsSubmitting(false);
   };
 
   useEffect(() => {
@@ -43,7 +114,16 @@ export default function LoopTaskCard({
       const height = contentRef.current.scrollHeight;
       setContentHeight(expanded ? height : 0);
     }
-  }, [expanded, showWhy, task]);
+  }, [expanded, showWhy, task, isDone]);
+
+  useEffect(() => {
+    const nextDoneState = Boolean(task.done ?? task.completed_at);
+    setIsDone(nextDoneState);
+
+    if (nextDoneState) {
+      setIsSubmitting(false);
+    }
+  }, [task.completed_at, task.done]);
 
   const catColor = CAT_COLORS[task.category] || "var(--green-bright)";
   const intensity = INTENSITY[task.intensity] || INTENSITY.medium;
@@ -63,7 +143,7 @@ export default function LoopTaskCard({
         overflow: "hidden",
         transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
         boxShadow: expanded ? "0 0 24px rgba(46, 204, 113, 0.15)" : "none",
-        opacity: task.done ? 0.6 : 1,
+        opacity: isDone ? 0.6 : 1,
         marginBottom: 12,
         position: "relative",
       }}
@@ -111,19 +191,19 @@ export default function LoopTaskCard({
       >
         {/* Checkbox (Complete Action) */}
         <div
-          onClick={(e) => { e.stopPropagation(); handleToggle(task.id); }}
+          onClick={(e) => { e.stopPropagation(); handleComplete(task.id); }}
           className="task-checkbox"
           style={{
             width: 24, height: 24, borderRadius: "50%",
-            border: `2px solid ${task.done ? "var(--green-bright)" : "rgba(255, 255, 255, 0.2)"}`,
-            background: task.done ? "var(--green-bright)" : "transparent",
+            border: `2px solid ${isDone ? "var(--green-bright)" : "rgba(255, 255, 255, 0.2)"}`,
+            background: isDone ? "var(--green-bright)" : "transparent",
             display: "flex", alignItems: "center", justifyContent: "center",
             transition: "all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)", 
             flexShrink: 0, cursor: "pointer",
-            transform: task.done ? "scale(1.1)" : "scale(1)",
+            transform: isDone ? "scale(1.1)" : "scale(1)",
           }}
         >
-          {task.done && <Icon name="check" size={12} color="white" strokeWidth={3} />}
+          {isDone && <Icon name="check" size={12} color="white" strokeWidth={3} />}
         </div>
 
         {/* Text Area */}
@@ -131,8 +211,8 @@ export default function LoopTaskCard({
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <p style={{
               margin: 0, fontSize: 15, fontWeight: 500,
-              color: task.done ? "var(--text-faint)" : "var(--text)",
-              textDecoration: task.done ? "line-through" : "none",
+              color: isDone ? "var(--text-faint)" : "var(--text)",
+              textDecoration: isDone ? "line-through" : "none",
             }}>
               {task.title}
             </p>
@@ -156,7 +236,7 @@ export default function LoopTaskCard({
         </div>
 
         {/* Why Button (Small explicit link) */}
-        {!expanded && !task.done && (
+        {!expanded && !isDone && (
           <button
             onClick={(e) => { e.stopPropagation(); setExpanded(true); setShowWhy(true); }}
             style={{
@@ -259,9 +339,9 @@ export default function LoopTaskCard({
           <div style={{
             display: "flex", gap: 12, alignItems: "center",
           }}>
-            {!task.done && (
+            {!isDone && (
               <button
-                onClick={(e) => { e.stopPropagation(); handleToggle(task.id); }}
+                onClick={(e) => { e.stopPropagation(); handleComplete(task.id); }}
                 disabled={isSubmitting}
                 style={{
                   padding: "8px 16px", borderRadius: 8,
@@ -277,9 +357,9 @@ export default function LoopTaskCard({
                 {isSubmitting ? "Completing..." : "Complete Task"}
               </button>
             )}
-            {!task.done && !task.skipped && (
+            {!isDone && !task.skipped && (
               <button
-                onClick={(e) => { e.stopPropagation(); onReplace(task.id); }}
+                onClick={(e) => { e.stopPropagation(); onReplace?.(task.id); }}
                 style={{
                   padding: "8px 12px", borderRadius: 8,
                   background: "transparent",

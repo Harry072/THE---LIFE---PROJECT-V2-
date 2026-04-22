@@ -1,10 +1,11 @@
 import {
   createContext, useContext, useState,
-  useEffect, useCallback, useRef,
+  useEffect, useCallback,
 } from "react";
 import { supabase, isSupabaseConfigured } from "../lib/supabase";
 import { useUserStore } from "../store/userStore";
 import { useMusicPlayer } from "../hooks/useMusicPlayer";
+import { queryClient } from "../lib/queryClient";
 
 const AppStateContext = createContext(null);
 
@@ -38,13 +39,14 @@ export function AppStateProvider({ children }) {
     streak: 0,
     lifeScore: 0,
     tasksCompleted: 0,
+    vitality: 50,
   });
 
   // ─── Load data when user logs in ───
   useEffect(() => {
     if (!user || !isSupabaseConfigured) {
       setTasks([]);
-      setStats({ streak: 0, lifeScore: 0, tasksCompleted: 0 });
+      setStats({ streak: 0, lifeScore: 0, tasksCompleted: 0, vitality: 50 });
       setReadingList([]);
       return;
     }
@@ -59,7 +61,7 @@ export function AppStateProvider({ children }) {
   const loadTasks = async () => {
     if (!user || !isSupabaseConfigured) return;
     try {
-      const localDate = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD local
+      const localDate = new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]; // YYYY-MM-DD local
       const { data, error } = await supabase
         .from("loop_tasks")
         .select("*")
@@ -176,21 +178,21 @@ export function AppStateProvider({ children }) {
   const loadStats = async () => {
     if (!user || !isSupabaseConfigured) return;
     try {
-      const localDate = new Date().toLocaleDateString('en-CA');
+      const localDate = new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
       
-      // 1. Fetch from user_tree
+      // 1. Fetch from user_tree using * so missing columns do not 400 the whole request
       const { data: treeData, error: treeError } = await supabase
         .from("user_tree")
-        .select("cumulative_score, streak, vitality")
+        .select("*")
         .eq("user_id", user.id)
         .maybeSingle();
 
       if (treeError) throw treeError;
 
-      // 2. Fetch completed tasks count for today
-      const { count: tasksCompleted, error: taskError } = await supabase
+      // 2. Fetch completed tasks without HEAD; some Supabase setups reject that count path
+      const { data: todayTasks, error: taskError } = await supabase
         .from("loop_tasks")
-        .select("id", { count: "exact", head: true })
+        .select("id, completed_at")
         .eq("user_id", user.id)
         .eq("for_date", localDate)
         .not("completed_at", "is", null);
@@ -200,7 +202,7 @@ export function AppStateProvider({ children }) {
       setStats({
         streak: treeData?.streak || 0,
         lifeScore: treeData?.cumulative_score || 0,
-        tasksCompleted: tasksCompleted || 0,
+        tasksCompleted: (todayTasks || []).length,
         vitality: treeData?.vitality || 50
       });
     } catch (err) {
@@ -208,12 +210,57 @@ export function AppStateProvider({ children }) {
     }
   };
 
+  const updateTreeStats = useCallback(({
+    vitality,
+    cumulative_score,
+    streak,
+    tasksCompleted,
+    tasksCompletedDelta = 0,
+  }) => {
+    setStats((prev) => ({
+      ...prev,
+      vitality: vitality ?? prev.vitality,
+      lifeScore: cumulative_score ?? prev.lifeScore,
+      streak: streak ?? prev.streak,
+      tasksCompleted: typeof tasksCompleted === "number"
+        ? tasksCompleted
+        : Math.max(0, prev.tasksCompleted + tasksCompletedDelta),
+    }));
+
+    if (!user?.id) return;
+
+    queryClient.setQueryData(["tree_metrics", user.id], (current) => {
+      if (!current) return current;
+
+      const nextDoneCount = typeof tasksCompleted === "number"
+        ? tasksCompleted
+        : Math.max(0, (current.todayTasks?.done ?? 0) + tasksCompletedDelta);
+
+      return {
+        ...current,
+        score: cumulative_score ?? current.score,
+        vitality: vitality ?? current.vitality,
+        streak: streak ?? current.streak,
+        todayTasks: current.todayTasks
+          ? {
+              ...current.todayTasks,
+              done: Math.min(
+                current.todayTasks.total ?? Number.MAX_SAFE_INTEGER,
+                nextDoneCount
+              ),
+            }
+          : current.todayTasks,
+      };
+    });
+  }, [user?.id]);
+
   const value = {
+    user,
     tasks, toggleTask, loadTasks,
     focusSession, startFocus, endFocus,
     ...music,
     readingList, addToReadingList,
-    stats, loadStats, setStats,
+    stats, loadStats, setStats, updateTreeStats,
     DOMAIN_LABELS,
   };
 

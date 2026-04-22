@@ -130,11 +130,14 @@ function TaskRow({ task, onToggle, onOpen }) {
 
 export default function TodaysPlan() {
   const navigate = useNavigate();
-  const { data, toggleTask, loading, error, clearError } = useLoopTasks();
-  const tasks = data?.tasks || [];
+  const { tasks, fetchTasks, toggleTask, loading, error, clearError } = useLoopTasks();
+
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
 
   // Show top 4 tasks for today on the dashboard
-  const displayed = tasks.filter(t => !t.skipped).slice(0, 4);
+  const displayed = (tasks || []).filter(t => !t.skipped).slice(0, 4);
 
   return (
     <div style={{

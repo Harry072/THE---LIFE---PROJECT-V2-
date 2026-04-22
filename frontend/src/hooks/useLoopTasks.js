@@ -1,118 +1,245 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { supabase } from "../lib/supabase";
-import { useUserStore } from "../store/userStore";
+import { useAppState } from "../contexts/AppStateContext";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+const getLocalDate = () => new Date().toLocaleDateString("en-CA");
+
+const toSortNumber = (value) => {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : Number.MAX_SAFE_INTEGER;
+};
+
+const toTimestamp = (value) => {
+  const timestamp = Date.parse(value ?? "");
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+};
+
+const sortTasks = (rows) => [...rows].sort((a, b) => {
+  const sortOrderDiff = toSortNumber(a.sort_order) - toSortNumber(b.sort_order);
+  if (sortOrderDiff !== 0) return sortOrderDiff;
+
+  const createdAtDiff = toTimestamp(a.created_at) - toTimestamp(b.created_at);
+  if (createdAtDiff !== 0) return createdAtDiff;
+
+  return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+});
+
+const normalizeTask = (row = {}) => {
+  const durationMinutes = row.duration_minutes ?? row.estimated_duration_mins ?? 15;
+  const completedAt = row.completed_at ?? null;
+
+  return {
+    ...row,
+    completed_at: completedAt,
+    done: Boolean(completedAt),
+    why: row.why ?? row.why_this_helps ?? "",
+    duration_minutes: durationMinutes,
+    estimated_duration_mins: row.estimated_duration_mins ?? durationMinutes,
+    detail_title: row.detail_title ?? row.title ?? "",
+    detail_description: row.detail_description ?? "",
+    subtitle: row.subtitle ?? row.category ?? "",
+  };
+};
+
+const isLegacyDoneColumnError = (error) => {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  return message.includes("column") && message.includes("done");
+};
 
 export function useLoopTasks() {
-  const user = useUserStore((state) => state.user);
+  const { user, updateTreeStats } = useAppState();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
-
-  // Convert today's local date to YYYY-MM-DD. 
-  // This prevents the afternoon UTC offset bug where tasks disappear.
-  const getLocalDate = () => {
-    // en-CA locale natively formats the date as YYYY-MM-DD using the user's local timezone
-    return new Date().toLocaleDateString('en-CA');
-  };
+  const insight = "";
 
   const fetchTasks = useCallback(async () => {
-    if (!user) return;
+    if (!user?.id) {
+      setTasks([]);
+      setError(null);
+      return [];
+    }
+
     setLoading(true);
     setError(null);
-    
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      const for_date = getLocalDate();
-      const res = await fetch(`http://127.0.0.1:8000/api/get-loop-tasks?for_date=${for_date}&user_id=${user.id}`, {
-        headers: {
-          ...(token ? { "Authorization": `Bearer ${token}` } : {})
-        }
-      });
 
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
+    try {
+      const { data, error: queryError } = await supabase
+        .from("loop_tasks")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("for_date", getLocalDate());
+
+      if (queryError) {
+        throw queryError;
       }
-      
-      const data = await res.json();
-      setTasks(data.tasks || []);
+
+      const normalizedTasks = sortTasks((data ?? []).map(normalizeTask));
+      setTasks(normalizedTasks);
+      return normalizedTasks;
     } catch (err) {
       console.error("Error fetching tasks:", err);
       setError(err.message || "Failed to load tasks. Please try again.");
+      return [];
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user?.id]);
 
-  const generateTasks = useCallback(async (context = {}) => {
-    if (!user) return;
-    setLoading(true);
+  const generateTasks = useCallback(async () => {
+    if (!user?.id) return [];
+
+    setGenerating(true);
     setError(null);
-    
+
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      const for_date = getLocalDate();
-      const payload = { 
-        user_id: user.id, 
-        local_date: for_date, 
-        context: context 
+      const payload = {
+        user_id: user.id,
+        local_date: getLocalDate(),
       };
-      
-      const res = await fetch(`http://127.0.0.1:8000/api/generate-loop-tasks`, {
+
+      const response = await fetch(`${API_BASE_URL}/api/generate-loop-tasks`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { "Authorization": `Bearer ${token}` } : {})
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(
+          errorPayload?.detail || `Server returned ${response.status}`
+        );
       }
-      
-      const data = await res.json();
-      // Aggressively refetch from the database to synchronize the UI state
-      await fetchTasks();
+
+      await response.json().catch(() => null);
+      return await fetchTasks();
     } catch (err) {
       console.error("Error generating tasks:", err);
       setError(err.message || "AI failed to generate tasks. Please try again.");
+      return [];
     } finally {
-      setLoading(false);
+      setGenerating(false);
     }
-  }, [user, fetchTasks]);
+  }, [fetchTasks, user?.id]);
 
-  const toggleTask = useCallback(async (taskId) => {
-    if (!user) return;
-    
-    // Optimistic UI update for immediate response
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, done: !t.done } : t));
-    
+  const completeTaskInDb = useCallback(async (taskId) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      
-      const res = await fetch(`http://127.0.0.1:8000/api/toggle-task/${taskId}`, {
-        method: "POST",
-        headers: {
-          ...(token ? { "Authorization": `Bearer ${token}` } : {})
-        }
-      });
-      
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      
-      const data = await res.json();
-      // Sync exact DB state if optimistic update was wrong
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, done: data.done } : t));
-    } catch (err) {
-      console.error("Error toggling task:", err);
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, done: !t.done } : t));
-      setError("Failed to update task.");
+      const { data, error: rpcError } = await supabase.rpc(
+        "complete_loop_task_v4",
+        { p_task_id: taskId }
+      );
+
+      if (rpcError) {
+        throw rpcError;
+      }
+
+      return {
+        task: normalizeTask({ ...data?.task, completed_at: data?.task?.completed_at ?? new Date().toISOString() }),
+        metrics: {
+          vitality: data?.new_vitality,
+          cumulative_score: data?.new_score,
+          streak: data?.new_streak,
+          tasksCompletedDelta: 1,
+        },
+      };
+    } catch (error) {
+      if (!isLegacyDoneColumnError(error)) {
+        throw error;
+      }
+
+      const completedAt = new Date().toISOString();
+      const { data: fallbackTask, error: updateError } = await supabase
+        .from("loop_tasks")
+        .update({ completed_at: completedAt })
+        .eq("id", taskId)
+        .is("completed_at", null)
+        .select("*")
+        .maybeSingle();
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      if (!fallbackTask) {
+        throw new Error("Task was already completed or could not be updated.");
+      }
+
+      return {
+        task: normalizeTask(fallbackTask),
+        metrics: {
+          tasksCompletedDelta: 1,
+        },
+      };
     }
-  }, [user]);
+  }, []);
+
+  const toggleTask = useCallback(async (taskId, updatedTask) => {
+    if (!taskId) return null;
+
+    if (updatedTask) {
+      const normalizedTask = normalizeTask({
+        ...updatedTask,
+        completed_at: updatedTask.completed_at ?? new Date().toISOString(),
+      });
+      setTasks((prev) => sortTasks(prev.map((task) => (
+        task.id === taskId
+          ? { ...task, ...normalizedTask, done: true }
+          : task
+      ))));
+      return normalizedTask;
+    }
+
+    const currentTask = tasks.find((task) => task.id === taskId);
+    if (!currentTask || currentTask.done) {
+      return currentTask ?? null;
+    }
+
+    setError(null);
+    setTasks((prev) => prev.map((task) => (
+      task.id === taskId ? { ...task, completed_at: new Date().toISOString(), done: true } : task
+    )));
+
+    try {
+      const { task: completedTask, metrics } = await completeTaskInDb(taskId);
+      const normalizedTask = normalizeTask({
+        ...currentTask,
+        ...completedTask,
+      });
+
+      setTasks((prev) => sortTasks(prev.map((task) => (
+        task.id === taskId ? { ...task, ...normalizedTask } : task
+      ))));
+
+      updateTreeStats?.(metrics);
+
+      return normalizedTask;
+    } catch (err) {
+      console.error("Error completing task:", err);
+      setTasks((prev) => prev.map((task) => (
+        task.id === taskId ? currentTask : task
+      )));
+      setError(err.message || "Failed to update task.");
+      throw err;
+    }
+  }, [completeTaskInDb, tasks, updateTreeStats]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setTasks([]);
+      setError(null);
+      return;
+    }
+
+    fetchTasks();
+  }, [fetchTasks, user?.id]);
+
+  const clearError = () => setError(null);
+  const refresh = () => generateTasks();
 
   return {
     tasks,
@@ -120,6 +247,11 @@ export function useLoopTasks() {
     error,
     fetchTasks,
     generateTasks,
-    toggleTask
+    toggleTask,
+    // Provide compatible interface for TheLoopPage
+    data: { tasks, insight },
+    generating,
+    refresh,
+    clearError
   };
 }
