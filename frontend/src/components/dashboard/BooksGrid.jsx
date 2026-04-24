@@ -1,34 +1,15 @@
 import Icon from "../Icon";
 import { useNavigate } from "react-router-dom";
-import { useAppState } from "../../contexts/AppStateContext";
+import { getDashboardCuratorBooks } from "../../features/curator/curatorData";
 
-const BOOKS = [
-  { id: "b1", title: "Atomic Habits",
-    author: "James Clear",
-    subtitle: "Build Better Habits",
-    cover: "/media/books/atomic-habits.jpg" },
-  { id: "b2", title: "The Mountain Is You",
-    author: "Brianna Wiest",
-    subtitle: "Transform Self-Sabotage",
-    cover: "/media/books/mountain-is-you.jpg" },
-  { id: "b3", title: "Man's Search For Meaning",
-    author: "Viktor E. Frankl",
-    subtitle: "Find Your Purpose",
-    cover: "/media/books/mans-search.jpg" },
-  { id: "b4", title: "The 5 AM Club",
-    author: "Robin Sharma",
-    subtitle: "Own Your Morning",
-    cover: "/media/books/5am-club.jpg" },
-];
+const BOOKS = getDashboardCuratorBooks();
 
 function BookCard({ book }) {
   const navigate = useNavigate();
-  const { readingList, addToReadingList } = useAppState();
-  const saved = readingList.includes(book.id);
 
   return (
     <div
-      onClick={() => navigate(`/books?book=${book.id}`)}
+      onClick={() => navigate(`/curator?book=${book.id}`)}
       style={{
         background: "var(--bg-card)",
         backdropFilter: "blur(24px)",
@@ -78,7 +59,7 @@ function BookCard({ book }) {
           </h4>
           <p style={{ margin: "3px 0 0", fontSize: 11,
             color: "var(--text-dim)" }}>
-            {book.subtitle}
+            {book.hook}
           </p>
           <p style={{ margin: "6px 0 0", fontSize: 11,
             color: "var(--text-faint)" }}>
@@ -88,16 +69,13 @@ function BookCard({ book }) {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            if (!saved) addToReadingList(book.id);
+            navigate(`/curator?book=${book.id}`);
           }}
           style={{
             width: 26, height: 26, borderRadius: 6,
-            background: saved
-              ? "rgba(46,204,113,0.15)"
-              : "rgba(255,255,255,0.05)",
+            background: "rgba(255,255,255,0.05)",
             border: "1px solid var(--border)",
-            color: saved
-              ? "var(--green-bright)" : "var(--text-dim)",
+            color: "var(--text-dim)",
             cursor: "pointer",
             display: "flex", alignItems: "center",
             justifyContent: "center",
@@ -105,7 +83,7 @@ function BookCard({ book }) {
             transition: "all 0.3s",
           }}
         >
-          <Icon name={saved ? "check" : "plus"} size={14} />
+          <Icon name="arrow" size={14} />
         </button>
       </div>
     </div>
@@ -141,7 +119,7 @@ export default function BooksGrid() {
           }}>NEW</span>
         </div>
         <button
-          onClick={() => navigate("/books")}
+          onClick={() => navigate("/curator")}
           style={{
             background: "none", border: "none",
             color: "var(--green-bright)",

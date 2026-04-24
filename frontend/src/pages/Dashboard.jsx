@@ -21,6 +21,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const user = useUserStore(state => state.user);
   const profile = useUserStore(state => state.profile);
+  const lifeScore = user?.user_tree?.cumulative_score;
   return (
     <div style={{
       minHeight: "100vh",
@@ -71,7 +72,7 @@ export default function Dashboard() {
           <div style={{
             animation: "fadeUp 0.6s ease 0.35s both",
           }}>
-            <StatCards />
+            <StatCards lifeScore={lifeScore} />
           </div>
  
           {/* Row 4: Meditation */}

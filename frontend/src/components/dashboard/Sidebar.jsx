@@ -8,7 +8,7 @@ const NAV = [
   { id: "loop",      label: "The Loop",      icon: "loop",      path: "/loop" },
   { id: "meditate",  label: "Meditation",    icon: "meditate",  path: "/meditation" },
   { id: "music",     label: "Music",         icon: "music",     path: "/music" },
-  { id: "books",     label: "Books",         icon: "books",     path: "/books" },
+  { id: "books",     label: "The Curator",   icon: "books",     path: "/curator" },
   { id: "progress",  label: "Progress",      icon: "progress",  path: "/progress" },
   { id: "story",     label: "Founder Story", icon: "story",     path: "/story" },
 ];

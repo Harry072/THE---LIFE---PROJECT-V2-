@@ -11,6 +11,7 @@ import ReflectionPage from './pages/ReflectionPage';
 import ProgressPage from './pages/ProgressPage';
 import ProfilePage from './pages/ProfilePage';
 import TheLoopPage from './pages/TheLoopPage';
+import CuratorPage from './features/curator/CuratorPage';
 
 const ProtectedRoute = ({ children }) => {
   const user = useUserStore(state => state.user);
@@ -50,8 +51,11 @@ function AppRoutes() {
         <Route path="/music" element={
           <ProtectedRoute><MeditationPage /></ProtectedRoute>
         } />
+        <Route path="/curator" element={
+          <ProtectedRoute><CuratorPage /></ProtectedRoute>
+        } />
         <Route path="/books" element={
-          <ProtectedRoute><Dashboard /></ProtectedRoute>
+          <ProtectedRoute><Navigate to="/curator" replace /></ProtectedRoute>
         } />
         <Route path="/progress" element={
           <ProtectedRoute><ProgressPage /></ProtectedRoute>
@@ -118,7 +122,7 @@ function App() {
     if (isSupabaseConfigured) {
       fetchUser();
     }
-  }, []);
+  }, [fetchUser]);
 
   if (!isSupabaseConfigured) {
     return <CloudConfigGuard />;

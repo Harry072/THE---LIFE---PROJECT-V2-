@@ -1,128 +1,158 @@
-import { useState, useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "../lib/supabase";
-import { useUserStore } from "../store/userStore";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAppState } from "../contexts/AppStateContext";
 
 const STAGES = [
-  { id: 1, name: "Seed",           min: 0,   max: 20,
+  {
+    id: 1,
+    name: "Seed",
+    min: 0,
+    max: 30,
     image: "/media/tree/stage-1-seed.png",
-    message: "Growth begins in the quiet." },
-  { id: 2, name: "Sprout",        min: 21,  max: 60,
+    message: "Every journey begins here.",
+  },
+  {
+    id: 2,
+    name: "Sprout",
+    min: 31,
+    max: 80,
     image: "/media/tree/stage-2-sprout.png",
-    message: "You're taking root." },
-  { id: 3, name: "Young Plant",      min: 61, max: 120,
+    message: "Something is taking root.",
+  },
+  {
+    id: 3,
+    name: "Young Plant",
+    min: 81,
+    max: 180,
     image: "/media/tree/stage-3-plant.png",
-    message: "Strengthening every day." },
-  { id: 4, name: "Small Tree", min: 121, max: 220,
+    message: "You're building real strength.",
+  },
+  {
+    id: 4,
+    name: "Small Tree",
+    min: 181,
+    max: 350,
     image: "/media/tree/stage-4-small.png",
-    message: "Your presence is felt." },
-  { id: 5, name: "Growing Tree",        min: 221, max: 380,
+    message: "Your roots are deepening.",
+  },
+  {
+    id: 5,
+    name: "Growing Tree",
+    min: 351,
+    max: 600,
     image: "/media/tree/stage-5-growing.png",
-    message: "Reaching for the sky." },
-  { id: 6, name: "Mature Tree",        min: 381, max: Infinity,
+    message: "Consistency is becoming character.",
+  },
+  {
+    id: 6,
+    name: "Mature Tree",
+    min: 601,
+    max: Infinity,
     image: "/media/tree/stage-6-mature.png",
-    message: "A testament to consistency." },
+    message: "You've grown into something real.",
+  },
 ];
 
+function toFiniteNumber(value, fallback = 0) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
+}
+
 function getStage(score) {
-  return STAGES.find(s => score >= s.min && score <= s.max) || STAGES[STAGES.length - 1];
+  return STAGES.find(stage => score >= stage.min && score <= stage.max) || STAGES[0];
 }
 
 function getProgress(score, stage) {
   if (stage.max === Infinity) return 100;
   const range = stage.max - stage.min;
-  const pos = score - stage.min;
-  return Math.min(100, Math.round((pos / range) * 100));
+  const position = score - stage.min;
+  return Math.max(0, Math.min(100, Math.round((position / range) * 100)));
 }
 
-function getVitalityMessage(vitality) {
+function getVitalityMsg(vitality) {
   if (vitality >= 80) return "You're thriving.";
-  if (vitality >= 50) return "You're growing. Keep going.";
-  if (vitality >= 20) return "Your tree is waiting for you.";
-  return "Every journey has quiet days. Start small.";
+  if (vitality >= 50) return "Keep showing up.";
+  if (vitality >= 20) return "Your tree is waiting.";
+  return "Every journey has quiet days.";
 }
 
 export function useGrowthTree() {
-  const user = useUserStore(state => state.user);
-  const [prevStageId, setPrevStageId] = useState(1);
+  const {
+    user,
+    user_tree: userTree,
+    user_behavior: userBehavior,
+    stats,
+    tasks,
+    loadStats,
+  } = useAppState();
+
+  const previousStageId = useRef(null);
   const [stageUp, setStageUp] = useState(null);
 
-  const { data: metrics, isLoading: loading, refetch } = useQuery({
-    queryKey: ["tree_metrics", user?.id],
-    queryFn: async () => {
-      if (!user) return null;
-
-      // Fetch from Cloud Supabase — use * to avoid 400 if columns are missing
-      const { data: treeRow, error: treeErr } = await supabase
-        .from("user_tree")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (treeErr) {
-        console.warn("user_tree query failed:", treeErr.message);
-      }
-
-      if (!treeRow) {
-        // Initial setup for new user
-        const { data: newTree } = await supabase
-          .from("user_tree")
-          .upsert({ user_id: user.id, cumulative_score: 0, vitality: 50, streak: 0 })
-          .select()
-          .single();
-        return { score: 0, vitality: 50, streak: 0, todayTasks: { done: 0, total: 0 } };
-      }
-
-      const today = new Date().toISOString().split("T")[0];
-      const { data: tasks } = await supabase
-        .from("loop_tasks")
-        .select("completed_at")
-        .eq("user_id", user.id);
-
-      return {
-        score: treeRow?.cumulative_score || 0,
-        vitality: treeRow?.vitality || 50,
-        streak: treeRow?.streak || 0,
-        todayTasks: {
-          done: (tasks || []).filter(t => t.completed_at !== null).length,
-          total: (tasks || []).length
-        }
-      };
-    },
-    enabled: !!user,
-  });
-
   const tree = useMemo(() => {
-    const score = metrics?.score || 0;
-    const vitality = metrics?.vitality || 50;
+    const score = Math.max(0, toFiniteNumber(
+      userTree?.cumulative_score ?? stats?.lifeScore,
+      0
+    ));
+    const vitality = Math.max(0, Math.min(100, toFiniteNumber(
+      userTree?.vitality ?? stats?.vitality,
+      50
+    )));
+    const streak = Math.max(0, toFiniteNumber(
+      userTree?.streak ?? userBehavior?.streak ?? stats?.streak,
+      0
+    ));
+    const done = Array.isArray(tasks)
+      ? tasks.filter(task => task.completed_at || task.done).length
+      : toFiniteNumber(stats?.tasksCompleted, 0);
+    const total = Array.isArray(tasks) ? tasks.length : 0;
+    const completionRate = userBehavior?.avg_completion_rate !== undefined
+      ? Math.round(toFiniteNumber(userBehavior.avg_completion_rate, 0) * 100)
+      : total > 0
+        ? Math.round((done / total) * 100)
+        : 0;
+    const reflectionsDone = toFiniteNumber(
+      userBehavior?.total_reflections ?? stats?.reflectionsDone,
+      0
+    );
     const stage = getStage(score);
-    
+
     return {
       score,
       vitality,
-      streak: metrics?.streak || 0,
+      streak,
       stage,
       progress: getProgress(score, stage),
-      todayTasks: metrics?.todayTasks || { done: 0, total: 0 },
-      message: getVitalityMessage(vitality),
-      stageMessage: stage.message,
+      progressPercent: getProgress(score, stage),
+      tasks: { done, total },
+      todayTasks: { done, total },
+      completionRate,
+      reflectionsDone,
+      message: stage.message,
+      vitalityMsg: getVitalityMsg(vitality),
     };
-  }, [metrics]);
+  }, [stats, tasks, userBehavior, userTree]);
 
-  // Stage-up detection
   useEffect(() => {
-    if (tree.stage.id > prevStageId && prevStageId > 0) {
-      const fromStage = STAGES.find(s => s.id === prevStageId);
+    const lastStageId = previousStageId.current;
+
+    if (lastStageId && tree.stage.id > lastStageId) {
+      const fromStage = STAGES.find(stage => stage.id === lastStageId);
       setStageUp({ from: fromStage, to: tree.stage });
-      setTimeout(() => setStageUp(null), 3500);
+      const timer = window.setTimeout(() => setStageUp(null), 3500);
+      return () => window.clearTimeout(timer);
     }
-    setPrevStageId(tree.stage.id);
-  }, [tree.stage, prevStageId]);
+
+    previousStageId.current = tree.stage.id;
+  }, [tree.stage]);
+
+  useEffect(() => {
+    previousStageId.current = tree.stage.id;
+  }, [tree.stage.id]);
 
   return {
     ...tree,
-    loading,
-    refresh: refetch,
+    loading: Boolean(user && userTree === undefined),
+    refresh: loadStats,
     STAGES,
     stageUp,
     dismissStageUp: () => setStageUp(null),

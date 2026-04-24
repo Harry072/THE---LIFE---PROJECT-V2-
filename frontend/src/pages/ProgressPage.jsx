@@ -2,16 +2,14 @@
  * ProgressPage — Full-size tree view with detailed growth stats.
  * Primary view of the Growth Tree with stage timeline below.
  */
-import { useNavigate } from "react-router-dom";
 import GrowthTree from "../components/GrowthTree";
 import { useGrowthTree } from "../hooks/useGrowthTree";
+import TreeStatCards from "../components/TreeStatCards";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
-import Icon from "../components/Icon";
 
 export default function ProgressPage() {
-  const navigate = useNavigate();
-  const { score, vitality, stage, STAGES, todayTasks, loading } = useGrowthTree();
+  const { stage, STAGES } = useGrowthTree();
 
   return (
     <div style={{
@@ -45,86 +43,19 @@ export default function ProgressPage() {
           margin: "0 auto",
           padding: "8px 32px 48px",
         }}>
-          {/* Page header */}
-          <div style={{
-            marginBottom: 24,
-            animation: "fadeUp 0.6s ease both",
-          }}>
-            <h2 style={{
-              margin: 0,
-              fontSize: 11,
-              fontWeight: 500,
-              letterSpacing: 2.5,
-              textTransform: "uppercase",
-              color: "var(--text-faint)",
-              marginBottom: 6,
-            }}>
-              Your Growth
-            </h2>
-            <h1 style={{
-              margin: 0,
-              fontSize: 28,
-              fontFamily: "var(--font-display)",
-              fontWeight: 600,
-              color: "var(--text)",
-              letterSpacing: "-0.02em",
-            }}>
-              Growth Tree
-            </h1>
-          </div>
-
           {/* Full-size tree */}
           <div style={{
             animation: "fadeUp 0.6s ease 0.15s both",
-            marginBottom: 28,
           }}>
             <GrowthTree compact={false} />
           </div>
 
           {/* Stats row */}
           <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 16,
             marginBottom: 32,
             animation: "fadeUp 0.6s ease 0.25s both",
           }}>
-            {[
-              { label: "Total Score", value: score, icon: "sparkle" },
-              { label: "Vitality", value: `${vitality}%`, icon: "pulse" },
-              { label: "Current Stage", value: stage.name, icon: "progress" },
-              { label: "Tasks Today", value: `${todayTasks.done}/${todayTasks.total}`, icon: "check" },
-            ].map((stat, i) => (
-              <div key={i} style={{
-                background: "var(--bg-card)",
-                backdropFilter: "blur(24px)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-md)",
-                padding: "18px 16px",
-                textAlign: "center",
-              }}>
-                <Icon name={stat.icon} size={18} color="var(--green-bright)"
-                  style={{ marginBottom: 6 }} />
-                <p style={{
-                  margin: "6px 0 2px",
-                  fontSize: 22,
-                  fontFamily: "var(--font-display)",
-                  fontWeight: 600,
-                  color: "var(--text)",
-                }}>
-                  {stat.value}
-                </p>
-                <p style={{
-                  margin: 0,
-                  fontSize: 11,
-                  color: "var(--text-faint)",
-                  textTransform: "uppercase",
-                  letterSpacing: 1.5,
-                }}>
-                  {stat.label}
-                </p>
-              </div>
-            ))}
+            <TreeStatCards />
           </div>
 
           {/* Stage timeline */}
@@ -275,7 +206,7 @@ export default function ProgressPage() {
         @media (max-width: 767px) {
           aside { display: none; }
           main { margin-left: 0 !important; }
-          div[style*="grid-template-columns: repeat(4"] {
+          .tree-stat-grid {
             grid-template-columns: repeat(2, 1fr) !important;
           }
         }

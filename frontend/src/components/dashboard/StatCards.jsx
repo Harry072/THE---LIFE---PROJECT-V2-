@@ -51,9 +51,11 @@ function StatCard({ iconName, iconColor, glowColor,
   );
 }
 
-export default function StatCards() {
+export default function StatCards({ lifeScore }) {
   const navigate = useNavigate();
   const { stats } = useAppState();
+  const hasLifeScoreValue = lifeScore !== undefined && lifeScore !== null;
+  const lifeScoreValue = hasLifeScoreValue ? lifeScore : stats.lifeScore ?? "-";
 
   const cards = [
     { iconName: "leaf", iconColor: "#7fd99a",
@@ -63,7 +65,7 @@ export default function StatCards() {
     },
     { iconName: "flame", iconColor: "#ff9a4d",
       glowColor: "#F0A500",
-      value: stats.lifeScore, label: "Life Score",
+      value: lifeScoreValue, label: "Life Score",
       onClick: () => navigate("/progress#score"),
     },
     { iconName: "pulse", iconColor: "#4da8ff",

@@ -49,7 +49,7 @@ const isLegacyDoneColumnError = (error) => {
 };
 
 export function useLoopTasks() {
-  const { user, updateTreeStats } = useAppState();
+  const { user, updateTreeStats, loadStats } = useAppState();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -96,9 +96,18 @@ export function useLoopTasks() {
     setError(null);
 
     try {
+      const struggles = Array.isArray(user?.onboarding_answers)
+        ? user.onboarding_answers.filter((value) => typeof value === "string" && value.trim())
+        : [];
+      const currentStreak = Number.isFinite(Number(user?.user_tree?.streak))
+        ? Number(user.user_tree.streak)
+        : 0;
+
       const payload = {
         user_id: user.id,
         local_date: getLocalDate(),
+        struggles,
+        current_streak: currentStreak,
       };
 
       const response = await fetch(`${API_BASE_URL}/api/generate-loop-tasks`, {
@@ -144,6 +153,7 @@ export function useLoopTasks() {
           vitality: data?.new_vitality,
           cumulative_score: data?.new_score,
           streak: data?.new_streak,
+          tasksCompleted: data?.new_total_completed,
           tasksCompletedDelta: 1,
         },
       };
@@ -216,6 +226,7 @@ export function useLoopTasks() {
       ))));
 
       updateTreeStats?.(metrics);
+      loadStats?.();
 
       return normalizedTask;
     } catch (err) {
@@ -226,7 +237,7 @@ export function useLoopTasks() {
       setError(err.message || "Failed to update task.");
       throw err;
     }
-  }, [completeTaskInDb, tasks, updateTreeStats]);
+  }, [completeTaskInDb, loadStats, tasks, updateTreeStats]);
 
   useEffect(() => {
     if (!user?.id) {

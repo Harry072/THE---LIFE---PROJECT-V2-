@@ -130,6 +130,12 @@ export default function LoopTaskCard({
 
   // Cinematic image based on category and title
   const taskImage = getCinematicImage(task.category, task.title);
+  const imageSeed = encodeURIComponent(
+    String(task.id ?? `${task.category ?? "task"}-${task.title ?? "card"}`)
+  );
+  const taskImageSrc = taskImage.includes("?")
+    ? `${taskImage}&category=${encodeURIComponent(task.category ?? "task")}&sig=${imageSeed}`
+    : `${taskImage}?category=${encodeURIComponent(task.category ?? "task")}&sig=${imageSeed}`;
 
   return (
     <div
@@ -168,7 +174,7 @@ export default function LoopTaskCard({
           animation: "fadeIn 0.5s ease both",
         }}>
           <img 
-            src={taskImage} 
+            src={taskImageSrc}
             alt={task.title}
             onError={(e) => { e.target.style.display = 'none'; }}
             style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.8 }}

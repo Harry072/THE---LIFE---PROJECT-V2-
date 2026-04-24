@@ -16,8 +16,34 @@ const DOMAIN_LABELS = {
   meaning: "Gratitude & Growth",
 };
 
+const resolveLifeScore = ({
+  cumulative_score,
+}) => {
+  if (cumulative_score === undefined || cumulative_score === null) {
+    return "-";
+  }
+
+  const scoreValue = Number(cumulative_score);
+  return Number.isFinite(scoreValue) ? scoreValue : "-";
+};
+
+const EMPTY_STATS = {
+  streak: "-",
+  lifeScore: "-",
+  tasksCompleted: 0,
+  vitality: 50,
+  completionRate: 0,
+  reflectionsDone: 0,
+};
+
+const EMPTY_BEHAVIOR = {
+  avg_completion_rate: 0,
+  streak: 0,
+  total_reflections: 0,
+};
+
 export function AppStateProvider({ children }) {
-  const user = useUserStore(state => state.user);
+  const storeUser = useUserStore(state => state.user);
 
   // Tasks
   const [tasks, setTasks] = useState([]);
@@ -27,35 +53,39 @@ export function AppStateProvider({ children }) {
 
   // Music player (global)
   const music = useMusicPlayer();
-  const {
-    currentTrack, isPlaying, play: playTrack, pause: pauseTrack,
-  } = music;
 
   // Reading list
   const [readingList, setReadingList] = useState([]);
 
   // Progress stats (derived)
-  const [stats, setStats] = useState({
-    streak: 0,
-    lifeScore: 0,
-    tasksCompleted: 0,
-    vitality: 50,
-  });
+  const [stats, setStats] = useState(EMPTY_STATS);
+  const [userTree, setUserTree] = useState(undefined);
+  const [userBehavior, setUserBehavior] = useState(undefined);
+
+  const user = storeUser
+    ? {
+        ...storeUser,
+        user_tree: userTree ?? storeUser.user_tree,
+        user_behavior: userBehavior ?? storeUser.user_behavior,
+      }
+    : null;
 
   // ─── Load data when user logs in ───
   useEffect(() => {
-    if (!user || !isSupabaseConfigured) {
+    if (!storeUser || !isSupabaseConfigured) {
       setTasks([]);
-      setStats({ streak: 0, lifeScore: 0, tasksCompleted: 0, vitality: 50 });
+      setStats(EMPTY_STATS);
       setReadingList([]);
+      setUserTree(undefined);
+      setUserBehavior(undefined);
       return;
     }
     
     // REAL MODE: Always load from Cloud Supabase
     loadTasks();
-    loadStats();
+    loadStats({ markLoading: true });
     loadReadingList();
-  }, [user]);
+  }, [storeUser]);
 
   // ─── Tasks ───
   const loadTasks = async () => {
@@ -116,11 +146,8 @@ export function AppStateProvider({ children }) {
     });
   }, []);
 
-  const endFocus = useCallback(async (completed = false) => {
+  const endFocus = useCallback(async () => {
     if (!focusSession) return;
-    const elapsed = Math.floor(
-      (Date.now() - new Date(focusSession.startedAt)) / 1000
-    );
 
     /* 
     TABLE MISSING: Disabling focus_sessions insert
@@ -136,7 +163,7 @@ export function AppStateProvider({ children }) {
 
     setFocusSession(null);
     loadStats();
-  }, [focusSession, user]);
+  }, [focusSession]);
 
   // ─── Reading List ───
   const loadReadingList = async () => {
@@ -175,36 +202,132 @@ export function AppStateProvider({ children }) {
   }, [readingList, user]);
 
   // ─── Stats ───
-  const loadStats = async () => {
-    if (!user || !isSupabaseConfigured) return;
+  const fetchUserTreeStats = useCallback(async ({ markLoading = false } = {}) => {
+    if (!storeUser?.id || !isSupabaseConfigured) {
+      setUserTree(undefined);
+      setStats((prev) => ({
+        ...prev,
+        streak: "-",
+        lifeScore: "-",
+        vitality: EMPTY_STATS.vitality,
+      }));
+      return undefined;
+    }
+
+    if (markLoading) {
+      setUserTree(undefined);
+      setStats((prev) => ({
+        ...prev,
+        streak: "-",
+        lifeScore: "-",
+        vitality: EMPTY_STATS.vitality,
+      }));
+    }
+
+    const { data: treeData, error: treeError } = await supabase
+      .from("user_tree")
+      .select("*")
+      .eq("user_id", storeUser.id)
+      .maybeSingle();
+
+    if (treeError) {
+      throw treeError;
+    }
+
+    const nextTree = treeData
+      ? {
+          ...treeData,
+          streak: treeData.streak ?? 0,
+          cumulative_score: treeData.cumulative_score ?? 0,
+          vitality: treeData.vitality ?? EMPTY_STATS.vitality,
+        }
+      : undefined;
+
+    setUserTree(nextTree);
+    setStats((prev) => ({
+      ...prev,
+      streak: nextTree?.streak ?? "-",
+      lifeScore: nextTree
+        ? resolveLifeScore({ cumulative_score: nextTree.cumulative_score })
+        : "-",
+      vitality: nextTree?.vitality ?? EMPTY_STATS.vitality,
+    }));
+
+    return nextTree;
+  }, [storeUser?.id]);
+
+  const fetchUserBehaviorStats = useCallback(async () => {
+    if (!storeUser?.id || !isSupabaseConfigured) {
+      setUserBehavior(undefined);
+      return undefined;
+    }
+
+    const { data: behaviorData, error: behaviorError } = await supabase
+      .from("user_behavior")
+      .select("avg_completion_rate, streak, total_reflections, total_tasks_completed")
+      .eq("user_id", storeUser.id)
+      .maybeSingle();
+
+    if (behaviorError) {
+      console.warn("Failed to load behavior stats:", behaviorError.message);
+      setUserBehavior(undefined);
+      return undefined;
+    }
+
+    const nextBehavior = behaviorData
+      ? {
+          ...behaviorData,
+          avg_completion_rate: behaviorData.avg_completion_rate ?? EMPTY_BEHAVIOR.avg_completion_rate,
+          streak: behaviorData.streak ?? EMPTY_BEHAVIOR.streak,
+          total_reflections: behaviorData.total_reflections ?? EMPTY_BEHAVIOR.total_reflections,
+        }
+      : EMPTY_BEHAVIOR;
+
+    setUserBehavior(nextBehavior);
+    setStats((prev) => ({
+      ...prev,
+      completionRate: Math.round((nextBehavior.avg_completion_rate ?? 0) * 100),
+      reflectionsDone: nextBehavior.total_reflections ?? 0,
+      streak: userTree?.streak ?? nextBehavior.streak ?? prev.streak,
+    }));
+
+    return nextBehavior;
+  }, [storeUser?.id, userTree?.streak]);
+
+  const loadStats = async ({ markLoading = false } = {}) => {
+    if (!storeUser || !isSupabaseConfigured) return;
     try {
       const localDate = new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
-      
-      // 1. Fetch from user_tree using * so missing columns do not 400 the whole request
-      const { data: treeData, error: treeError } = await supabase
-        .from("user_tree")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (treeError) throw treeError;
+      const treeData = await fetchUserTreeStats({ markLoading });
+      const behaviorData = await fetchUserBehaviorStats();
 
       // 2. Fetch completed tasks without HEAD; some Supabase setups reject that count path
       const { data: todayTasks, error: taskError } = await supabase
         .from("loop_tasks")
         .select("id, completed_at")
-        .eq("user_id", user.id)
+        .eq("user_id", storeUser.id)
         .eq("for_date", localDate)
         .not("completed_at", "is", null);
 
       if (taskError) throw taskError;
 
-      setStats({
-        streak: treeData?.streak || 0,
-        lifeScore: treeData?.cumulative_score || 0,
-        tasksCompleted: (todayTasks || []).length,
-        vitality: treeData?.vitality || 50
-      });
+      const completedToday = (todayTasks || []).length;
+
+      setStats((prev) => ({
+        ...prev,
+        streak: treeData?.streak ?? prev.streak,
+        lifeScore: treeData
+          ? resolveLifeScore({ cumulative_score: treeData.cumulative_score })
+          : prev.lifeScore,
+        tasksCompleted: completedToday,
+        vitality: treeData?.vitality ?? prev.vitality,
+        completionRate: behaviorData?.avg_completion_rate !== undefined
+          ? Math.round((behaviorData.avg_completion_rate ?? 0) * 100)
+          : todayTasks?.length
+            ? Math.round((completedToday / todayTasks.length) * 100)
+            : prev.completionRate,
+        reflectionsDone: behaviorData?.total_reflections ?? prev.reflectionsDone,
+      }));
     } catch (err) {
       console.error("Failed to load stats (global):", err);
     }
@@ -217,14 +340,36 @@ export function AppStateProvider({ children }) {
     tasksCompleted,
     tasksCompletedDelta = 0,
   }) => {
+    setUserTree((prev) => {
+      if (!prev && vitality === undefined && cumulative_score === undefined && streak === undefined) {
+        return prev;
+      }
+
+      return {
+        ...(prev ?? {}),
+        ...(vitality !== undefined ? { vitality } : {}),
+        ...(cumulative_score !== undefined ? { cumulative_score } : {}),
+        ...(streak !== undefined ? { streak } : {}),
+      };
+    });
+
+    if (streak !== undefined) {
+      setUserBehavior((prev) => ({
+        ...(prev ?? EMPTY_BEHAVIOR),
+        streak,
+      }));
+    }
+
     setStats((prev) => ({
       ...prev,
       vitality: vitality ?? prev.vitality,
-      lifeScore: cumulative_score ?? prev.lifeScore,
       streak: streak ?? prev.streak,
       tasksCompleted: typeof tasksCompleted === "number"
         ? tasksCompleted
         : Math.max(0, prev.tasksCompleted + tasksCompletedDelta),
+      lifeScore: cumulative_score === undefined
+        ? prev.lifeScore
+        : resolveLifeScore({ cumulative_score }),
     }));
 
     if (!user?.id) return;
@@ -256,11 +401,13 @@ export function AppStateProvider({ children }) {
 
   const value = {
     user,
+    user_tree: userTree,
+    user_behavior: userBehavior,
     tasks, toggleTask, loadTasks,
     focusSession, startFocus, endFocus,
     ...music,
     readingList, addToReadingList,
-    stats, loadStats, setStats, updateTreeStats,
+    stats, loadStats, setStats, fetchUserTreeStats, fetchUserBehaviorStats, updateTreeStats,
     DOMAIN_LABELS,
   };
 

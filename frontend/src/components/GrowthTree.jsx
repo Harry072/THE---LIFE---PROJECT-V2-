@@ -1,237 +1,237 @@
-/**
- * GrowthTree — Cinematic tree component.
- *
- * Renders a dark forest floor background with the tree image for the current
- * stage, a glassmorphism progress bar, ambient glow, and encouragement text.
- * Cross-fades between stages. Uses SVG fallback when images fail to load.
- *
- * Props:
- *   compact  — boolean (default false). If true renders at 280px for sidebar.
- */
-import { useState, useEffect, useRef } from "react";
+import { useMemo } from "react";
 import { useGrowthTree } from "../hooks/useGrowthTree";
-import SvgTree from "./SvgTree";
-import StageUpOverlay from "./StageUpOverlay";
+
+const PARTICLES = [
+  { left: "14%", top: "72%", delay: "0.2s", duration: "8s" },
+  { left: "27%", top: "64%", delay: "1.1s", duration: "10s" },
+  { left: "42%", top: "76%", delay: "0.7s", duration: "9s" },
+  { left: "58%", top: "69%", delay: "1.8s", duration: "11s" },
+  { left: "73%", top: "74%", delay: "0.4s", duration: "8.5s" },
+  { left: "84%", top: "61%", delay: "1.4s", duration: "10.5s" },
+];
+
+function TreeMark({ size = 18 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--green-bright)"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <path d="M12 22V12" />
+      <path d="M12 12c-3-1-5-3-5-6 0-2.2 2-4 5-4s5 1.8 5 4c0 3-2 5-5 6z" />
+      <path d="M12 16c-2.8 0-5 1.7-6 4" />
+      <path d="M12 16c2.8 0 5 1.7 6 4" />
+    </svg>
+  );
+}
 
 export default function GrowthTree({ compact = false }) {
   const {
-    score, vitality, stage, progress,
-    todayTasks, message, stageMessage,
-    loading, stageUp, dismissStageUp,
+    score,
+    vitality,
+    stage,
+    progress,
+    tasks,
+    message,
+    vitalityMsg,
+    loading,
   } = useGrowthTree();
 
-  const [prevStage, setPrevStage] = useState(stage);
-  const [transitioning, setTransitioning] = useState(false);
-  const [glowPulse, setGlowPulse] = useState(false);
-  const [imgError, setImgError] = useState(false);
-  const prevScore = useRef(score);
+  const visuals = useMemo(() => {
+    const imgOpacity = vitality >= 80
+      ? 0.8
+      : vitality >= 50
+        ? 0.65
+        : vitality >= 20
+          ? 0.5
+          : 0.4;
+    const glowStrength = vitality >= 80
+      ? 0.35
+      : vitality >= 50
+        ? 0.2
+        : vitality >= 20
+          ? 0.08
+          : 0;
+    const filter = vitality < 20
+      ? "saturate(0.5) brightness(0.7)"
+      : vitality < 50
+        ? "saturate(0.75) brightness(0.85)"
+        : "saturate(1) brightness(1)";
 
-  // Cross-fade on stage change
-  useEffect(() => {
-    if (stage.id !== prevStage.id) {
-      setTransitioning(true);
-      setImgError(false);
-      setTimeout(() => {
-        setPrevStage(stage);
-        setTransitioning(false);
-      }, 800);
-    }
-  }, [stage]);
+    return { imgOpacity, glowStrength, filter };
+  }, [vitality]);
 
-  // Glow pulse on score increase
-  useEffect(() => {
-    if (score > prevScore.current) {
-      setGlowPulse(true);
-      const t = setTimeout(() => setGlowPulse(false), 1200);
-      prevScore.current = score;
-      return () => clearTimeout(t);
-    }
-    prevScore.current = score;
-  }, [score]);
+  const height = compact ? 300 : 420;
+  const particleOpacity = vitality >= 80 ? 1 : vitality >= 50 ? 0.55 : 0;
 
   if (loading) {
     return (
-      <div style={{
-        width: "100%",
-        height: compact ? 280 : 400,
-        borderRadius: compact ? 16 : 20,
-        background: "#0A0E0C",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}>
+      <div style={{ animation: "fadeUp 0.6s ease 0.2s both" }}>
+        {!compact && (
+          <p style={{
+            margin: "0 0 8px",
+            fontSize: 11,
+            fontWeight: 500,
+            letterSpacing: 2.5,
+            textTransform: "uppercase",
+            color: "var(--text-faint)",
+            fontFamily: "var(--font-body)",
+          }}>
+            Growth Tree
+          </p>
+        )}
         <div style={{
-          width: 32, height: 32,
-          border: "2px solid rgba(46,204,113,0.2)",
-          borderTopColor: "var(--green-bright)",
-          borderRadius: "50%",
-          animation: "spin 1s linear infinite",
+          width: "100%",
+          height,
+          borderRadius: compact ? 16 : 20,
+          background: "#080E0A",
+          border: "1px solid rgba(46,204,113,0.08)",
+          overflow: "hidden",
         }} />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
-  const glowOpacity = vitality >= 80
-    ? 0.35 : vitality >= 50
-    ? 0.2 : vitality >= 20
-    ? 0.08 : 0;
-
-  const height = compact ? 280 : 400;
-
   return (
-    <>
+    <div style={{ animation: "fadeUp 0.6s ease 0.2s both" }}>
+      {!compact && (
+        <p style={{
+          margin: "0 0 8px",
+          fontSize: 11,
+          fontWeight: 500,
+          letterSpacing: 2.5,
+          textTransform: "uppercase",
+          color: "var(--text-faint)",
+          fontFamily: "var(--font-body)",
+        }}>
+          Growth Tree
+        </p>
+      )}
+
       <div style={{
         position: "relative",
         width: "100%",
         height,
         borderRadius: compact ? 16 : 20,
         overflow: "hidden",
-        background: "#0A0E0C",
-        animation: "fadeUp 0.6s ease 0.3s both",
+        background: "#080E0A",
+        border: "1px solid rgba(46,204,113,0.08)",
+        boxShadow: compact ? "none" : "0 24px 70px rgba(0,0,0,0.36)",
       }}>
-        {/* Forest floor background */}
         <img
-          src="/media/tree/forest-floor.jpg"
-          alt=""
+          key={stage.id}
+          src={stage.image}
+          alt={stage.name}
           style={{
-            position: "absolute", inset: 0,
-            width: "100%", height: "100%",
-            objectFit: "cover", opacity: 0.6,
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            opacity: visuals.imgOpacity,
+            transition: "opacity 0.6s ease-in-out, filter 1.5s ease",
+            filter: visuals.filter,
+            animation: "stageCrossFade 0.6s ease-in-out both",
           }}
         />
 
-        {/* Ambient glow */}
         <div style={{
-          position: "absolute", inset: 0,
+          position: "absolute",
+          inset: 0,
+          background: "linear-gradient(180deg, rgba(0,0,0,0.26) 0%, rgba(0,0,0,0.04) 46%, rgba(0,0,0,0.42) 100%)",
+          zIndex: 1,
+          pointerEvents: "none",
+        }} />
+
+        <div key={`glow-${score}`} style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 2,
           background: `radial-gradient(
-            ellipse 80% 60% at 50% 100%,
-            rgba(46,204,113,${glowOpacity * 0.8}),
-            transparent 80%
+            ellipse 60% 50% at 50% 75%,
+            rgba(46,204,113,${visuals.glowStrength}),
+            transparent 70%
           )`,
           transition: "all 1.5s ease",
-          animation: glowPulse
-            ? "treePulse 1.2s ease" : "ambientLight 8s ease-in-out infinite alternate",
-        }} />
-
-        {/* Cinematic Sunbeams Overlay */}
-        <div style={{
-          position: "absolute",
-          top: -100, right: -100,
-          width: "150%", height: "150%",
-          background: "radial-gradient(circle at 80% 20%, rgba(255, 240, 180, 0.15), transparent 60%)",
-          transform: "rotate(-15deg)",
-          zIndex: 1,
+          animation: score > 0 ? "treePulse 1.2s ease" : "none",
           pointerEvents: "none",
         }} />
+
         <div style={{
           position: "absolute",
-          top: 0, right: 0,
-          width: "100%", height: "100%",
-          background: "repeating-linear-gradient(115deg, rgba(255,255,255,0.03) 0px, transparent 100px, rgba(255,255,255,0.03) 200px)",
-          maskImage: "radial-gradient(circle at 100% 0%, black, transparent 70%)",
-          WebkitMaskImage: "radial-gradient(circle at 100% 0%, black, transparent 70%)",
-          zIndex: 1,
-          pointerEvents: "none",
-          opacity: 0.4,
-        }} />
-
-        {/* Floating Particles (Dust/Pollen) */}
-        <div className="particles-container" style={{
-          position: "absolute", inset: 0,
-          zIndex: 1,
+          inset: 0,
+          zIndex: 3,
+          opacity: particleOpacity,
+          transition: "opacity 1.5s ease",
           pointerEvents: "none",
         }}>
-          {Array.from({ length: compact ? 8 : 15 }).map((_, i) => (
-            <div key={i} className="particle" style={{
-              position: "absolute",
-              width: 2, height: 2,
-              borderRadius: "50%",
-              background: "rgba(255,255,255,0.4)",
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              opacity: Math.random() * 0.5,
-              animation: `particleFloat ${5 + Math.random() * 10}s linear infinite`,
-              animationDelay: `${Math.random() * 5}s`,
-            }} />
+          {PARTICLES.slice(0, compact ? 4 : PARTICLES.length).map((particle, index) => (
+            <span
+              key={index}
+              style={{
+                position: "absolute",
+                left: particle.left,
+                top: particle.top,
+                width: 3,
+                height: 3,
+                borderRadius: "50%",
+                background: "rgba(232,232,227,0.55)",
+                boxShadow: "0 0 10px rgba(46,204,113,0.35)",
+                animation: `treeParticle ${particle.duration} linear ${particle.delay} infinite`,
+              }}
+            />
           ))}
         </div>
 
-        {/* Tree image or SVG fallback */}
-        {imgError ? (
-          <div style={{
-            position: "absolute",
-            bottom: compact ? 40 : 60,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 2,
-            filter: vitality < 20
-              ? "saturate(0.5) brightness(0.7)"
-              : vitality < 50
-              ? "saturate(0.8)"
-              : "none",
-            transition: "filter 1.5s ease",
-          }}>
-            <SvgTree stage={stage} vitality={vitality} />
-          </div>
-        ) : (
-          <img
-            src={stage.image}
-            alt={stage.name}
-            onError={() => setImgError(true)}
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: "50%",
-              transform: "translateX(-50%)",
-              height: "75%",
-              objectFit: "contain",
-              opacity: transitioning ? 0 : 1,
-              transition: "opacity 0.8s ease-in-out, filter 1.5s ease",
-              filter: vitality < 20
-                ? "saturate(0.5) brightness(0.7)"
-                : vitality < 50
-                ? "saturate(0.8)"
-                : "none",
-              zIndex: 2,
-              animation: "treeSway 6s ease-in-out infinite",
-              transformOrigin: "bottom center",
-            }}
-          />
-        )}
-
-        {/* Progress bar (glassmorphism overlay) */}
         <div style={{
           position: "absolute",
-          top: compact ? 10 : 16,
-          left: compact ? 10 : 20,
-          right: compact ? 10 : 20,
+          top: compact ? 12 : 16,
+          left: compact ? 12 : 20,
+          right: compact ? 12 : 20,
           zIndex: 10,
-          padding: compact ? "8px 12px" : "12px 16px",
+          padding: compact ? "10px 12px" : "14px 18px",
           background: "rgba(10, 15, 13, 0.55)",
           backdropFilter: "blur(16px)",
           WebkitBackdropFilter: "blur(16px)",
           border: "1px solid rgba(46,204,113,0.15)",
           borderRadius: 14,
         }}>
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 10,
+          }}>
             <div style={{
               display: "flex",
-              alignItems: "baseline", gap: 10,
+              alignItems: "center",
+              gap: compact ? 7 : 10,
+              minWidth: 0,
             }}>
+              <TreeMark size={compact ? 16 : 18} />
               <span style={{
-                fontSize: compact ? 12 : 24,
-                fontFamily: "var(--font-display)",
-                fontWeight: 400,
+                fontSize: compact ? 13 : 16,
+                fontWeight: 500,
                 color: "var(--text)",
-                letterSpacing: "0.02em",
+                fontFamily: "var(--font-body)",
+                whiteSpace: "nowrap",
               }}>
                 Progress
               </span>
               <span style={{
-                fontSize: compact ? 14 : 22,
+                fontSize: compact ? 16 : 20,
+                fontWeight: 500,
+                color: "var(--green-bright)",
                 fontFamily: "var(--font-display)",
-                fontWeight: 400,
-                color: "rgba(232, 232, 227, 0.6)",
+                whiteSpace: "nowrap",
               }}>
                 {score} pts.
               </span>
@@ -240,15 +240,14 @@ export default function GrowthTree({ compact = false }) {
               fontSize: compact ? 11 : 14,
               color: "var(--green-bright)",
               fontFamily: "var(--font-body)",
-              opacity: 0.8,
-              letterSpacing: "0.01em",
+              whiteSpace: "nowrap",
             }}>
-              {todayTasks.done}/{todayTasks.total} {compact ? "" : "Tasks Completed"}
+              {tasks.done}/{tasks.total} {compact ? "Tasks" : "Tasks Completed"}
             </span>
+          </div>
 
-          {/* Progress bar track */}
           <div style={{
-            height: compact ? 4 : 6,
+            height: 6,
             borderRadius: 3,
             background: "rgba(255,255,255,0.08)",
             overflow: "hidden",
@@ -259,85 +258,81 @@ export default function GrowthTree({ compact = false }) {
               borderRadius: 3,
               background: "linear-gradient(90deg, var(--green), var(--green-bright))",
               transition: "width 0.8s ease",
-              boxShadow: glowPulse
-                ? "0 0 12px var(--green-glow)" : "none",
+              boxShadow: score > 0 ? "0 0 12px var(--green-glow)" : "none",
             }} />
           </div>
         </div>
 
-        {/* Bottom labels */}
         <div style={{
           position: "absolute",
-          bottom: compact ? 8 : 16,
-          left: 0, right: 0,
+          bottom: compact ? 16 : 20,
+          left: 0,
+          right: 0,
           textAlign: "center",
           zIndex: 10,
+          padding: "0 18px",
         }}>
           <p style={{
             margin: 0,
-            fontSize: compact ? 14 : 22,
+            fontSize: compact ? 16 : 20,
             fontFamily: "var(--font-display)",
             fontWeight: 500,
             color: "var(--green-bright)",
-            textShadow: "0 2px 10px rgba(0,0,0,0.6)",
-            letterSpacing: "0.03em",
+            fontStyle: "italic",
+            textShadow: "0 2px 12px rgba(0,0,0,0.64)",
           }}>
-            You’re Growing +
+            {message}
           </p>
           <p style={{
             margin: "4px 0 0",
-            fontSize: compact ? 11 : 14,
-            color: "rgba(232,232,227,0.4)",
+            fontSize: compact ? 11 : 12,
+            color: "rgba(232,232,227,0.45)",
             fontFamily: "var(--font-body)",
-            textShadow: "0 1px 4px rgba(0,0,0,0.5)",
-            letterSpacing: "0.05em",
-            textTransform: "uppercase",
+            letterSpacing: 1,
+            textShadow: "0 2px 8px rgba(0,0,0,0.6)",
           }}>
-            Keep Going!
+            Stage {stage.id} - {stage.name} - {vitalityMsg}
           </p>
         </div>
-
-        <style>{`
-          @keyframes treePulse {
-            0% { 
-              opacity: 1; 
-              background: radial-gradient(ellipse 60% 50% at 50% 70%, rgba(46,204,113,0.1), transparent 70%);
-            }
-            50% { 
-              opacity: 1;
-              background: radial-gradient(
-                ellipse 85% 75% at 50% 70%,
-                rgba(46,204,113,0.5),
-                transparent 70%); 
-            }
-            100% { 
-              opacity: 1; 
-              background: radial-gradient(ellipse 60% 50% at 50% 70%, rgba(46,204,113,0.1), transparent 70%);
-            }
-          }
-
-          @keyframes treeSway {
-            0%, 100% { transform: translateX(-50%) rotate(0deg) skewX(0deg); }
-            25% { transform: translateX(-50%) rotate(0.5deg) skewX(0.2deg); }
-            75% { transform: translateX(-50%) rotate(-0.5deg) skewX(-0.2deg); }
-          }
-
-          @keyframes ambientLight {
-            0% { opacity: 0.6; transform: scale(1); }
-            100% { opacity: 1; transform: scale(1.1); }
-          }
-
-          @keyframes particleFloat {
-            0% { transform: translate(0, 0); opacity: 0; }
-            10% { opacity: 0.5; }
-            90% { opacity: 0.5; }
-            100% { transform: translate(20px, -100px); opacity: 0; }
-          }
-        `}</style>
       </div>
 
-      {/* Stage-up celebration overlay */}
-      <StageUpOverlay stageUp={stageUp} onDismiss={dismissStageUp} />
-    </>
+      <style>{`
+        @keyframes treePulse {
+          0% {
+            background: radial-gradient(
+              ellipse 60% 50% at 50% 75%,
+              rgba(46,204,113,${visuals.glowStrength}),
+              transparent 70%
+            );
+          }
+          50% {
+            background: radial-gradient(
+              ellipse 65% 55% at 50% 75%,
+              rgba(46,204,113,0.45),
+              transparent 70%
+            );
+          }
+          100% {
+            background: radial-gradient(
+              ellipse 60% 50% at 50% 75%,
+              rgba(46,204,113,${visuals.glowStrength}),
+              transparent 70%
+            );
+          }
+        }
+
+        @keyframes treeParticle {
+          0% { transform: translate3d(0, 0, 0); opacity: 0; }
+          15% { opacity: 0.55; }
+          85% { opacity: 0.45; }
+          100% { transform: translate3d(18px, -98px, 0); opacity: 0; }
+        }
+
+        @keyframes stageCrossFade {
+          from { opacity: 0; }
+          to { opacity: ${visuals.imgOpacity}; }
+        }
+      `}</style>
+    </div>
   );
 }

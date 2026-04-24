@@ -1,17 +1,29 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLoopTasks } from "../hooks/useLoopTasks";
+import { useAppState } from "../contexts/AppStateContext";
 import LoopTaskCard from "../components/loop/LoopTaskCard";
 import LoopDetailPanel from "../components/loop/LoopDetailPanel";
 
 export default function TheLoopPage() {
   const navigate = useNavigate();
+  // useLoopTasks reads the current user from AppStateContext,
+  // including onboarding_answers and user_tree.streak for personalized generation.
   // Destructure correctly: hook returns { tasks: { tasks, insight }, loading, ... }
   const { data: loopData, loading, error, generating, refresh, toggleTask, clearError } = useLoopTasks();
+  const { user, user_tree } = useAppState();
   
   const tasks = loopData?.tasks || [];
   const dailyInsight = loopData?.insight || "Your path is unfolding as it should.";
   const [activeId, setActiveId] = useState(null);
+  const completedToday = tasks.filter(task => task.done).length;
+  const streakDisplay = user_tree?.streak ?? "-";
+  const lifeScoreDisplay = user_tree?.cumulative_score ?? "-";
+  const momentumCards = [
+    { label: "Day Streak", value: streakDisplay },
+    { label: "Life Score", value: lifeScoreDisplay },
+    { label: "Completed Today", value: completedToday },
+  ];
 
   useEffect(() => {
     if (error) {
@@ -29,6 +41,8 @@ export default function TheLoopPage() {
   const activeTask = tasks.find(t => t.id === activeId) || sorted[0] || null;
 
   const handleRefresh = async () => {
+    if (!user?.id) return;
+
     try {
       await refresh();
     } catch (err) {
@@ -106,6 +120,46 @@ export default function TheLoopPage() {
               "{dailyInsight}"
             </p>
           </div>
+
+          <div className="loop-momentum-grid" style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: 14,
+            marginTop: 18,
+          }}>
+            {momentumCards.map((card) => (
+              <div
+                key={card.label}
+                style={{
+                  padding: "16px 18px",
+                  borderRadius: 18,
+                  background: "linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  backdropFilter: "blur(20px)",
+                }}
+              >
+                <p style={{
+                  margin: 0,
+                  fontSize: 11,
+                  letterSpacing: 2,
+                  textTransform: "uppercase",
+                  color: "var(--text-faint)",
+                }}>
+                  {card.label}
+                </p>
+                <p style={{
+                  margin: "8px 0 0",
+                  fontSize: 26,
+                  fontFamily: "var(--font-display)",
+                  fontWeight: 600,
+                  color: "var(--text)",
+                  lineHeight: 1,
+                }}>
+                  {card.value}
+                </p>
+              </div>
+            ))}
+          </div>
         </header>
 
         {error && (
@@ -127,7 +181,7 @@ export default function TheLoopPage() {
         )}
 
         {/* Main Content Layout */}
-        <div style={{ 
+        <div className="loop-main-layout" style={{ 
           display: "grid", 
           gridTemplateColumns: "1fr 420px", 
           gap: 40, 
@@ -266,6 +320,14 @@ export default function TheLoopPage() {
         }
         .the-loop-page * {
           box-sizing: border-box;
+        }
+        @media (max-width: 900px) {
+          .the-loop-page .loop-main-layout {
+            grid-template-columns: 1fr !important;
+          }
+          .the-loop-page .loop-momentum-grid {
+            grid-template-columns: 1fr !important;
+          }
         }
       `}</style>
     </div>
