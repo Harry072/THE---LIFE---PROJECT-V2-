@@ -1,113 +1,127 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { useUserStore } from "../store/userStore";
-import { getDailyQuestions } from "../data/reflectionQuestions";
-import { awardTreePoints, checkAllTasksBonus } from "../services/treeScoring";
+
+const REFLECTION_QUESTIONS = [
+  "What stayed with you today?",
+  "What did you carry quietly today?",
+  "What is one small thing you want to do differently tomorrow?",
+];
+
+const getLocalDate = () => {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().split("T")[0];
+};
+
+const normalizeAnswers = (items) => {
+  const nextAnswers = {};
+
+  REFLECTION_QUESTIONS.forEach((question, index) => {
+    const saved = Array.isArray(items)
+      ? items.find((item) => item?.q === question) ?? items[index]
+      : null;
+
+    nextAnswers[index] = typeof saved === "string" ? "" : saved?.a ?? "";
+  });
+
+  return nextAnswers;
+};
 
 export function useReflection() {
-  const user = useUserStore(state => state.user);
-  const today = new Date().toISOString().split("T")[0];
+  const user = useUserStore((state) => state.user);
+  const today = getLocalDate();
 
-  const [questions, setQuestions] = useState([]);
+  const [questions] = useState(REFLECTION_QUESTIONS);
   const [answers, setAnswers] = useState({});
+  const [selectedMood, setSelectedMood] = useState(null);
   const [savedToday, setSavedToday] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pastReflections, setPastReflections] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saveError, setSaveError] = useState("");
 
-  // Load today's reflection and history
-  useEffect(() => {
-    if (!user) return;
-    loadToday();
-    loadPast();
-  }, [user]);
-
-  const loadToday = async () => {
-    setLoading(true);
+  const loadPast = useCallback(async () => {
+    if (!user) {
+      setPastReflections([]);
+      return;
+    }
 
     try {
-      // Check if already saved today
+      const { data, error } = await supabase
+        .from("reflections")
+        .select("id, for_date, questions, mood, insight_text")
+        .eq("user_id", user.id)
+        .order("for_date", { ascending: false })
+        .limit(14);
+
+      if (error) throw error;
+      setPastReflections(data || []);
+    } catch (error) {
+      console.error("Error loading past reflections:", error);
+      setPastReflections([]);
+    }
+  }, [user]);
+
+  const loadToday = useCallback(async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setSaveError("");
+
+    try {
       const { data: existing, error } = await supabase
         .from("reflections")
-        .select("id, user_id, for_date, questions, mood, pattern_tags")
+        .select("id, user_id, for_date, questions, mood")
         .eq("user_id", user.id)
         .eq("for_date", today)
         .maybeSingle();
 
+      if (error) throw error;
+
       if (existing) {
-        // Already reflected today — load saved answers
-        // Handle both spec formats: [{q, a}] or simple array
-        const qs = Array.isArray(existing.questions) 
-          ? existing.questions.map(q => typeof q === 'string' ? q : q.q)
-          : [];
-        
-        const ans = {};
-        if (Array.isArray(existing.questions)) {
-          existing.questions.forEach((q, i) => {
-            ans[i] = typeof q === 'string' ? "" : q.a;
-          });
-        }
-        
-        setQuestions(qs);
-        setAnswers(ans);
+        setAnswers(normalizeAnswers(existing.questions));
+        setSelectedMood(existing.mood || null);
         setSavedToday(true);
       } else {
-        // Generate fresh questions for today
-        const qs = await getQuestionsWithFallback(today);
-        setQuestions(qs);
         setAnswers({});
+        setSelectedMood(null);
         setSavedToday(false);
       }
-    } catch (err) {
-      console.error("Error loading today's reflection:", err);
+    } catch (error) {
+      console.error("Error loading today's reflection:", error);
+      setSaveError("We could not load your reflection yet. Your writing space is still here.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [today, user]);
 
-  // Try AI API, fall back to local curated pool
-  const getQuestionsWithFallback = async (dateStr) => {
-    try {
-      // AI generation endpoint (conceptual/optional)
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
-      
-      const res = await fetch("/api/reflection-questions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: dateStr }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
+  useEffect(() => {
+    loadToday();
+    loadPast();
+  }, [loadPast, loadToday]);
 
-      if (res.ok) {
-        const { questions } = await res.json();
-        if (Array.isArray(questions) && questions.length >= 3)
-          return questions.slice(0, 3);
-      }
-    } catch (e) {
-      // Silently fall back to local pool on timeout/error
-    }
-    return getDailyQuestions(dateStr);
-  };
-
-  // Update a single answer in local state
   const setAnswer = useCallback((index, value) => {
-    setAnswers(prev => ({ ...prev, [index]: value }));
+    setAnswers((prev) => ({ ...prev, [index]: value }));
+    setSaveError("");
   }, []);
 
-  // Save or update the reflection in Supabase
-  const save = useCallback(async (mood) => {
-    if (!user || saving) return;
+  const save = useCallback(async () => {
+    if (!user || saving) return { success: false };
+
     setSaving(true);
+    setSaveError("");
 
     const payload = {
       user_id: user.id,
       for_date: today,
-      mood: mood || null,
-      questions: questions.map((q, i) => ({
-        q,
-        a: (answers[i] || "").trim(),
+      mood: selectedMood || null,
+      questions: REFLECTION_QUESTIONS.map((question, index) => ({
+        q: question,
+        a: (answers[index] || "").trim(),
       })),
     };
 
@@ -121,49 +135,31 @@ export function useReflection() {
       if (error) throw error;
 
       setSavedToday(true);
-      loadPast(); // Refresh history grid
-
-      // Award tree points for reflection
-      awardTreePoints(user.id, 'REFLECTION');
-      checkAllTasksBonus(user.id);
-
+      await loadPast();
       return { success: true };
     } catch (error) {
       console.error("Save error:", error);
+      setSaveError("We could not save this just now. Your words are still here.");
       return { success: false, error };
     } finally {
       setSaving(false);
     }
-  }, [user, saving, today, questions, answers]);
+  }, [answers, loadPast, saving, selectedMood, today, user]);
 
-  // Load the last 2 weeks of reflections
-  const loadPast = async () => {
-    if (!user) return;
-    try {
-      const { data } = await supabase
-        .from("reflections")
-        .select("id, for_date, questions, mood")
-        .eq("user_id", user.id)
-        .order("for_date", { ascending: false })
-        .limit(14);
-      setPastReflections(data || []);
-    } catch (err) {
-      console.error("Error loading past reflections:", err);
-    }
-  };
-
-  // Check if at least one question has text
   const hasContent = Object.values(answers).some(
-    a => a && a.trim().length > 0
+    (answer) => answer && answer.trim().length > 0
   );
 
   return {
     questions,
     answers,
     setAnswer,
+    selectedMood,
+    setSelectedMood,
     savedToday,
     saving,
     save,
+    saveError,
     pastReflections,
     loading,
     hasContent,
