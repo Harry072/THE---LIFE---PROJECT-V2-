@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useReflection } from "../hooks/useReflection";
 
@@ -12,20 +12,65 @@ const INNER_WEATHER = [
   { id: "numb", label: "Numb", note: "Hard to name" },
 ];
 
-const THINKING_POINTS = [
-  "one moment that stayed with you",
-  "one feeling you ignored",
-  "one thing you postponed",
-  "one person or situation that affected you",
+const HELPER_GROUPS = [
+  {
+    title: "Look for one moment:",
+    items: ["a conversation", "a silence", "a mistake", "a relief"],
+  },
+  {
+    title: "Name one feeling:",
+    items: ["not perfectly, just closely"],
+  },
+  {
+    title: "Notice the story:",
+    items: ["what happened", "what you told yourself it meant"],
+  },
+  {
+    title: "End small:",
+    items: ["one sentence about tomorrow is enough"],
+  },
 ];
 
-const STARTERS = [
-  "Today I noticed...",
-  "I kept thinking about...",
-  "I felt heavy when...",
-  "I avoided...",
+const STARTER_CHIPS = [
+  "I keep returning to...",
+  "The moment I can’t shake is...",
+  "I felt most myself when...",
+  "I felt pulled away from myself when...",
   "Tomorrow I want to...",
 ];
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return "";
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+};
+
+const getMoodLabel = (mood) => {
+  return INNER_WEATHER.find((weather) => weather.id === mood)?.label || "Unmarked";
+};
+
+const getReflectionItems = (reflection) => {
+  return Array.isArray(reflection?.questions)
+    ? reflection.questions.filter((item) => item && typeof item === "object")
+    : [];
+};
+
+const getPrompt = (item) => item?.prompt ?? item?.q ?? "Reflection prompt";
+const getAnswer = (item) => item?.answer ?? item?.a ?? "";
+
+const getPreview = (reflection) => {
+  const firstAnswer = getReflectionItems(reflection)
+    .map(getAnswer)
+    .find((answer) => answer?.trim());
+
+  if (!firstAnswer) return "A quiet entry.";
+
+  const trimmed = firstAnswer.trim();
+  return trimmed.length > 120 ? `${trimmed.slice(0, 120)}...` : trimmed;
+};
 
 export default function ReflectionPage() {
   const navigate = useNavigate();
@@ -36,20 +81,25 @@ export default function ReflectionPage() {
     selectedMood,
     setSelectedMood,
     savedToday,
+    loading,
     saving,
     save,
-    saveError,
-    pastReflections,
-    loading,
+    statusMessage,
+    statusTone,
     hasContent,
+    recentReflections,
+    archiveLoading,
+    archiveError,
+    loadRecentReflections,
     today,
   } = useReflection();
 
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [openHelpers, setOpenHelpers] = useState({});
-  const [openArchiveId, setOpenArchiveId] = useState(null);
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [openReflectionId, setOpenReflectionId] = useState(null);
+  const [openHelpers, setOpenHelpers] = useState({});
+  const [focusedChipId, setFocusedChipId] = useState(null);
+  const textareaRefs = useRef({});
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 760px)");
@@ -62,51 +112,56 @@ export default function ReflectionPage() {
   }, []);
 
   const handleSave = async () => {
-    const result = await save();
-    if (result?.success) {
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 5000);
-    }
+    await save();
+  };
+
+  const openArchive = async () => {
+    setArchiveOpen(true);
+    await loadRecentReflections();
+  };
+
+  const closeArchive = () => {
+    setArchiveOpen(false);
+  };
+
+  const editToday = () => {
+    setArchiveOpen(false);
+    window.setTimeout(() => {
+      textareaRefs.current[0]?.focus();
+      textareaRefs.current[0]?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 0);
   };
 
   const toggleHelper = (index) => {
     setOpenHelpers((prev) => ({ ...prev, [index]: !prev[index] }));
   };
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return "";
-    return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-    });
+  const insertStarter = (index, starter) => {
+    const current = answers[index] || "";
+    const next = current.trim()
+      ? `${current.replace(/\s+$/, "")}\n${starter}`
+      : starter;
+
+    setAnswer(index, next);
+    window.setTimeout(() => textareaRefs.current[index]?.focus(), 0);
   };
 
-  const getWeatherLabel = (mood) => {
-    return INNER_WEATHER.find((item) => item.id === mood)?.label || "Unmarked";
-  };
-
-  const getAnswerItems = (reflection) => {
-    return Array.isArray(reflection?.questions)
-      ? reflection.questions.filter((item) => item && typeof item !== "string")
-      : [];
-  };
-
-  const getPreview = (reflection) => {
-    const firstAnswer = getAnswerItems(reflection).find((item) => item.a?.trim());
-    if (!firstAnswer) return "A quiet entry.";
-    const preview = firstAnswer.a.trim();
-    return preview.length > 120 ? `${preview.slice(0, 120)}...` : preview;
-  };
+  const buttonLabel = savedToday ? "Update Reflection" : "Save This Reflection";
+  const activeStatus = loading ? "Preparing a quiet page..." : statusMessage;
 
   if (loading) {
     return (
       <div style={styles.page}>
         <div style={styles.bgImage} />
         <div style={styles.ambientOverlay} />
-        <div style={styles.container}>
-          <p style={styles.loadingText}>Preparing a quiet page...</p>
-        </div>
+        <main style={styles.container}>
+          <p role="status" aria-live="polite" style={styles.loadingText}>
+            {activeStatus}
+          </p>
+        </main>
       </div>
     );
   }
@@ -119,36 +174,41 @@ export default function ReflectionPage() {
       <main style={styles.container}>
         <div style={styles.topActions}>
           <button
+            type="button"
             onClick={() => navigate("/dashboard")}
             style={styles.backBtn}
           >
-            Return to Dashboard
+            ← Return to Dashboard
           </button>
           <button
             type="button"
-            onClick={() => setArchiveOpen(true)}
-            style={styles.archiveOpenBtn}
+            onClick={openArchive}
+            style={styles.archiveBtn}
           >
             Inner Archive
-            <span style={styles.archiveOpenCount}>{pastReflections.length}</span>
           </button>
         </div>
 
         {archiveOpen && (
-          <div style={styles.drawerBackdrop} onClick={() => setArchiveOpen(false)}>
+          <div style={styles.drawerBackdrop} onClick={closeArchive}>
             <aside
-              style={styles.archiveDrawer}
-              onClick={(event) => event.stopPropagation()}
+              style={{
+                ...styles.archiveDrawer,
+                ...(isCompact ? styles.archiveDrawerMobile : {}),
+              }}
               aria-label="Inner Archive"
+              onClick={(event) => event.stopPropagation()}
             >
               <div style={styles.archiveHeader}>
-                <div>
-                  <p style={styles.cardEyebrow}>Private memory journal</p>
+                <div style={styles.archiveTitleBlock}>
                   <h2 style={styles.archiveTitle}>Inner Archive</h2>
+                  <p style={styles.archiveSubtitle}>
+                    Your saved reflections, kept by date.
+                  </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setArchiveOpen(false)}
+                  onClick={closeArchive}
                   style={styles.drawerCloseBtn}
                   aria-label="Close Inner Archive"
                 >
@@ -156,59 +216,89 @@ export default function ReflectionPage() {
                 </button>
               </div>
 
-              {pastReflections.length === 0 ? (
-                <div style={styles.emptyArchive}>
-                  Your archive is quiet for now. Save your first reflection.
-                </div>
-              ) : (
-                <div style={styles.archiveList}>
-                  {pastReflections.map((reflection) => {
-                    const isOpen = openArchiveId === reflection.id;
-                    const answerItems = getAnswerItems(reflection);
+              {archiveLoading && (
+                <p style={styles.archiveMessage}>Loading your recent reflections...</p>
+              )}
 
-                    return (
-                      <article key={reflection.id} style={styles.archiveCard}>
-                        <button
-                          type="button"
-                          onClick={() => setOpenArchiveId(isOpen ? null : reflection.id)}
-                          style={styles.archiveButton}
-                          aria-expanded={isOpen}
-                        >
+              {archiveError && (
+                <p role="status" style={styles.archiveError}>
+                  {archiveError}
+                </p>
+              )}
+
+              {!archiveLoading && !archiveError && recentReflections.length === 0 && (
+                <p style={styles.archiveMessage}>
+                  Your archive is quiet for now. Save your first reflection.
+                </p>
+              )}
+
+              <div style={styles.archiveList}>
+                {recentReflections.map((reflection) => {
+                  const isToday = reflection.for_date === today;
+                  const expanded = openReflectionId === reflection.id;
+                  const items = getReflectionItems(reflection);
+
+                  return (
+                    <article key={reflection.id} style={styles.archiveCard}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenReflectionId(expanded ? null : reflection.id);
+                        }}
+                        style={styles.archiveSummary}
+                        aria-expanded={expanded}
+                      >
+                        <span style={styles.archiveEntryTopline}>
                           <span style={styles.archiveDate}>
                             {formatDate(reflection.for_date)}
                           </span>
-                          <span style={styles.archiveMood}>
-                            {getWeatherLabel(reflection.mood)}
-                          </span>
-                          <span style={styles.archivePreview}>
-                            {getPreview(reflection)}
-                          </span>
-                        </button>
+                          {isToday && (
+                            <span style={styles.todayPill}>Today</span>
+                          )}
+                        </span>
+                        <span style={styles.archiveMood}>
+                          {getMoodLabel(reflection.mood)}
+                        </span>
+                        <span style={styles.archivePreview}>
+                          {getPreview(reflection)}
+                        </span>
+                      </button>
 
-                        {isOpen && (
-                          <div style={styles.archiveDetail}>
-                            {answerItems.length === 0 ? (
-                              <p style={styles.archiveAnswer}>This entry was saved quietly.</p>
-                            ) : (
-                              answerItems.map((item) => (
-                                <div key={item.q} style={styles.archiveAnswerBlock}>
-                                  <p style={styles.archiveQuestion}>{item.q}</p>
-                                  <p style={styles.archiveAnswer}>
-                                    {item.a?.trim() || "No words saved for this question."}
-                                  </p>
-                                </div>
-                              ))
-                            )}
-                            {reflection.insight_text && (
-                              <p style={styles.archiveInsight}>{reflection.insight_text}</p>
-                            )}
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
+                      {expanded && (
+                        <div style={styles.archiveDetail}>
+                          {items.length === 0 ? (
+                            <p style={styles.archiveAnswer}>No answers saved for this entry.</p>
+                          ) : (
+                            items.map((item, index) => (
+                              <div
+                                key={`${getPrompt(item)}-${index}`}
+                                style={styles.archiveAnswerBlock}
+                              >
+                                <p style={styles.archiveQuestion}>{getPrompt(item)}</p>
+                                <p style={styles.archiveAnswer}>
+                                  {getAnswer(item).trim() || "No answer saved."}
+                                </p>
+                              </div>
+                            ))
+                          )}
+
+                          {isToday ? (
+                            <button
+                              type="button"
+                              onClick={editToday}
+                              style={styles.editTodayBtn}
+                            >
+                              Edit today
+                            </button>
+                          ) : (
+                            <p style={styles.readOnlyNote}>Read-only entry</p>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
             </aside>
           </div>
         )}
@@ -226,6 +316,7 @@ export default function ReflectionPage() {
             ...styles.marcusCard,
             ...(isCompact ? styles.marcusCardCompact : {}),
           }}
+          aria-labelledby="marcus-title"
         >
           <div
             style={{
@@ -242,61 +333,60 @@ export default function ReflectionPage() {
           </div>
           <div style={styles.marcusText}>
             <p style={styles.cardEyebrow}>Evening practice</p>
-            <h2 style={styles.cardTitle}>Marcus&apos; Private Journal</h2>
+            <h2 id="marcus-title" style={styles.cardTitle}>
+              Marcus&apos; Private Journal
+            </h2>
             <p style={styles.cardCopy}>
-              Before ruling an empire, Marcus tried to rule himself. Marcus Aurelius,
-              a Roman emperor, used private writing to steady himself through
-              responsibility, pressure, ego, hardship, and duty. His reflections were
-              not written to impress anyone. They were a way to return to humility and
-              govern himself first. This space is inspired by that same idea: before
-              improving life outside, you learn to sit honestly with the life inside.
+              Before ruling an empire, Marcus tried to rule himself. This space is
+              inspired by the same private discipline: a few honest lines, written
+              without performance, to return to humility and inner steadiness.
             </p>
           </div>
         </section>
 
-        {showSuccess && (
-          <div style={styles.successBanner}>
-            <span style={styles.successMark}>Saved</span>
-            <div>
-              <p style={styles.successTitle}>Reflection saved</p>
-              <p style={styles.successCopy}>
-                Your words stay in your private archive.
-              </p>
-            </div>
-          </div>
-        )}
+        <p style={styles.reassurance}>
+          No need to explain your whole day. One honest sentence is enough.
+        </p>
 
-        {saveError && (
-          <div style={styles.errorBanner}>
-            {saveError}
-          </div>
-        )}
-
-        <section style={styles.section}>
-          <p style={styles.sectionLabel}>What is your inner weather tonight?</p>
+        <fieldset style={styles.weatherFieldset}>
+          <legend style={styles.weatherLegend}>
+            What is your inner weather tonight?
+          </legend>
           <div style={styles.weatherGrid}>
             {INNER_WEATHER.map((weather) => {
               const active = selectedMood === weather.id;
               return (
-                <button
+                <label
                   key={weather.id}
-                  onClick={() => setSelectedMood(weather.id)}
                   style={{
-                    ...styles.weatherBtn,
-                    ...(active ? styles.weatherBtnActive : {}),
+                    ...styles.weatherOption,
+                    ...(active ? styles.weatherOptionActive : {}),
                   }}
                 >
-                  <span style={styles.weatherLabel}>{weather.label}</span>
-                  <span style={styles.weatherNote}>{weather.note}</span>
-                </button>
+                  <input
+                    type="radio"
+                    name="inner-weather"
+                    value={weather.id}
+                    checked={active}
+                    onChange={() => setSelectedMood(weather.id)}
+                    style={styles.weatherInput}
+                  />
+                  <span style={styles.weatherText}>
+                    <span style={styles.weatherLabel}>{weather.label}</span>
+                    <span style={styles.weatherNote}>{weather.note}</span>
+                  </span>
+                </label>
               );
             })}
           </div>
-        </section>
+        </fieldset>
 
         <section style={styles.questionsList} aria-label="Reflection questions">
           {questions.map((question, index) => {
             const helperOpen = Boolean(openHelpers[index]);
+            const helperId = `reflection-helper-${index}`;
+            const toggleId = `reflection-helper-toggle-${index}`;
+
             return (
               <article key={question} style={styles.questionCard}>
                 <div style={styles.questionNumber}>{index + 1}</div>
@@ -305,45 +395,77 @@ export default function ReflectionPage() {
                 </label>
                 <textarea
                   id={`reflection-${index}`}
+                  ref={(node) => {
+                    if (node) textareaRefs.current[index] = node;
+                  }}
                   value={answers[index] || ""}
                   onChange={(event) => setAnswer(index, event.target.value)}
                   placeholder="Write the first honest sentence that comes."
                   rows={5}
+                  maxLength={2500}
+                  aria-describedby={helperOpen ? helperId : undefined}
                   style={styles.textarea}
                 />
 
                 <button
+                  id={toggleId}
                   type="button"
                   onClick={() => toggleHelper(index)}
                   style={styles.helperToggle}
                   aria-expanded={helperOpen}
+                  aria-controls={helperId}
                 >
-                  A gentle place to begin
-                  <span style={styles.helperChevron}>{helperOpen ? "-" : "+"}</span>
+                  I don’t know what to write
+                  <span style={styles.helperToggleMark}>{helperOpen ? "-" : "+"}</span>
                 </button>
 
                 {helperOpen && (
-                  <div style={styles.helperPanel}>
-                    <div style={styles.helperColumn}>
-                      <p style={styles.helperHeading}>Think about</p>
-                      <ul style={styles.helperList}>
-                        {THINKING_POINTS.map((point) => (
-                          <li key={point} style={styles.helperItem}>{point}</li>
-                        ))}
-                      </ul>
+                  <div
+                    id={helperId}
+                    role="region"
+                    aria-labelledby={toggleId}
+                    style={styles.helperPanel}
+                  >
+                    <p style={styles.helperHeading}>A gentle place to begin</p>
+
+                    <div style={styles.helperGrid}>
+                      {HELPER_GROUPS.map((group) => (
+                        <div key={group.title} style={styles.helperGroup}>
+                          <p style={styles.helperGroupTitle}>{group.title}</p>
+                          <ul style={styles.helperList}>
+                            {group.items.map((item) => (
+                              <li key={item} style={styles.helperItem}>
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
                     </div>
-                    <div style={styles.helperColumn}>
-                      <p style={styles.helperHeading}>Start with</p>
-                      <ul style={styles.helperList}>
-                        {STARTERS.map((starter) => (
-                          <li key={starter} style={styles.helperItem}>{starter}</li>
-                        ))}
-                      </ul>
+
+                    <div style={styles.chipRow} aria-label="Sentence starters">
+                      {STARTER_CHIPS.map((starter) => {
+                        const chipId = `${index}-${starter}`;
+                        const focused = focusedChipId === chipId;
+
+                        return (
+                          <button
+                            key={starter}
+                            type="button"
+                            onClick={() => insertStarter(index, starter)}
+                            onFocus={() => setFocusedChipId(chipId)}
+                            onBlur={() => setFocusedChipId(null)}
+                            style={{
+                              ...styles.starterChip,
+                              ...(focused ? styles.starterChipFocus : {}),
+                            }}
+                            aria-label={`Insert starter: ${starter}`}
+                          >
+                            {starter}
+                          </button>
+                        );
+                      })}
                     </div>
-                    <p style={styles.helperExample}>
-                      Example: "I felt restless after scrolling for too long. I think
-                      I was avoiding my work."
-                    </p>
                   </div>
                 )}
               </article>
@@ -353,6 +475,7 @@ export default function ReflectionPage() {
 
         <section style={styles.saveSection}>
           <button
+            type="button"
             onClick={handleSave}
             disabled={saving || !hasContent}
             style={{
@@ -360,12 +483,21 @@ export default function ReflectionPage() {
               ...((saving || !hasContent) ? styles.saveBtnDisabled : {}),
             }}
           >
-            {saving
-              ? "Saving..."
-              : savedToday
-                ? "Update Reflection"
-                : "Save This Reflection"}
+            {buttonLabel}
           </button>
+
+          <p
+            role="status"
+            aria-live="polite"
+            style={{
+              ...styles.statusText,
+              ...(statusTone === "success" ? styles.statusSuccess : {}),
+              ...(statusTone === "error" ? styles.statusError : {}),
+            }}
+          >
+            {activeStatus || "\u00a0"}
+          </p>
+
           <p style={styles.privacyNote}>
             Your words stay in your private archive.
           </p>
@@ -412,17 +544,17 @@ const styles = {
   container: {
     position: "relative",
     zIndex: 2,
-    width: "min(100% - 32px, 820px)",
+    width: "min(100% - 32px, 860px)",
     margin: "0 auto",
-    padding: "48px 0 96px",
+    padding: "44px 0 88px",
   },
   topActions: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     gap: 12,
     flexWrap: "wrap",
-    marginBottom: 46,
+    marginBottom: 42,
   },
   backBtn: {
     background: "rgba(255, 255, 255, 0.05)",
@@ -435,31 +567,17 @@ const styles = {
     transition: "all 0.2s ease",
     backdropFilter: "blur(10px)",
   },
-  archiveOpenBtn: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 10,
+  archiveBtn: {
     background: "rgba(13, 46, 34, 0.56)",
     border: "1px solid rgba(130, 231, 173, 0.22)",
     color: "rgba(255, 250, 240, 0.82)",
-    padding: "10px 14px",
+    padding: "10px 18px",
     borderRadius: 999,
     cursor: "pointer",
     fontSize: 13,
     fontWeight: 800,
     transition: "all 0.2s ease",
     backdropFilter: "blur(10px)",
-  },
-  archiveOpenCount: {
-    minWidth: 24,
-    height: 24,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 999,
-    background: "rgba(130, 231, 173, 0.13)",
-    color: "#9ff0bf",
-    fontSize: 12,
   },
   drawerBackdrop: {
     position: "fixed",
@@ -469,7 +587,7 @@ const styles = {
     backdropFilter: "blur(8px)",
   },
   archiveDrawer: {
-    width: "min(92vw, 460px)",
+    width: "min(92vw, 410px)",
     height: "100vh",
     overflowY: "auto",
     padding: "28px 22px",
@@ -478,6 +596,35 @@ const styles = {
     borderRight: "1px solid rgba(130, 231, 173, 0.2)",
     boxShadow: "30px 0 80px rgba(0, 0, 0, 0.42)",
     boxSizing: "border-box",
+  },
+  archiveDrawerMobile: {
+    width: "100vw",
+    maxWidth: "100vw",
+    borderRight: "none",
+  },
+  archiveHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 18,
+    marginBottom: 20,
+    flexWrap: "wrap",
+  },
+  archiveTitleBlock: {
+    minWidth: 0,
+  },
+  archiveTitle: {
+    margin: 0,
+    fontFamily: "var(--font-display)",
+    fontSize: "clamp(26px, 5vw, 36px)",
+    fontWeight: 500,
+    color: "#fffaf0",
+  },
+  archiveSubtitle: {
+    margin: "6px 0 0",
+    color: "rgba(255, 250, 240, 0.54)",
+    fontSize: 13,
+    lineHeight: 1.45,
   },
   drawerCloseBtn: {
     background: "rgba(255, 255, 255, 0.06)",
@@ -488,6 +635,136 @@ const styles = {
     cursor: "pointer",
     fontSize: 12,
     fontWeight: 800,
+  },
+  archiveMessage: {
+    margin: 0,
+    padding: "18px",
+    borderRadius: 18,
+    background: "rgba(255, 255, 255, 0.04)",
+    border: "1px solid rgba(255, 255, 255, 0.07)",
+    color: "rgba(255, 250, 240, 0.62)",
+    lineHeight: 1.6,
+  },
+  archiveError: {
+    margin: 0,
+    padding: "18px",
+    borderRadius: 18,
+    background: "rgba(160, 69, 42, 0.18)",
+    border: "1px solid rgba(255, 170, 128, 0.28)",
+    color: "#ffd2bd",
+    lineHeight: 1.6,
+  },
+  archiveList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  archiveCard: {
+    borderRadius: 18,
+    background: "rgba(0, 0, 0, 0.22)",
+    border: "1px solid rgba(255, 255, 255, 0.07)",
+    overflow: "hidden",
+  },
+  archiveSummary: {
+    width: "100%",
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: "8px 12px",
+    alignItems: "center",
+    padding: "16px",
+    background: "transparent",
+    border: "none",
+    color: "#fffaf0",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  archiveEntryTopline: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    minWidth: 0,
+  },
+  archiveDate: {
+    color: "rgba(255, 250, 240, 0.78)",
+    fontSize: 13,
+    fontWeight: 800,
+    overflowWrap: "break-word",
+  },
+  todayPill: {
+    borderRadius: 999,
+    border: "1px solid rgba(130, 231, 173, 0.24)",
+    background: "rgba(130, 231, 173, 0.1)",
+    color: "#9ff0bf",
+    flex: "0 0 auto",
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: 1.1,
+    padding: "4px 8px",
+    textTransform: "uppercase",
+  },
+  archiveMood: {
+    alignSelf: "start",
+    borderRadius: 999,
+    border: "1px solid rgba(130, 231, 173, 0.18)",
+    background: "rgba(13, 46, 34, 0.42)",
+    color: "rgba(130, 231, 173, 0.82)",
+    fontSize: 12,
+    fontWeight: 900,
+    justifySelf: "start",
+    padding: "5px 9px",
+    textTransform: "capitalize",
+    overflowWrap: "break-word",
+  },
+  archivePreview: {
+    color: "rgba(255, 250, 240, 0.58)",
+    fontSize: 13,
+    lineHeight: 1.5,
+    overflowWrap: "break-word",
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+  },
+  archiveDetail: {
+    padding: "0 16px 16px",
+  },
+  archiveAnswerBlock: {
+    paddingTop: 16,
+    borderTop: "1px solid rgba(255, 255, 255, 0.07)",
+  },
+  archiveQuestion: {
+    margin: "0 0 7px",
+    color: "rgba(255, 250, 240, 0.48)",
+    fontSize: 13,
+    fontWeight: 800,
+    overflowWrap: "break-word",
+  },
+  archiveAnswer: {
+    margin: "0 0 14px",
+    color: "rgba(255, 250, 240, 0.78)",
+    fontSize: 14,
+    lineHeight: 1.65,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "break-word",
+  },
+  editTodayBtn: {
+    background: "linear-gradient(135deg, #0f7c50 0%, #2bb673 100%)",
+    border: "none",
+    borderRadius: 999,
+    color: "#03110b",
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 900,
+    padding: "10px 16px",
+  },
+  readOnlyNote: {
+    margin: "4px 0 0",
+    color: "rgba(255, 250, 240, 0.42)",
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
   },
   header: {
     textAlign: "center",
@@ -526,12 +803,12 @@ const styles = {
   marcusCard: {
     ...sharedCard,
     display: "grid",
-    gridTemplateColumns: "minmax(300px, 38%) minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(320px, 40%) minmax(0, 1fr)",
     gap: 32,
     alignItems: "center",
     borderRadius: 28,
     padding: 22,
-    marginBottom: 28,
+    marginBottom: 24,
   },
   marcusCardCompact: {
     gridTemplateColumns: "1fr",
@@ -540,7 +817,7 @@ const styles = {
   marcusImageWrap: {
     position: "relative",
     width: "100%",
-    maxWidth: 360,
+    maxWidth: 350,
     height: 340,
     justifySelf: "start",
     overflow: "hidden",
@@ -558,7 +835,7 @@ const styles = {
     width: "100%",
     height: "100%",
     objectFit: "cover",
-    objectPosition: "center top",
+    objectPosition: "center 18%",
     display: "block",
     filter: "saturate(0.94) contrast(1.04)",
   },
@@ -597,80 +874,62 @@ const styles = {
     color: "rgba(255, 250, 240, 0.72)",
     overflowWrap: "break-word",
   },
-  successBanner: {
-    display: "flex",
-    alignItems: "center",
-    gap: 16,
-    padding: "16px 20px",
-    background: "rgba(28, 142, 88, 0.18)",
-    border: "1px solid rgba(88, 224, 152, 0.3)",
-    borderRadius: 20,
-    marginBottom: 24,
-    color: "#9ff0bf",
-    backdropFilter: "blur(12px)",
-  },
-  successMark: {
-    fontSize: 12,
-    fontWeight: 800,
-    letterSpacing: 1.4,
-    textTransform: "uppercase",
-    padding: "8px 10px",
-    borderRadius: 999,
-    background: "rgba(88, 224, 152, 0.12)",
-  },
-  successTitle: {
-    margin: 0,
-    fontWeight: 700,
-  },
-  successCopy: {
-    margin: "3px 0 0",
-    fontSize: 13,
-    color: "rgba(255, 250, 240, 0.68)",
-  },
-  errorBanner: {
-    padding: "16px 18px",
-    background: "rgba(160, 69, 42, 0.18)",
-    border: "1px solid rgba(255, 170, 128, 0.28)",
-    borderRadius: 18,
-    marginBottom: 24,
-    color: "#ffd2bd",
+  reassurance: {
+    margin: "0 0 30px",
+    textAlign: "center",
+    color: "rgba(255, 250, 240, 0.64)",
     fontSize: 14,
+    lineHeight: 1.6,
   },
-  section: {
-    marginBottom: 34,
+  weatherFieldset: {
+    border: "none",
+    padding: 0,
+    margin: "0 0 34px",
+    minWidth: 0,
   },
-  sectionLabel: {
+  weatherLegend: {
+    width: "100%",
     textAlign: "center",
     fontSize: 15,
     color: "rgba(255, 250, 240, 0.72)",
     margin: "0 0 18px",
+    padding: 0,
   },
   weatherGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
     gap: 12,
   },
-  weatherBtn: {
+  weatherOption: {
     minHeight: 86,
     display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    gap: 7,
-    padding: "16px",
+    alignItems: "center",
+    gap: 11,
+    padding: "15px 14px",
     borderRadius: 18,
     background: "rgba(8, 15, 13, 0.62)",
     border: "1px solid rgba(255, 255, 255, 0.08)",
     color: "rgba(255, 250, 240, 0.82)",
     cursor: "pointer",
     transition: "all 0.2s ease",
-    textAlign: "left",
     backdropFilter: "blur(10px)",
   },
-  weatherBtnActive: {
+  weatherOptionActive: {
     background: "linear-gradient(145deg, rgba(31, 119, 77, 0.42), rgba(212, 165, 83, 0.16))",
     border: "1px solid rgba(130, 231, 173, 0.42)",
     boxShadow: "0 16px 36px rgba(24, 130, 80, 0.18)",
+  },
+  weatherInput: {
+    width: 18,
+    height: 18,
+    accentColor: "#2bb673",
+    flex: "0 0 auto",
+  },
+  weatherText: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    minWidth: 0,
   },
   weatherLabel: {
     fontSize: 16,
@@ -737,71 +996,97 @@ const styles = {
   },
   helperToggle: {
     width: "100%",
-    marginTop: 16,
-    padding: "13px 0",
+    marginTop: 14,
+    padding: "12px 0",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 14,
+    gap: 12,
     background: "transparent",
     border: "none",
-    borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-    color: "rgba(255, 250, 240, 0.74)",
+    borderTop: "1px solid rgba(130, 231, 173, 0.11)",
+    color: "rgba(255, 250, 240, 0.72)",
     cursor: "pointer",
     fontSize: 14,
-    fontWeight: 700,
+    fontWeight: 800,
     textAlign: "left",
   },
-  helperChevron: {
+  helperToggleMark: {
+    width: 24,
+    height: 24,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    width: 24,
-    height: 24,
     borderRadius: "50%",
-    background: "rgba(255, 255, 255, 0.07)",
+    background: "rgba(130, 231, 173, 0.1)",
+    color: "#9ff0bf",
     flex: "0 0 auto",
   },
   helperPanel: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 18,
-    padding: "18px",
+    marginTop: 2,
+    padding: 16,
     borderRadius: 18,
-    background: "rgba(255, 250, 240, 0.05)",
-    border: "1px solid rgba(255, 255, 255, 0.08)",
-  },
-  helperColumn: {
-    minWidth: 0,
+    background: "rgba(2, 10, 8, 0.42)",
+    border: "1px solid rgba(130, 231, 173, 0.16)",
+    boxShadow: "0 14px 34px rgba(0, 0, 0, 0.2)",
   },
   helperHeading: {
-    margin: "0 0 10px",
+    margin: "0 0 13px",
+    color: "rgba(255, 250, 240, 0.84)",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+  helperGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+    gap: 12,
+  },
+  helperGroup: {
+    minWidth: 0,
+  },
+  helperGroupTitle: {
+    margin: "0 0 7px",
+    color: "rgba(130, 231, 173, 0.74)",
     fontSize: 12,
-    letterSpacing: 1.8,
-    textTransform: "uppercase",
-    color: "rgba(130, 231, 173, 0.68)",
-    fontWeight: 800,
+    fontWeight: 900,
   },
   helperList: {
     margin: 0,
     paddingLeft: 18,
-    color: "rgba(255, 250, 240, 0.7)",
+    color: "rgba(255, 250, 240, 0.64)",
+    fontSize: 13,
+    lineHeight: 1.55,
   },
   helperItem: {
-    marginBottom: 7,
-    lineHeight: 1.5,
+    marginBottom: 4,
     overflowWrap: "break-word",
   },
-  helperExample: {
-    gridColumn: "1 / -1",
-    margin: 0,
+  chipRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 9,
+    marginTop: 15,
     paddingTop: 14,
-    borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-    color: "rgba(255, 250, 240, 0.62)",
-    fontSize: 14,
-    lineHeight: 1.6,
-    fontStyle: "italic",
+    borderTop: "1px solid rgba(255, 255, 255, 0.07)",
+  },
+  starterChip: {
+    border: "1px solid rgba(130, 231, 173, 0.18)",
+    background: "rgba(13, 46, 34, 0.46)",
+    color: "rgba(255, 250, 240, 0.78)",
+    borderRadius: 999,
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 800,
+    lineHeight: 1.35,
+    padding: "9px 12px",
+    maxWidth: "100%",
     overflowWrap: "break-word",
+    transition: "all 0.2s ease",
+  },
+  starterChipFocus: {
+    border: "1px solid rgba(130, 231, 173, 0.72)",
+    boxShadow: "0 0 0 3px rgba(46, 204, 113, 0.18)",
+    color: "#fffaf0",
   },
   saveSection: {
     textAlign: "center",
@@ -825,120 +1110,22 @@ const styles = {
     cursor: "default",
     boxShadow: "none",
   },
+  statusText: {
+    minHeight: 22,
+    margin: "15px 0 0",
+    color: "rgba(255, 250, 240, 0.58)",
+    fontSize: 14,
+    lineHeight: 1.5,
+  },
+  statusSuccess: {
+    color: "#9ff0bf",
+  },
+  statusError: {
+    color: "#ffd2bd",
+  },
   privacyNote: {
     fontSize: 13,
     color: "rgba(255, 250, 240, 0.46)",
-    margin: "16px 0 0",
-  },
-  archiveSection: {
-    ...sharedCard,
-    borderRadius: 28,
-    padding: "26px",
-  },
-  archiveHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 18,
-    marginBottom: 20,
-    flexWrap: "wrap",
-  },
-  archiveTitle: {
-    margin: 0,
-    fontFamily: "var(--font-display)",
-    fontSize: "clamp(26px, 5vw, 36px)",
-    fontWeight: 500,
-    color: "#fffaf0",
-  },
-  archiveCount: {
-    margin: 0,
-    padding: "8px 12px",
-    borderRadius: 999,
-    background: "rgba(255, 255, 255, 0.06)",
-    color: "rgba(255, 250, 240, 0.58)",
-    fontSize: 12,
-    fontWeight: 700,
-  },
-  emptyArchive: {
-    padding: "22px",
-    borderRadius: 18,
-    background: "rgba(255, 255, 255, 0.04)",
-    border: "1px solid rgba(255, 255, 255, 0.07)",
-    color: "rgba(255, 250, 240, 0.62)",
-    lineHeight: 1.6,
-  },
-  archiveList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
-  archiveCard: {
-    borderRadius: 18,
-    background: "rgba(0, 0, 0, 0.22)",
-    border: "1px solid rgba(255, 255, 255, 0.07)",
-    overflow: "hidden",
-  },
-  archiveButton: {
-    width: "100%",
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-    gap: 12,
-    alignItems: "center",
-    padding: "16px",
-    background: "transparent",
-    border: "none",
-    color: "#fffaf0",
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  archiveDate: {
-    color: "rgba(255, 250, 240, 0.78)",
-    fontSize: 13,
-    fontWeight: 800,
-    overflowWrap: "break-word",
-  },
-  archiveMood: {
-    color: "rgba(130, 231, 173, 0.72)",
-    fontSize: 13,
-    fontWeight: 800,
-    textTransform: "capitalize",
-    overflowWrap: "break-word",
-  },
-  archivePreview: {
-    color: "rgba(255, 250, 240, 0.58)",
-    fontSize: 13,
-    lineHeight: 1.5,
-    overflowWrap: "break-word",
-  },
-  archiveDetail: {
-    padding: "0 16px 16px",
-  },
-  archiveAnswerBlock: {
-    paddingTop: 16,
-    borderTop: "1px solid rgba(255, 255, 255, 0.07)",
-  },
-  archiveQuestion: {
-    margin: "0 0 7px",
-    color: "rgba(255, 250, 240, 0.48)",
-    fontSize: 13,
-    fontWeight: 800,
-    overflowWrap: "break-word",
-  },
-  archiveAnswer: {
-    margin: "0 0 14px",
-    color: "rgba(255, 250, 240, 0.78)",
-    fontSize: 14,
-    lineHeight: 1.65,
-    whiteSpace: "pre-wrap",
-    overflowWrap: "break-word",
-  },
-  archiveInsight: {
-    margin: "4px 0 0",
-    padding: "14px",
-    borderRadius: 14,
-    background: "rgba(130, 231, 173, 0.08)",
-    color: "rgba(255, 250, 240, 0.74)",
-    fontSize: 14,
-    lineHeight: 1.6,
+    margin: "12px 0 0",
   },
 };
