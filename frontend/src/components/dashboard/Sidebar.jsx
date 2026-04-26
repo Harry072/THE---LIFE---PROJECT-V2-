@@ -2,6 +2,7 @@ import Icon from "../Icon";
 import GrowthTree from "../GrowthTree";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useUserStore } from "../../store/userStore";
+import { getPreferredInitial, getPreferredUsername } from "../../utils/userDisplayName";
 
 const NAV = [
   { id: "dashboard", label: "Dashboard",     icon: "dashboard", path: "/dashboard" },
@@ -62,8 +63,8 @@ export default function Sidebar() {
   const activePath = location.pathname;
   const user = useUserStore(state => state.user);
   const profile = useUserStore(state => state.profile);
-  const displayName = profile?.display_name || user?.email?.split('@')[0] || "Explorer";
-  const initials = displayName.charAt(0).toUpperCase();
+  const displayName = getPreferredUsername(user, profile);
+  const initials = getPreferredInitial(user, profile);
 
   return (
     <aside style={{

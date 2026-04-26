@@ -15,7 +15,9 @@ import CuratorPage from './features/curator/CuratorPage';
 
 const ProtectedRoute = ({ children }) => {
   const user = useUserStore(state => state.user);
-  if (!user) {
+  const session = useUserStore(state => state.session);
+  const isVerified = useUserStore(state => state.isVerified);
+  if (!user || !session || !isVerified) {
     return <Navigate to="/" replace />;
   }
   return children;
@@ -23,12 +25,16 @@ const ProtectedRoute = ({ children }) => {
 
 function AppRoutes() {
   const user = useUserStore(state => state.user);
+  const session = useUserStore(state => state.session);
+  const isVerified = useUserStore(state => state.isVerified);
+  const isAuthenticated = Boolean(user && session && isVerified);
+
   return (
     <>
       <GlobalNowPlaying />
       <Routes>
         {/* Public */}
-        <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Onboarding />} />
+        <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" /> : <Onboarding />} />
 
         {/* Protected — existing pages */}
         <Route path="/dashboard" element={

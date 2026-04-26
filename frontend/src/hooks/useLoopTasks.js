@@ -202,7 +202,13 @@ export function useLoopTasks() {
         loadStats?.(),
       ]);
 
-      return normalizedTask;
+      return {
+        ...normalizedTask,
+        completionPayload: {
+          task: normalizedTask,
+          metrics,
+        },
+      };
     } catch (err) {
       console.error("Error completing task:", err);
       setTasks((prev) => prev.map((task) => (

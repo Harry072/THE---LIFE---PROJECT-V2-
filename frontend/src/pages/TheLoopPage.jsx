@@ -1,9 +1,30 @@
-import React, { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLoopTasks } from "../hooks/useLoopTasks";
 import { useAppState } from "../contexts/AppStateContext";
 import LoopTaskCard from "../components/loop/LoopTaskCard";
 import LoopDetailPanel from "../components/loop/LoopDetailPanel";
+import LoopIntroVideo from "../components/loop/LoopIntroVideo";
+import LoopNotificationToast from "../components/loop/LoopNotificationToast";
+
+const LOOP_INTRO_VIDEO_STORAGE_KEY = "lifeProject.loopIntroVideoSeen";
+
+const LOOP_TOAST_MESSAGES = {
+  waiting: "Your daily practices are waiting. Start with the smallest one.",
+  taskComplete: "One practice completed. Your tree gained vitality.",
+  allComplete: "Today's Loop is complete. Small actions become identity.",
+  streak: "Your streak continues. Consistency is becoming part of you.",
+};
+
+const toFiniteNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const getInitialIntroVideoVisibility = () => {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(LOOP_INTRO_VIDEO_STORAGE_KEY) !== "true";
+};
 
 export default function TheLoopPage() {
   const navigate = useNavigate();
@@ -13,9 +34,15 @@ export default function TheLoopPage() {
   const { data: loopData, loading, error, generating, refresh, toggleTask, clearError } = useLoopTasks();
   const { user, user_tree } = useAppState();
   
-  const tasks = loopData?.tasks || [];
+  const tasks = useMemo(() => loopData?.tasks || [], [loopData?.tasks]);
   const dailyInsight = loopData?.insight || "Your path is unfolding as it should.";
   const [activeId, setActiveId] = useState(null);
+  const [showLoopIntroVideo, setShowLoopIntroVideo] = useState(getInitialIntroVideoVisibility);
+  const [isLoopIntroReplay, setIsLoopIntroReplay] = useState(false);
+  const [currentToast, setCurrentToast] = useState(null);
+  const waitingToastShownRef = useRef(false);
+  const currentToastRef = useRef(null);
+  const toastQueueRef = useRef([]);
   const completedToday = tasks.filter(task => task.done).length;
   const streakDisplay = user_tree?.streak ?? "-";
   const lifeScoreDisplay = user_tree?.cumulative_score ?? "-";
@@ -32,6 +59,102 @@ export default function TheLoopPage() {
     }
   }, [error, clearError]);
 
+  const showNextToast = useCallback(() => {
+    if (currentToastRef.current || toastQueueRef.current.length === 0) return;
+
+    const [nextToast, ...remainingToasts] = toastQueueRef.current;
+    toastQueueRef.current = remainingToasts;
+    currentToastRef.current = nextToast;
+    setCurrentToast(nextToast);
+  }, []);
+
+  const enqueueToast = useCallback((key, message) => {
+    if (!key || !message) return;
+
+    const duplicatePending = toastQueueRef.current.some((toast) => toast.key === key);
+    if (duplicatePending || currentToastRef.current?.key === key) return;
+
+    const nextToast = { key, message };
+    if (!currentToastRef.current) {
+      currentToastRef.current = nextToast;
+      setCurrentToast(nextToast);
+      return;
+    }
+
+    toastQueueRef.current = [...toastQueueRef.current, nextToast];
+  }, []);
+
+  useEffect(() => {
+    if (
+      waitingToastShownRef.current ||
+      loading ||
+      generating ||
+      showLoopIntroVideo ||
+      tasks.length === 0 ||
+      !tasks.some((task) => !task.done)
+    ) {
+      return;
+    }
+
+    waitingToastShownRef.current = true;
+    const timer = window.setTimeout(() => {
+      enqueueToast("daily-practices-waiting", LOOP_TOAST_MESSAGES.waiting);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [enqueueToast, generating, loading, showLoopIntroVideo, tasks]);
+
+  const closeCurrentToast = useCallback(() => {
+    currentToastRef.current = null;
+    setCurrentToast(null);
+    window.setTimeout(showNextToast, 0);
+  }, [showNextToast]);
+
+  const dismissLoopIntroVideo = useCallback(() => {
+    if (!isLoopIntroReplay) {
+      window.localStorage.setItem(LOOP_INTRO_VIDEO_STORAGE_KEY, "true");
+    }
+    setShowLoopIntroVideo(false);
+    setIsLoopIntroReplay(false);
+  }, [isLoopIntroReplay]);
+
+  const replayLoopIntroVideo = useCallback(() => {
+    setIsLoopIntroReplay(true);
+    setShowLoopIntroVideo(true);
+  }, []);
+
+  const handleTaskToggle = useCallback(async (taskId, updatedTask) => {
+    const streakBeforeCompletion = toFiniteNumber(user_tree?.streak);
+    const result = await toggleTask(taskId, updatedTask);
+    const completionPayload = result?.completionPayload;
+    const metrics = completionPayload?.metrics;
+
+    if (!updatedTask && metrics) {
+      const awardedPoints = toFiniteNumber(metrics.awardedPoints);
+
+      if (awardedPoints > 0) {
+        if (metrics.allTasksComplete) {
+          enqueueToast(
+            `all-complete-${taskId}`,
+            LOOP_TOAST_MESSAGES.allComplete
+          );
+        } else {
+          enqueueToast(
+            `task-complete-${taskId}`,
+            LOOP_TOAST_MESSAGES.taskComplete
+          );
+        }
+
+        const newStreak = toFiniteNumber(metrics.streak);
+        if (streakBeforeCompletion > 0 && newStreak > streakBeforeCompletion) {
+          enqueueToast(`streak-${newStreak}`, LOOP_TOAST_MESSAGES.streak);
+        }
+      }
+    }
+
+    return result;
+  }, [enqueueToast, toggleTask, user_tree?.streak]);
+
   // Sort: uncompleted first, then completed
   const sorted = [...tasks].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
@@ -45,7 +168,7 @@ export default function TheLoopPage() {
 
     try {
       await refresh();
-    } catch (err) {
+    } catch {
       // Error managed by hook
     }
   };
@@ -101,6 +224,25 @@ export default function TheLoopPage() {
               ← Dashboard
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={replayLoopIntroVideo}
+            style={{
+              margin: "-10px 0 18px",
+              padding: 0,
+              border: "none",
+              background: "transparent",
+              color: "rgba(126,217,154,0.82)",
+              fontSize: 13,
+              fontFamily: "var(--font-body)",
+              cursor: "pointer",
+              textDecoration: "underline",
+              textUnderlineOffset: 4,
+            }}
+          >
+            Why The Loop Works
+          </button>
 
           <div className="insight-card" style={{
             padding: "20px 24px",
@@ -230,7 +372,7 @@ export default function TheLoopPage() {
                     task={task}
                     isActive={activeId === task.id || (!activeId && task.id === sorted[0]?.id)}
                     onHover={() => setActiveId(task.id)}
-                    onToggle={toggleTask}
+                    onToggle={handleTaskToggle}
                   />
                 ))}
               </div>
@@ -330,6 +472,16 @@ export default function TheLoopPage() {
           }
         }
       `}</style>
+
+      <LoopIntroVideo
+        isOpen={showLoopIntroVideo}
+        onDismiss={dismissLoopIntroVideo}
+      />
+      <LoopNotificationToast
+        isVisible={Boolean(currentToast)}
+        message={currentToast?.message}
+        onClose={closeCurrentToast}
+      />
     </div>
   );
 }

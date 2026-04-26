@@ -3,7 +3,7 @@ import { useUserStore } from '../store/userStore';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PremiumButton, GlassCard, InputGroup, PageTransition } from '../components/common/ThemeUI';
-import { Mail, Lock, Shield, ArrowRight, Compass, Info } from 'lucide-react';
+import { Mail, Lock, Shield, ArrowRight, Compass, Info, User } from 'lucide-react';
 import heroImage from '../assets/hero-tree.png';
 
 const STRUGGLES = [
@@ -18,15 +18,19 @@ const STRUGGLES = [
   "I feel completely alone"
 ];
 
+const MotionDiv = motion.div;
+const MotionP = motion.p;
+
 function Onboarding() {
   const [selectedStruggles, setSelectedStruggles] = useState([]);
   const [step, setStep] = useState(0); // 0: Enter, 1: Struggles, 2: Insight, 3: Auth
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLogin, setIsLogin] = useState(false);
   const [error, setError] = useState(null);
   
-  const { register, login } = useUserStore();
+  const { register, login, loginWithGoogle } = useUserStore();
   const navigate = useNavigate();
 
   const toggleStruggle = (struggle) => {
@@ -47,20 +51,54 @@ function Onboarding() {
     return "You're carrying a heavy cognitive load right now. Feeling adrift isn't a sign of failure; it's a sign that your current map doesn't match the territory. Let's build a new one slowly.";
   };
 
+  const validateUsername = () => {
+    const cleanUsername = username.trim().replace(/\s+/g, ' ');
+    if (!cleanUsername) return "Username is required.";
+    if (cleanUsername.length < 2) return "Username must be at least 2 characters.";
+    if (cleanUsername.length > 30) return "Username must be 30 characters or less.";
+    if (!/^[A-Za-z0-9_ ]+$/.test(cleanUsername)) {
+      return "Username can use letters, numbers, spaces, and underscore only.";
+    }
+    return null;
+  };
+
+  const authMessageFor = (result, modeIsLogin) => {
+    if (result?.reason === 'email_unverified') {
+      return "Check your email to verify your account before entering.";
+    }
+    if (modeIsLogin || result?.reason === 'invalid_credentials') {
+      return "Invalid email or password.";
+    }
+    return "Authentication failed. Please try again.";
+  };
+
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setError(null);
-    let success = false;
+    let result;
     if (isLogin) {
-      success = await login(email, password);
+      result = await login(email, password);
     } else {
-      success = await register(email, password, selectedStruggles);
+      const usernameError = validateUsername();
+      if (usernameError) {
+        setError(usernameError);
+        return;
+      }
+      result = await register(email, password, selectedStruggles, username.trim().replace(/\s+/g, ' '));
     }
 
-    if (success) {
+    if (result.ok) {
       navigate('/dashboard');
     } else {
-      setError("Authentication failed. Please check your network connection or credentials.");
+      setError(authMessageFor(result, isLogin));
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    setError(null);
+    const result = await loginWithGoogle();
+    if (!result.ok && result.reason !== 'oauth_started') {
+      setError("Authentication failed. Please try again.");
     }
   };
 
@@ -87,7 +125,7 @@ function Onboarding() {
           {step === 0 && (
             <PageTransition key="step0">
               <div style={{ textAlign: 'center', maxWidth: '600px', margin: '0 auto' }}>
-                <motion.div
+                <MotionDiv
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 1.2 }}
@@ -96,7 +134,7 @@ function Onboarding() {
                   <p style={{ fontSize: '1.25rem', color: 'var(--text-secondary)', marginBottom: '3rem' }}>
                     A space to slow down, look inward, and grow beyond the loop.
                   </p>
-                </motion.div>
+                </MotionDiv>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }}>
                   <PremiumButton onClick={() => setStep(1)} style={{ width: '100%', maxWidth: '280px' }}>
@@ -115,7 +153,7 @@ function Onboarding() {
                 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', marginBottom: '3rem' }}>
                   {STRUGGLES.map((struggle, idx) => (
-                    <motion.div
+                    <MotionDiv
                       key={struggle}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -139,7 +177,7 @@ function Onboarding() {
                             {struggle}
                          </div>
                       </div>
-                    </motion.div>
+                    </MotionDiv>
                   ))}
                 </div>
 
@@ -165,14 +203,14 @@ function Onboarding() {
                         <Info size={40} />
                     </div>
                   <h2 style={{ marginBottom: '2rem', fontSize: '2rem' }}>A Moment of Insight</h2>
-                  <motion.p 
+                  <MotionP
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.5, duration: 1 }}
                     style={{ fontSize: '1.4rem', fontStyle: 'italic', marginBottom: '4rem', lineHeight: '1.8', color: 'var(--text-primary)' }}
                   >
                     "{getInsightMessage()}"
-                  </motion.p>
+                  </MotionP>
                   <PremiumButton onClick={() => setStep(3)} style={{ minWidth: '240px' }}>
                     Step into The Loop
                   </PremiumButton>
@@ -193,16 +231,29 @@ function Onboarding() {
                   </p>
                   
                   {error && (
-                    <motion.div 
-                        initial={{ opacity: 0, y: -10 }} 
+                    <MotionDiv
+                        initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         style={{ color: '#ef4444', marginBottom: '1.5rem', textAlign: 'center', fontSize: '0.9rem', padding: '0.75rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '8px' }}
                     >
                         {error}
-                    </motion.div>
+                    </MotionDiv>
                   )}
 
                   <form onSubmit={handleAuthSubmit}>
+                    {!isLogin && (
+                      <InputGroup
+                          label="Username"
+                          icon={User}
+                          type="text"
+                          placeholder="Your name"
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value)}
+                          minLength={2}
+                          maxLength={30}
+                          required
+                      />
+                    )}
                     <InputGroup 
                         label="Email Address"
                         icon={Mail}
@@ -227,11 +278,23 @@ function Onboarding() {
                     </PremiumButton>
                   </form>
 
+                  <PremiumButton
+                    type="button"
+                    variant="secondary"
+                    onClick={handleGoogleAuth}
+                    style={{ width: '100%', marginTop: '1rem' }}
+                  >
+                    Continue with Google
+                  </PremiumButton>
+
                   <div style={{ textAlign: 'center', marginTop: '2rem' }}>
                     <button 
                       className="btn" 
                       style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.9rem' }}
-                      onClick={() => setIsLogin(!isLogin)}
+                      onClick={() => {
+                        setError(null);
+                        setIsLogin(!isLogin);
+                      }}
                     >
                       {isLogin ? "New here? Join the journey" : "Already have an account? Sign in"}
                     </button>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import SafeImage from "../common/SafeImage";
+import { getPreferredUsername } from "../../utils/userDisplayName";
 
 // ── Utility: Time-based greeting ──
 function getGreetingByTime() {
@@ -10,35 +11,9 @@ function getGreetingByTime() {
   return "GOOD NIGHT";
 }
 
-// ── Utility: Extract clean first name from user/profile data ──
-function getDisplayName(user, profile) {
-  // 1. Try profile display_name first
-  if (profile?.display_name && profile.display_name !== "Explorer") {
-    return profile.display_name.split(" ")[0].toUpperCase();
-  }
-
-  // 2. Try full_name from profile
-  if (profile?.full_name) {
-    return profile.full_name.split(" ")[0].toUpperCase();
-  }
-
-  // 3. Derive from email — take the part before @, clean it
-  if (user?.email) {
-    const local = user.email.split("@")[0];
-    // Remove numbers, dots, underscores and capitalize
-    const cleaned = local.replace(/[._0-9-]/g, " ").trim().split(" ")[0];
-    if (cleaned.length >= 2) {
-      return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toUpperCase();
-    }
-  }
-
-  // 4. Graceful fallback
-  return "FRIEND";
-}
-
 export default function HeroSection({ user, profile }) {
   const [greeting, setGreeting] = useState(getGreetingByTime());
-  const displayName = getDisplayName(user, profile);
+  const displayName = getPreferredUsername(user, profile, "Friend");
 
   // Update greeting every minute so it stays accurate without page reload
   useEffect(() => {
@@ -62,7 +37,7 @@ export default function HeroSection({ user, profile }) {
         <p style={{
           margin: 0,
           fontSize: 11, fontWeight: 500,
-          letterSpacing: 2.5, textTransform: "uppercase",
+          letterSpacing: 2.5,
           color: "var(--text-faint)",
           fontFamily: "var(--font-body)",
         }}>

@@ -1,4 +1,3 @@
-import { supabase } from './supabase';
 import { useUserStore } from '../store/userStore';
 
 /**
@@ -7,21 +6,7 @@ import { useUserStore } from '../store/userStore';
  */
 export async function handleSignOut(): Promise<void> {
   try {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-
-    // Purge any persisted data (localStorage / sessionStorage)
-    localStorage.clear();
-    sessionStorage.clear();
-    // If you use React Query, clear its cache here (import queryClient if needed)
-
-    // Reset Zustand store – use setState directly
-    useUserStore.setState({
-      user: null,
-      profile: null,
-      loading: false,
-      error: null,
-    });
+    await useUserStore.getState().logout();
 
     // Hard redirect to landing / onboarding page
     window.location.href = '/';

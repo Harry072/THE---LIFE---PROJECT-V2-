@@ -4,10 +4,12 @@ import Sidebar from '../components/dashboard/Sidebar';
 import TopBar from '../components/dashboard/TopBar';
 import Icon from '../components/Icon';
 import { handleSignOut } from '../lib/auth';
+import { getPreferredInitial, getPreferredUsername } from '../utils/userDisplayName';
 
 export default function ProfilePage() {
   const { user, profile } = useUserStore();
-  const displayName = profile?.display_name || user?.email?.split('@')[0] || "Explorer";
+  const displayName = getPreferredUsername(user, profile);
+  const initial = getPreferredInitial(user, profile);
 
   return (
     <div style={{
@@ -51,7 +53,7 @@ export default function ProfilePage() {
               color: "white",
               boxShadow: "0 10px 30px rgba(46,204,113,0.2)",
             }}>
-              {displayName.charAt(0).toUpperCase()}
+              {initial}
             </div>
             <div>
               <h1 style={{

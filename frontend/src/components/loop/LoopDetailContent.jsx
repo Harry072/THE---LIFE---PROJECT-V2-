@@ -1,11 +1,29 @@
 import { useState } from "react";
 
+const WHY_CHOSEN_FALLBACKS = {
+  awareness: "This practice helps you notice the inner loop before it controls the day.",
+  action: "This practice turns mental noise into one useful movement.",
+  meaning: "This practice connects the day to something larger than distraction.",
+};
+
+const getWhyChosen = (task) => {
+  const explicitReason = String(task?.why_chosen || "").trim();
+  if (explicitReason) return explicitReason;
+
+  const category = String(task?.category || "").trim().toLowerCase();
+  return (
+    WHY_CHOSEN_FALLBACKS[category] ||
+    "Based on your current growth path, this practice helps turn awareness into action."
+  );
+};
+
 export default function LoopDetailContent({ task, isMobile = false }) {
   const [showWhy, setShowWhy] = useState(false);
 
   if (!task) return null;
 
   const detailDescription = String(task.detail_description || "").trim();
+  const whyChosen = getWhyChosen(task);
   const duration = task.duration_minutes || task.estimated_duration_mins;
   const metaParts = [task.preferred_time, duration ? `${duration} Minutes` : null]
     .filter(Boolean);
@@ -91,6 +109,43 @@ export default function LoopDetailContent({ task, isMobile = false }) {
                 }}
               >
                 {detailDescription}
+              </p>
+            </div>
+          )}
+
+          {whyChosen && (
+            <div
+              style={{
+                margin: "0 0 18px",
+                padding: "14px 16px",
+                borderRadius: 16,
+                border: "1px solid rgba(126,217,154,0.16)",
+                background: "rgba(46,204,113,0.055)",
+              }}
+            >
+              <p
+                style={{
+                  margin: "0 0 6px",
+                  fontSize: 10,
+                  lineHeight: 1.4,
+                  letterSpacing: "0.16em",
+                  textTransform: "uppercase",
+                  color: "rgba(126,217,154,0.78)",
+                  fontFamily: "var(--font-body)",
+                }}
+              >
+                Why this was chosen
+              </p>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  lineHeight: 1.62,
+                  color: "rgba(255,255,255,0.72)",
+                  fontFamily: "var(--font-body)",
+                }}
+              >
+                {whyChosen}
               </p>
             </div>
           )}

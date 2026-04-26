@@ -1,14 +1,27 @@
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import os
 from supabase import create_client, Client
-import json
-import re
 from dotenv import load_dotenv
 import google.generativeai as genai
+
+from ai.context import (
+    ALLOWED_LOOP_CATEGORIES,
+    CORE_CATEGORY_ORDER,
+    build_generation_context,
+    normalize_category,
+)
+from ai.fallbacks import generate_fallback_tasks
+from ai.gateway import AIGenerationError, generate_with_gemini
+from ai.prompts import LOOP_TASKS_PROMPT_VERSION, build_loop_tasks_prompt
+from ai.validator import (
+    TaskValidationError,
+    normalize_task_for_insert,
+    validate_ai_tasks,
+)
 
 app = FastAPI()
 
@@ -61,81 +74,6 @@ class TaskRequest(BaseModel):
     regenerate: bool = False
 
 
-ALLOWED_LOOP_CATEGORIES = {
-    "awareness",
-    "action",
-    "meaning",
-}
-
-CORE_CATEGORY_ORDER = ["awareness", "action", "meaning"]
-
-
-CATEGORY_ALIASES = {
-    "awareness": "awareness",
-    "reflection": "awareness",
-    "reflect": "awareness",
-    "mindfulness": "awareness",
-    "journaling": "awareness",
-    "journal": "awareness",
-    "clarity": "awareness",
-    "breathing": "awareness",
-    "action": "action",
-    "focus": "action",
-    "discipline": "action",
-    "health": "action",
-    "exercise": "action",
-    "movement": "action",
-    "sleep": "action",
-    "connection": "action",
-    "contribution": "meaning",
-    "service": "meaning",
-    "purpose": "meaning",
-    "meaning": "meaning",
-    "gratitude": "meaning",
-    "ikigai": "meaning",
-    "logotherapy": "meaning",
-}
-
-
-def normalize_category(value: str | None) -> str:
-    raw_category = str(value or "meaning").strip().lower().replace("_", "-")
-
-    if raw_category in ALLOWED_LOOP_CATEGORIES:
-        return raw_category
-
-    if raw_category in CATEGORY_ALIASES:
-        return CATEGORY_ALIASES[raw_category]
-
-    for token in raw_category.split("-"):
-        if token in CATEGORY_ALIASES:
-            return CATEGORY_ALIASES[token]
-
-    return "meaning"
-
-
-def parse_model_json(raw_text: str):
-    cleaned = raw_text.strip()
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    elif cleaned.startswith("```"):
-        cleaned = cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    return json.loads(cleaned.strip(), strict=False)
-
-
-def limit_words(text: str, max_words: int) -> str:
-    words = str(text or "").split()
-    return " ".join(words[:max_words]).strip()
-
-
-def ensure_terminal_punctuation(text: str) -> str:
-    cleaned = str(text or "").strip()
-    if not cleaned:
-        return cleaned
-    return cleaned if cleaned[-1] in ".!?" else f"{cleaned}."
-
-
 def sort_task_rows(rows: list[dict]) -> list[dict]:
     def sort_key(row: dict):
         sort_order = row.get("sort_order")
@@ -157,12 +95,11 @@ def is_completed_task(row: dict) -> bool:
     return bool(row.get("completed_at") or row.get("done"))
 
 
-def is_generated_core_task(row: dict) -> bool:
+def is_core_task(row: dict) -> bool:
     category = normalize_category(row.get("category"))
     return (
         category in ALLOWED_LOOP_CATEGORIES
         and not bool(row.get("is_optional"))
-        and bool(row.get("ai_generated", True))
     )
 
 
@@ -176,7 +113,7 @@ def fetch_today_core_tasks(user_id: str, local_date: str) -> list[dict]:
     )
     return sort_task_rows([
         row for row in (response.data or [])
-        if is_generated_core_task(row)
+        if is_core_task(row)
     ])
 
 
@@ -188,7 +125,6 @@ def delete_uncompleted_generated_core_tasks(user_id: str, local_date: str) -> No
             .eq("user_id", user_id)
             .eq("for_date", local_date)
             .eq("category", category)
-            .eq("ai_generated", True)
             .eq("is_optional", False)
             .eq("done", False)
             .filter("completed_at", "is", "null")
@@ -196,219 +132,222 @@ def delete_uncompleted_generated_core_tasks(user_id: str, local_date: str) -> No
         )
 
 
-def default_task_for_category(category: str, struggles_summary: str) -> dict:
-    defaults = {
-        "awareness": {
-            "title": "Awareness Practice",
-            "estimated_duration_mins": 5,
-            "why_this_helps": "Noticing the pattern lowers its grip and creates room for choice.",
-            "philosophy": "Clarity starts when attention stops running on autopilot.",
-            "action_step": "Action: Write one loop you noticed today.",
-        },
-        "action": {
-            "title": "Action Practice",
-            "estimated_duration_mins": 15,
-            "why_this_helps": "A small physical action interrupts avoidance and rebuilds trust.",
-            "philosophy": "Momentum returns through one useful movement.",
-            "action_step": "Action: Do one postponed task for ten minutes.",
-        },
-        "meaning": {
-            "title": "Meaning Practice",
-            "estimated_duration_mins": 5,
-            "why_this_helps": "Connecting action to meaning makes discipline feel less mechanical.",
-            "philosophy": "Purpose becomes visible through one honest choice.",
-            "action_step": "Action: Name who benefits from your effort.",
-        },
+def log_generation_event(
+    *,
+    status: str,
+    provider: str = "gemini",
+    prompt_version: str = LOOP_TASKS_PROMPT_VERSION,
+    latency_ms: int | None = None,
+    validation_failure_reason: str | None = None,
+    error_reason: str | None = None,
+    context: dict | None = None,
+) -> None:
+    context_used = ",".join((context or {}).get("context_used") or []) or "none"
+    streak_band = (context or {}).get("streak_band") or "n/a"
+    completion_pattern = (context or {}).get("completion_pattern") or "n/a"
+    suggested_intensity = (context or {}).get("suggested_intensity") or "n/a"
+    latest_mood_present = bool((context or {}).get("latest_mood"))
+    print(
+        "AI_TASK_GENERATION "
+        f"status={status} "
+        f"provider={provider} "
+        f"prompt_version={prompt_version} "
+        f"context_used={context_used} "
+        f"streak_band={streak_band} "
+        f"completion_pattern={completion_pattern} "
+        f"suggested_intensity={suggested_intensity} "
+        f"latest_mood_present={latest_mood_present} "
+        f"latency_ms={latency_ms if latency_ms is not None else 'n/a'} "
+        f"validation_failure_reason={validation_failure_reason or 'none'} "
+        f"error_reason={error_reason or 'none'}"
+    )
+
+
+def build_response_meta(context: dict | None = None, *, cached: bool = False) -> dict:
+    return {
+        "prompt_version": LOOP_TASKS_PROMPT_VERSION,
+        "personalization_level": "lite",
+        "context_used": ["cache"] if cached else (context or {}).get("context_used", []),
     }
-    task = defaults[category].copy()
-    task["category"] = category
-    return task
 
 
-def select_one_task_per_category(tasks_data: list[dict], struggles_summary: str) -> list[dict]:
-    selected: dict[str, dict] = {}
+def build_task_response(
+    status: str,
+    rows: list[dict],
+    context: dict | None = None,
+    *,
+    cached: bool = False,
+) -> dict:
+    return {
+        "status": status,
+        "data": rows,
+        "meta": build_response_meta(context, cached=cached),
+    }
 
-    for task in tasks_data:
-        if not isinstance(task, dict):
-            continue
 
-        category = normalize_category(task.get("category"))
-        if category in ALLOWED_LOOP_CATEGORIES and category not in selected:
-            selected[category] = {**task, "category": category}
+def is_duplicate_insert_error(error: Exception) -> bool:
+    error_code = str(getattr(error, "code", "") or "")
+    error_message = str(error).lower()
+    return (
+        error_code == "23505"
+        or "duplicate key" in error_message
+        or "idx_loop_unique_incomplete_generated_core" in error_message
+        or "idx_loop_unique_incomplete_core_all_sources" in error_message
+    )
 
+
+def insert_task_rows(
+    user_id: str,
+    local_date: str,
+    rows: list[dict],
+    *,
+    source: str,
+) -> tuple[str, list[dict]]:
+    try:
+        db_response = supabase.table("loop_tasks").insert(rows).execute()
+        return "inserted", sort_task_rows(db_response.data or [])
+    except Exception as insert_error:
+        if is_duplicate_insert_error(insert_error):
+            print(
+                "AI_TASK_GENERATION "
+                f"duplicate_insert_caught=true source={source} "
+                f"error={str(insert_error)}"
+            )
+            existing_after_race = fetch_today_core_tasks(user_id, local_date)
+            print(
+                "AI_TASK_GENERATION "
+                f"duplicate_refetch source={source} "
+                f"existing_count={len(existing_after_race)}"
+            )
+            if existing_after_race:
+                if source == "fallback":
+                    return "fallback_existing", existing_after_race
+                return "existing", existing_after_race
+        raise
+
+
+def build_insert_rows(
+    tasks: list[dict],
+    user_id: str,
+    local_date: str,
+    ai_generated: bool,
+) -> list[dict]:
     return [
-        selected.get(category) or default_task_for_category(category, struggles_summary)
-        for category in CORE_CATEGORY_ORDER
+        normalize_task_for_insert(
+            task,
+            user_id=user_id,
+            local_date=local_date,
+            index=index,
+            ai_generated=ai_generated,
+        )
+        for index, task in enumerate(tasks)
     ]
 
 
-def sanitize_detail_description(detail_description: str, fallback_action: str = "") -> str:
-    normalized = str(detail_description or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    normalized = normalized.strip("\"").strip("'")
+def save_fallback_tasks(context: dict, user_id: str, local_date: str) -> tuple[str, list[dict]]:
+    # Another request may have inserted tasks while the AI call was failing.
+    existing_after_failure = fetch_today_core_tasks(user_id, local_date)
+    if existing_after_failure:
+        return "existing", existing_after_failure
 
-    action_match = re.match(r"^(.*?)(?:\n\s*\n)?Action:\s*(.+)$", normalized, re.S)
-    if action_match:
-        benefit_text = action_match.group(1)
-        action_text = action_match.group(2)
-    else:
-        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", normalized) if part.strip()]
-        benefit_text = paragraphs[0] if paragraphs else normalized
-        action_text = paragraphs[1] if len(paragraphs) > 1 else ""
-
-    benefit_text = limit_words(" ".join(benefit_text.split()), 15)
-    action_text = limit_words(" ".join((action_text or fallback_action).split()), 10)
-
-    if action_text.lower().startswith("action:"):
-        action_text = action_text[7:].strip()
-
-    benefit_text = ensure_terminal_punctuation(
-        benefit_text or "Calm focus returns when attention meets one clear task"
+    fallback_tasks = generate_fallback_tasks(context)
+    fallback_rows = build_insert_rows(
+        fallback_tasks,
+        user_id=user_id,
+        local_date=local_date,
+        ai_generated=False,
     )
-    action_text = ensure_terminal_punctuation(
-        action_text or "Open a notebook and begin now"
+    insert_status, rows = insert_task_rows(
+        user_id,
+        local_date,
+        fallback_rows,
+        source="fallback",
     )
-
-    return f"{benefit_text}\n\nAction: {action_text}"
-
-
-def normalize_generated_task(task: dict, user_id: str, local_date: str, index: int) -> dict:
-    category = normalize_category(task.get("category"))
-    title = str(task.get("title") or f"Meaningful Task {index + 1}").strip()
-    why_this_helps = str(task.get("why_this_helps") or "").strip()
-    detail_description = str(task.get("detail_description") or "").strip()
-    raw_action_steps = task.pop("action_steps", None)
-
-    if isinstance(raw_action_steps, list):
-        fallback_action = next(
-            (
-                " ".join(str(step).replace("\n", " ").split())
-                for step in raw_action_steps
-                if str(step).strip()
-            ),
-            "",
-        )
-    else:
-        fallback_action = str(raw_action_steps or "").replace("\n", " ").strip()
-
-    detail_description = sanitize_detail_description(detail_description, fallback_action)
-
-    try:
-        duration_minutes = int(task.get("estimated_duration_mins") or 15)
-    except (TypeError, ValueError):
-        duration_minutes = 15
-
-    return {
-        "user_id": user_id,
-        "for_date": local_date,
-        "category": category,
-        "title": title,
-        "subtitle": f"{category.title()} Practice",
-        "why": why_this_helps,
-        "detail_title": title,
-        "detail_description": detail_description,
-        "duration_minutes": max(5, duration_minutes),
-        "sort_order": index + 1,
-        "ai_generated": True,
-        "is_optional": False,
-        "done": False,
-    }
+    if insert_status in {"existing", "fallback_existing"}:
+        return insert_status, rows
+    return "fallback", rows
 
 
 @app.post("/api/generate-loop-tasks")
-async def generate_tasks(request: TaskRequest):
+async def generate_tasks(request: TaskRequest, authorization: str | None = Header(default=None)):
     try:
+        auth_header_present = bool(authorization and authorization.lower().startswith("bearer "))
         existing_tasks = fetch_today_core_tasks(request.user_id, request.local_date)
 
         if existing_tasks and not request.regenerate:
-            return {"status": "existing", "data": existing_tasks}
+            return build_task_response("existing", existing_tasks, cached=True)
 
         if request.regenerate and existing_tasks:
             if any(is_completed_task(task) for task in existing_tasks):
-                return {"status": "locked", "data": existing_tasks}
+                return build_task_response("locked", existing_tasks, cached=True)
 
             delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
 
-        struggles = [
-            struggle.strip()
-            for struggle in request.struggles
-            if str(struggle).strip()
-        ]
-        struggles_summary = ", ".join(struggles) if struggles else "overthinking, distraction, and inconsistency"
-        current_day = max(0, int(request.current_streak))
+        context = build_generation_context(
+            request.struggles,
+            request.current_streak,
+            supabase=supabase,
+            user_id=request.user_id,
+            local_date=request.local_date,
+            existing_tasks=existing_tasks,
+        )
+        context["auth_header_present"] = auth_header_present
+        prompt = build_loop_tasks_prompt(context)
 
-        if current_day < 5:
-            journey_guidance = "Focus on gentle awareness and nervous-system safety."
-        elif current_day <= 15:
-            journey_guidance = "Focus on taking clear action and building consistency."
-        else:
-            journey_guidance = "Focus on deep purpose, meaning, and identity-level growth."
-
-        # 3. PHILOSOPHICAL AI PROMPT
-        prompt = f"""
-        Generate exactly 3 deeply meaningful daily tasks based on Logotherapy, Morita Therapy, Flow State, and Ikigai.
-        Help the user break the 2D dopamine loop and return to deliberate living.
-        The user is struggling with {struggles_summary}. They are on Day {current_day}.
-        Tailor tasks to heal these exact struggles.
-        If Day < 5, focus on gentle awareness. If Day 5-15, focus on taking action. If Day > 15, focus on deep purpose and meaning.
-        Current day guidance: {journey_guidance}
-        Create one task for each category, in this exact order:
-        1. "awareness"
-        2. "action"
-        3. "meaning"
-        Rules:
-        - Output strictly valid JSON with NO raw newlines (`\\n`) inside strings.
-        - Do not use markdown, bullet points, numbering, code fences, or commentary.
-        - Do not output "detail_description"; output "philosophy" and "action_step" instead.
-        - "philosophy" must be one short, gentle, poetic sentence. Max 15 words.
-        - "philosophy" must stay on one line.
-        - "action_step" must start with "Action:" and describe one highly specific, physical action. Max 10 words.
-        - "action_step" must stay on one line.
-        - Keep every string compact, concrete, and healing.
-        Output ONLY valid JSON in this exact format:
-        [
-          {{
-            "category": "awareness",
-            "title": "Task Name",
-            "estimated_duration_mins": 20,
-            "why_this_helps": "Short philosophical reason based on Morita or Logotherapy.",
-            "philosophy": "Breathing room begins when the mind stops carrying everything at once.",
-            "action_step": "Action: Write three thoughts on paper."
-          }}
-        ]
-        """
-        response = gemini_model.generate_content(prompt)
-        tasks_data = parse_model_json(response.text)
-
-        if not isinstance(tasks_data, list) or not tasks_data:
-            raise ValueError("Gemini returned an invalid task payload.")
-
-        category_tasks = select_one_task_per_category(tasks_data, struggles_summary)
-
-        for task in category_tasks:
-            task["philosophy"] = str(task.get("philosophy") or "")
-            task["action_step"] = str(task.get("action_step") or "")
-            task["detail_description"] = f"{task.pop('philosophy', '').strip()}\n\n{task.pop('action_step', '').strip()}"
-
-        # 4. STRICT SUPABASE INSERT PIPELINE
-        formatted_tasks = [
-            normalize_generated_task(task, request.user_id, request.local_date, index)
-            for index, task in enumerate(category_tasks)
-        ]
-
-        # Insert into the database. If a concurrent request won the unique index
-        # race, return the existing daily practices instead of creating duplicates.
         try:
-            db_response = supabase.table("loop_tasks").insert(formatted_tasks).execute()
-        except Exception as insert_error:
-            duplicate_message = str(insert_error).lower()
-            if "duplicate" in duplicate_message or "idx_loop_unique_incomplete_generated_core" in duplicate_message:
-                existing_after_race = fetch_today_core_tasks(request.user_id, request.local_date)
-                if existing_after_race:
-                    return {"status": "existing", "data": existing_after_race}
-            raise
+            provider_response = generate_with_gemini(
+                gemini_model,
+                prompt,
+                prompt_version=LOOP_TASKS_PROMPT_VERSION,
+            )
+            category_tasks = validate_ai_tasks(provider_response.text, context)
+            formatted_tasks = build_insert_rows(
+                category_tasks,
+                user_id=request.user_id,
+                local_date=request.local_date,
+                ai_generated=True,
+            )
+            insert_status, rows = insert_task_rows(
+                request.user_id,
+                request.local_date,
+                formatted_tasks,
+                source="ai_success",
+            )
+            status = "existing" if insert_status == "existing" else "success"
+            log_generation_event(
+                status=status,
+                provider=provider_response.provider,
+                prompt_version=provider_response.prompt_version,
+                latency_ms=provider_response.latency_ms,
+                context=context,
+            )
+            return build_task_response(status, rows, context)
+        except TaskValidationError as validation_error:
+            fallback_status, fallback_rows = save_fallback_tasks(
+                context,
+                request.user_id,
+                request.local_date,
+            )
+            log_generation_event(
+                status=fallback_status,
+                validation_failure_reason=validation_error.reason,
+                context=context,
+            )
+            return build_task_response(fallback_status, fallback_rows, context)
+        except AIGenerationError as ai_error:
+            fallback_status, fallback_rows = save_fallback_tasks(
+                context,
+                request.user_id,
+                request.local_date,
+            )
+            log_generation_event(
+                status=fallback_status,
+                latency_ms=ai_error.latency_ms,
+                error_reason=ai_error.reason,
+                context=context,
+            )
+            return build_task_response(fallback_status, fallback_rows, context)
         
-        return {"status": "success", "data": sort_task_rows(db_response.data or [])}
-
     except Exception as e:
         # 5. NO MORE SILENT FAILS: Print error to terminal and alert frontend
         print(f"CRITICAL BACKEND ERROR: {str(e)}") 

@@ -1,0 +1,10 @@
+-- Migration: 027_profiles_username_support
+-- No-op by design.
+--
+-- Username is currently stored only in Supabase Auth user metadata:
+--   raw_user_meta_data.username
+--   raw_user_meta_data.full_name
+--
+-- This project does not currently require public.profiles for username
+-- display, so this migration must not create, alter, index, or write to
+-- public.profiles.
