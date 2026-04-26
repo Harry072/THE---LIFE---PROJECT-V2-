@@ -108,32 +108,34 @@ export function AppStateProvider({ children }) {
     if (!isSupabaseConfigured) return;
     const task = tasks.find(t => t.id === id);
     if (!task) return;
-    const wasDone = task.completed_at != null;
-    const newCompletedAt = wasDone ? null : new Date().toISOString();
+    if (task.completed_at != null) return;
+    const completedAt = new Date().toISOString();
 
     // Optimistic update
     setTasks(prev => prev.map(t =>
-      t.id === id ? { ...t, completed_at: newCompletedAt } : t));
-
-    const update = wasDone
-      ? { completed_at: null }
-      : { completed_at: newCompletedAt };
+      t.id === id ? { ...t, completed_at: completedAt, done: true } : t));
       
     try {
-      const { error } = await supabase
-        .from("loop_tasks")
-        .update(update)
-        .eq("id", id);
+      const { data, error } = await supabase.rpc(
+        "complete_loop_task_v4",
+        { p_task_id: id }
+      );
         
       if (error) {
         throw error;
       }
+
+      if (data?.task) {
+        setTasks(prev => prev.map(t =>
+          t.id === id ? { ...t, ...data.task, done: true } : t));
+      }
+
       loadStats();
     } catch (err) {
       console.error("Failed to update task:", err);
       // Revert on failure
       setTasks(prev => prev.map(t =>
-        t.id === id ? { ...t, completed_at: wasDone ? task.completed_at : null } : t));
+        t.id === id ? task : t));
     }
   }, [tasks]);
 
@@ -301,17 +303,26 @@ export function AppStateProvider({ children }) {
       const treeData = await fetchUserTreeStats({ markLoading });
       const behaviorData = await fetchUserBehaviorStats();
 
-      // 2. Fetch completed tasks without HEAD; some Supabase setups reject that count path
+      // 2. Fetch today's core loop tasks without HEAD; some Supabase setups reject count paths
       const { data: todayTasks, error: taskError } = await supabase
         .from("loop_tasks")
-        .select("id, completed_at")
+        .select("id, category, completed_at, is_optional")
         .eq("user_id", storeUser.id)
         .eq("for_date", localDate)
-        .not("completed_at", "is", null);
+        .in("category", ["awareness", "action", "meaning"]);
 
       if (taskError) throw taskError;
 
-      const completedToday = (todayTasks || []).length;
+      const coreTasks = (todayTasks || []).filter(task => !task.is_optional);
+      const completedToday = new Set(
+        coreTasks
+          .filter(task => task.completed_at)
+          .map(task => task.category)
+      ).size;
+      const totalCoreTasks = Math.max(
+        3,
+        new Set(coreTasks.map(task => task.category)).size
+      );
 
       setStats((prev) => ({
         ...prev,
@@ -323,8 +334,8 @@ export function AppStateProvider({ children }) {
         vitality: treeData?.vitality ?? prev.vitality,
         completionRate: behaviorData?.avg_completion_rate !== undefined
           ? Math.round((behaviorData.avg_completion_rate ?? 0) * 100)
-          : todayTasks?.length
-            ? Math.round((completedToday / todayTasks.length) * 100)
+          : totalCoreTasks
+            ? Math.round((completedToday / totalCoreTasks) * 100)
             : prev.completionRate,
         reflectionsDone: behaviorData?.total_reflections ?? prev.reflectionsDone,
       }));

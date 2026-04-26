@@ -51,11 +51,10 @@ function StatCard({ iconName, iconColor, glowColor,
   );
 }
 
-export default function StatCards({ lifeScore }) {
+export default function StatCards() {
   const navigate = useNavigate();
   const { stats } = useAppState();
-  const hasLifeScoreValue = lifeScore !== undefined && lifeScore !== null;
-  const lifeScoreValue = hasLifeScoreValue ? lifeScore : stats.lifeScore ?? "-";
+  const lifeScoreValue = stats.lifeScore ?? "-";
 
   const cards = [
     { iconName: "leaf", iconColor: "#7fd99a",

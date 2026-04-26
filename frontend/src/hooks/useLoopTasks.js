@@ -43,13 +43,8 @@ const normalizeTask = (row = {}) => {
   };
 };
 
-const isLegacyDoneColumnError = (error) => {
-  const message = String(error?.message ?? error ?? "").toLowerCase();
-  return message.includes("column") && message.includes("done");
-};
-
 export function useLoopTasks() {
-  const { user, updateTreeStats, loadStats } = useAppState();
+  const { user, updateTreeStats, loadStats, loadTasks } = useAppState();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -89,7 +84,7 @@ export function useLoopTasks() {
     }
   }, [user?.id]);
 
-  const generateTasks = useCallback(async () => {
+  const generateTasks = useCallback(async ({ regenerate = false } = {}) => {
     if (!user?.id) return [];
 
     setGenerating(true);
@@ -108,6 +103,7 @@ export function useLoopTasks() {
         local_date: getLocalDate(),
         struggles,
         current_streak: currentStreak,
+        regenerate,
       };
 
       const response = await fetch(`${API_BASE_URL}/api/generate-loop-tasks`, {
@@ -134,58 +130,33 @@ export function useLoopTasks() {
     } finally {
       setGenerating(false);
     }
-  }, [fetchTasks, user?.id]);
+  }, [fetchTasks, user?.id, user?.onboarding_answers, user?.user_tree?.streak]);
 
   const completeTaskInDb = useCallback(async (taskId) => {
-    try {
-      const { data, error: rpcError } = await supabase.rpc(
-        "complete_loop_task_v4",
-        { p_task_id: taskId }
-      );
+    const { data, error: rpcError } = await supabase.rpc(
+      "complete_loop_task_v4",
+      { p_task_id: taskId }
+    );
 
-      if (rpcError) {
-        throw rpcError;
-      }
-
-      return {
-        task: normalizeTask({ ...data?.task, completed_at: data?.task?.completed_at ?? new Date().toISOString() }),
-        metrics: {
-          vitality: data?.new_vitality,
-          cumulative_score: data?.new_score,
-          streak: data?.new_streak,
-          tasksCompleted: data?.new_total_completed,
-          tasksCompletedDelta: 1,
-        },
-      };
-    } catch (error) {
-      if (!isLegacyDoneColumnError(error)) {
-        throw error;
-      }
-
-      const completedAt = new Date().toISOString();
-      const { data: fallbackTask, error: updateError } = await supabase
-        .from("loop_tasks")
-        .update({ completed_at: completedAt })
-        .eq("id", taskId)
-        .is("completed_at", null)
-        .select("*")
-        .maybeSingle();
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      if (!fallbackTask) {
-        throw new Error("Task was already completed or could not be updated.");
-      }
-
-      return {
-        task: normalizeTask(fallbackTask),
-        metrics: {
-          tasksCompletedDelta: 1,
-        },
-      };
+    if (rpcError) {
+      throw rpcError;
     }
+
+    return {
+      task: normalizeTask({
+        ...data?.task,
+        completed_at: data?.task?.completed_at ?? new Date().toISOString(),
+      }),
+      metrics: {
+        vitality: data?.new_vitality,
+        cumulative_score: data?.new_score,
+        streak: data?.new_streak,
+        tasksCompleted: data?.new_total_completed_today,
+        tasksTotal: data?.today_tasks_total,
+        awardedPoints: data?.awarded_points,
+        allTasksComplete: data?.all_tasks_complete,
+      },
+    };
   }, []);
 
   const toggleTask = useCallback(async (taskId, updatedTask) => {
@@ -226,7 +197,10 @@ export function useLoopTasks() {
       ))));
 
       updateTreeStats?.(metrics);
-      loadStats?.();
+      await Promise.all([
+        loadTasks?.(),
+        loadStats?.(),
+      ]);
 
       return normalizedTask;
     } catch (err) {
@@ -237,7 +211,7 @@ export function useLoopTasks() {
       setError(err.message || "Failed to update task.");
       throw err;
     }
-  }, [completeTaskInDb, loadStats, tasks, updateTreeStats]);
+  }, [completeTaskInDb, loadStats, loadTasks, tasks, updateTreeStats]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -250,7 +224,7 @@ export function useLoopTasks() {
   }, [fetchTasks, user?.id]);
 
   const clearError = () => setError(null);
-  const refresh = () => generateTasks();
+  const refresh = () => generateTasks({ regenerate: true });
 
   return {
     tasks,

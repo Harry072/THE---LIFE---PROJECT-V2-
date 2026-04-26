@@ -58,6 +58,7 @@ class TaskRequest(BaseModel):
     local_date: str
     struggles: list[str] = Field(default_factory=list)
     current_streak: int = 0
+    regenerate: bool = False
 
 
 ALLOWED_LOOP_CATEGORIES = {
@@ -65,6 +66,8 @@ ALLOWED_LOOP_CATEGORIES = {
     "action",
     "meaning",
 }
+
+CORE_CATEGORY_ORDER = ["awareness", "action", "meaning"]
 
 
 CATEGORY_ALIASES = {
@@ -133,6 +136,112 @@ def ensure_terminal_punctuation(text: str) -> str:
     return cleaned if cleaned[-1] in ".!?" else f"{cleaned}."
 
 
+def sort_task_rows(rows: list[dict]) -> list[dict]:
+    def sort_key(row: dict):
+        sort_order = row.get("sort_order")
+        try:
+            sort_order_value = int(sort_order)
+        except (TypeError, ValueError):
+            sort_order_value = 999
+
+        return (
+            sort_order_value,
+            str(row.get("created_at") or ""),
+            str(row.get("id") or ""),
+        )
+
+    return sorted(rows, key=sort_key)
+
+
+def is_completed_task(row: dict) -> bool:
+    return bool(row.get("completed_at") or row.get("done"))
+
+
+def is_generated_core_task(row: dict) -> bool:
+    category = normalize_category(row.get("category"))
+    return (
+        category in ALLOWED_LOOP_CATEGORIES
+        and not bool(row.get("is_optional"))
+        and bool(row.get("ai_generated", True))
+    )
+
+
+def fetch_today_core_tasks(user_id: str, local_date: str) -> list[dict]:
+    response = (
+        supabase.table("loop_tasks")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("for_date", local_date)
+        .execute()
+    )
+    return sort_task_rows([
+        row for row in (response.data or [])
+        if is_generated_core_task(row)
+    ])
+
+
+def delete_uncompleted_generated_core_tasks(user_id: str, local_date: str) -> None:
+    for category in CORE_CATEGORY_ORDER:
+        (
+            supabase.table("loop_tasks")
+            .delete()
+            .eq("user_id", user_id)
+            .eq("for_date", local_date)
+            .eq("category", category)
+            .eq("ai_generated", True)
+            .eq("is_optional", False)
+            .eq("done", False)
+            .filter("completed_at", "is", "null")
+            .execute()
+        )
+
+
+def default_task_for_category(category: str, struggles_summary: str) -> dict:
+    defaults = {
+        "awareness": {
+            "title": "Awareness Practice",
+            "estimated_duration_mins": 5,
+            "why_this_helps": "Noticing the pattern lowers its grip and creates room for choice.",
+            "philosophy": "Clarity starts when attention stops running on autopilot.",
+            "action_step": "Action: Write one loop you noticed today.",
+        },
+        "action": {
+            "title": "Action Practice",
+            "estimated_duration_mins": 15,
+            "why_this_helps": "A small physical action interrupts avoidance and rebuilds trust.",
+            "philosophy": "Momentum returns through one useful movement.",
+            "action_step": "Action: Do one postponed task for ten minutes.",
+        },
+        "meaning": {
+            "title": "Meaning Practice",
+            "estimated_duration_mins": 5,
+            "why_this_helps": "Connecting action to meaning makes discipline feel less mechanical.",
+            "philosophy": "Purpose becomes visible through one honest choice.",
+            "action_step": "Action: Name who benefits from your effort.",
+        },
+    }
+    task = defaults[category].copy()
+    task["category"] = category
+    return task
+
+
+def select_one_task_per_category(tasks_data: list[dict], struggles_summary: str) -> list[dict]:
+    selected: dict[str, dict] = {}
+
+    for task in tasks_data:
+        if not isinstance(task, dict):
+            continue
+
+        category = normalize_category(task.get("category"))
+        if category in ALLOWED_LOOP_CATEGORIES and category not in selected:
+            selected[category] = {**task, "category": category}
+
+    return [
+        selected.get(category) or default_task_for_category(category, struggles_summary)
+        for category in CORE_CATEGORY_ORDER
+    ]
+
+
 def sanitize_detail_description(detail_description: str, fallback_action: str = "") -> str:
     normalized = str(detail_description or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     normalized = normalized.strip("\"").strip("'")
@@ -193,19 +302,32 @@ def normalize_generated_task(task: dict, user_id: str, local_date: str, index: i
         "for_date": local_date,
         "category": category,
         "title": title,
-        "subtitle": category.replace("-", " ").title(),
+        "subtitle": f"{category.title()} Practice",
         "why": why_this_helps,
         "detail_title": title,
         "detail_description": detail_description,
         "duration_minutes": max(5, duration_minutes),
         "sort_order": index + 1,
         "ai_generated": True,
+        "is_optional": False,
+        "done": False,
     }
 
 
 @app.post("/api/generate-loop-tasks")
 async def generate_tasks(request: TaskRequest):
     try:
+        existing_tasks = fetch_today_core_tasks(request.user_id, request.local_date)
+
+        if existing_tasks and not request.regenerate:
+            return {"status": "existing", "data": existing_tasks}
+
+        if request.regenerate and existing_tasks:
+            if any(is_completed_task(task) for task in existing_tasks):
+                return {"status": "locked", "data": existing_tasks}
+
+            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
+
         struggles = [
             struggle.strip()
             for struggle in request.struggles
@@ -223,14 +345,16 @@ async def generate_tasks(request: TaskRequest):
 
         # 3. PHILOSOPHICAL AI PROMPT
         prompt = f"""
-        Generate 3 deeply meaningful daily tasks based on Logotherapy, Morita Therapy, Flow State, and Ikigai.
+        Generate exactly 3 deeply meaningful daily tasks based on Logotherapy, Morita Therapy, Flow State, and Ikigai.
         Help the user break the 2D dopamine loop and return to deliberate living.
         The user is struggling with {struggles_summary}. They are on Day {current_day}.
         Tailor tasks to heal these exact struggles.
         If Day < 5, focus on gentle awareness. If Day 5-15, focus on taking action. If Day > 15, focus on deep purpose and meaning.
         Current day guidance: {journey_guidance}
-        The category for each task MUST be one of exactly these values:
-        ["awareness", "action", "meaning"]
+        Create one task for each category, in this exact order:
+        1. "awareness"
+        2. "action"
+        3. "meaning"
         Rules:
         - Output strictly valid JSON with NO raw newlines (`\\n`) inside strings.
         - Do not use markdown, bullet points, numbering, code fences, or commentary.
@@ -258,7 +382,9 @@ async def generate_tasks(request: TaskRequest):
         if not isinstance(tasks_data, list) or not tasks_data:
             raise ValueError("Gemini returned an invalid task payload.")
 
-        for task in tasks_data[:3]:
+        category_tasks = select_one_task_per_category(tasks_data, struggles_summary)
+
+        for task in category_tasks:
             task["philosophy"] = str(task.get("philosophy") or "")
             task["action_step"] = str(task.get("action_step") or "")
             task["detail_description"] = f"{task.pop('philosophy', '').strip()}\n\n{task.pop('action_step', '').strip()}"
@@ -266,13 +392,22 @@ async def generate_tasks(request: TaskRequest):
         # 4. STRICT SUPABASE INSERT PIPELINE
         formatted_tasks = [
             normalize_generated_task(task, request.user_id, request.local_date, index)
-            for index, task in enumerate(tasks_data[:3])
+            for index, task in enumerate(category_tasks)
         ]
 
-        # Insert into the database
-        db_response = supabase.table("loop_tasks").insert(formatted_tasks).execute()
+        # Insert into the database. If a concurrent request won the unique index
+        # race, return the existing daily practices instead of creating duplicates.
+        try:
+            db_response = supabase.table("loop_tasks").insert(formatted_tasks).execute()
+        except Exception as insert_error:
+            duplicate_message = str(insert_error).lower()
+            if "duplicate" in duplicate_message or "idx_loop_unique_incomplete_generated_core" in duplicate_message:
+                existing_after_race = fetch_today_core_tasks(request.user_id, request.local_date)
+                if existing_after_race:
+                    return {"status": "existing", "data": existing_after_race}
+            raise
         
-        return {"status": "success", "data": db_response.data}
+        return {"status": "success", "data": sort_task_rows(db_response.data or [])}
 
     except Exception as e:
         # 5. NO MORE SILENT FAILS: Print error to terminal and alert frontend
