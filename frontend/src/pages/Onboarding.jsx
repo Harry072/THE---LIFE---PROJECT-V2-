@@ -41,6 +41,18 @@ function Onboarding() {
     );
   };
 
+  const handleContinueToStep2 = () => {
+    if (selectedStruggles.length > 0) {
+      const pendingNeed = {
+        label: selectedStruggles[0],
+        struggles: selectedStruggles,
+        createdAt: new Date().toISOString()
+      };
+      sessionStorage.setItem('lifeProject.pendingNeed', JSON.stringify(pendingNeed));
+    }
+    setStep(2);
+  };
+
   const getInsightMessage = () => {
     if (selectedStruggles.includes("I can't stop scrolling") && selectedStruggles.includes("I feel empty inside")) {
       return "What you're describing sounds like a dopamine cycle — your brain is seeking stimulation to avoid sitting with discomfort. That's not a character flaw. It's a pattern. And you're not the only one here who recognizes it.";
@@ -184,7 +196,7 @@ function Onboarding() {
                 <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                     <PremiumButton variant="secondary" onClick={() => setStep(0)}>Back</PremiumButton>
                     <PremiumButton 
-                        onClick={() => setStep(2)}
+                        onClick={handleContinueToStep2}
                         disabled={selectedStruggles.length === 0}
                         style={{ width: '200px' }}
                     >

@@ -1,8 +1,33 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const CORE_LOOP_CATEGORIES = new Set(["awareness", "action", "meaning"]);
 const AUTO_GENERATION_ERROR =
   "We couldn't prepare today's plan yet. Open The Loop to try again.";
+
+const NEED_TO_STRUGGLES_MAP = {
+  "I can't stop scrolling": ["distraction", "screen addiction", "focus"],
+  "I feel lost": ["direction", "clarity", "purpose"],
+  "I overthink everything": ["overthinking", "mental noise", "calm"],
+  "I have no motivation": ["motivation", "discipline", "action"],
+  "I can't sleep": ["sleep", "restlessness", "evening reset"],
+  "I feel empty inside": ["emptiness", "meaning", "emotional heaviness"],
+  "I keep starting and quitting": ["consistency", "discipline", "follow-through"],
+  "I don't know who I am": ["identity", "self-awareness", "purpose"],
+  "I feel completely alone": ["loneliness", "connection", "emotional reset"]
+};
+
+const getMappedStruggles = (pendingNeed) => {
+  if (!pendingNeed || !Array.isArray(pendingNeed.struggles)) return ["clarity", "daily action"];
+  const allStruggles = new Set();
+  pendingNeed.struggles.forEach(need => {
+    const mapped = NEED_TO_STRUGGLES_MAP[need];
+    if (mapped) {
+      mapped.forEach(s => allStruggles.add(s));
+    }
+  });
+  if (allStruggles.size === 0) return ["clarity", "daily action"];
+  return Array.from(allStruggles);
+};
 
 const getLocalDate = () => new Date().toLocaleDateString("en-CA");
 
@@ -34,61 +59,109 @@ export function useEnsureTodayLoopTasks({
   const [autoGenerationError, setAutoGenerationError] = useState("");
   const localDate = useMemo(getLocalDate, []);
   const existingCoreTasks = hasTodayCoreTasks(tasks);
+  const isMounted = useRef(true);
 
   useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    console.debug("[AutoLoopDebug] Hook mounted/updated.", { 
+      userId: user?.id, 
+      hasFetched, 
+      loading, 
+      generating, 
+      error, 
+      existingCoreTasks, 
+      tasksCount: tasks?.length 
+    });
+
     if (
       !user?.id ||
       !hasFetched ||
       loading ||
-      generating ||
       error ||
       existingCoreTasks ||
       typeof generateTasks !== "function"
     ) {
+      console.debug("[AutoLoopDebug] Bailing out early.", {
+        noUserId: !user?.id,
+        notFetched: !hasFetched,
+        loading,
+        error,
+        existingCoreTasks,
+        missingFn: typeof generateTasks !== "function"
+      });
       return;
     }
 
     const storage = getSessionStorage();
     const guardKey = getGuardKey(user.id, localDate);
 
+    let contextStruggles = null;
+    if (storage) {
+      const pendingRaw = storage.getItem('lifeProject.pendingNeed');
+      if (pendingRaw) {
+        console.debug("[AutoLoopDebug] Migrating pendingNeed to selectedNeed.");
+        storage.setItem(`lifeProject.selectedNeed.${user.id}`, pendingRaw);
+        storage.removeItem('lifeProject.pendingNeed');
+      }
+
+      const selectedRaw = storage.getItem(`lifeProject.selectedNeed.${user.id}`);
+      if (selectedRaw) {
+        try {
+          const parsed = JSON.parse(selectedRaw);
+          contextStruggles = getMappedStruggles(parsed);
+          console.debug("[AutoLoopDebug] Parsed contextStruggles:", contextStruggles);
+        } catch (e) {
+          console.warn("[AutoLoopDebug] Failed to parse selectedNeed", e);
+        }
+      }
+    }
+
+    console.debug("[AutoLoopDebug] Guard key check. guardKey:", guardKey, "value:", storage?.getItem(guardKey));
     if (storage?.getItem(guardKey) === "attempted") {
+      console.debug("[AutoLoopDebug] Aborting. Guard key is already 'attempted'.");
       return;
     }
 
+    console.debug("[AutoLoopDebug] Setting guard key to 'attempted' and starting generation.");
     storage?.setItem(guardKey, "attempted");
-    let cancelled = false;
 
     const prepareTasks = async () => {
       setPreparingTodayPlan(true);
       setAutoGenerationError("");
 
       try {
-        const generatedTasks = await generateTasks({ auto: true });
-        if (!cancelled && !hasTodayCoreTasks(generatedTasks)) {
+        console.debug("[AutoLoopDebug] Calling generateTasks({ auto: true, contextStruggles })");
+        const generatedTasks = await generateTasks({ 
+          auto: true,
+          contextStruggles
+        });
+        console.debug("[AutoLoopDebug] generation complete. Tasks count:", generatedTasks?.length);
+        if (isMounted.current && !hasTodayCoreTasks(generatedTasks)) {
           setAutoGenerationError(AUTO_GENERATION_ERROR);
         }
       } catch (generationError) {
-        console.warn("Automatic Loop task preparation failed:", generationError);
-        if (!cancelled) {
+        console.warn("[AutoLoopDebug] Automatic Loop task preparation failed:", generationError);
+        if (isMounted.current) {
           setAutoGenerationError(AUTO_GENERATION_ERROR);
         }
       } finally {
-        if (!cancelled) {
+        if (isMounted.current) {
           setPreparingTodayPlan(false);
         }
       }
     };
 
     prepareTasks();
-
-    return () => {
-      cancelled = true;
-    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     error,
     existingCoreTasks,
     generateTasks,
-    generating,
     hasFetched,
     loading,
     localDate,

@@ -93,6 +93,7 @@ export function useLoopTasks() {
   const generateTasks = useCallback(async ({
     regenerate = false,
     auto = false,
+    contextStruggles = null,
   } = {}) => {
     if (!user?.id) return [];
 
@@ -110,9 +111,9 @@ export function useLoopTasks() {
         return [];
       }
 
-      const struggles = Array.isArray(user?.onboarding_answers)
+      const struggles = contextStruggles || (Array.isArray(user?.onboarding_answers)
         ? user.onboarding_answers.filter((value) => typeof value === "string" && value.trim())
-        : [];
+        : []);
       const currentStreak = Number.isFinite(Number(user?.user_tree?.streak))
         ? Number(user.user_tree.streak)
         : 0;
