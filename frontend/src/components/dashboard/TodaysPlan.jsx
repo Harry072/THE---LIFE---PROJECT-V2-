@@ -2,6 +2,8 @@ import Icon from "../Icon";
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { useLoopTasks } from "../../hooks/useLoopTasks";
+import { useEnsureTodayLoopTasks } from "../../hooks/useEnsureTodayLoopTasks";
+import { useAppState } from "../../contexts/AppStateContext";
 
 function ErrorMessage({ message, onDismiss }) {
   useEffect(() => {
@@ -130,14 +132,36 @@ function TaskRow({ task, onToggle, onOpen }) {
 
 export default function TodaysPlan() {
   const navigate = useNavigate();
-  const { tasks, fetchTasks, toggleTask, loading, error, clearError } = useLoopTasks();
-
-  useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
+  const { user } = useAppState();
+  const {
+    tasks,
+    toggleTask,
+    loading,
+    hasFetched,
+    error,
+    clearError,
+    generating,
+    generateTasks,
+  } = useLoopTasks();
+  const {
+    autoGenerationError,
+    clearAutoGenerationError,
+    preparingTodayPlan,
+  } = useEnsureTodayLoopTasks({
+    user,
+    tasks,
+    hasFetched,
+    loading,
+    error,
+    generating,
+    generateTasks,
+  });
 
   // Show top 4 tasks for today on the dashboard
   const displayed = (tasks || []).filter(t => !t.skipped).slice(0, 4);
+  const statusMessage = error || autoGenerationError;
+  const isPreparingPlan = preparingTodayPlan
+    || (generating && displayed.length === 0);
 
   return (
     <div style={{
@@ -181,11 +205,23 @@ export default function TodaysPlan() {
       <div style={{ display: "flex", flexDirection: "column",
         gap: 4 }}>
         
-        {error && <ErrorMessage message={error} onDismiss={clearError} />}
+        {statusMessage && (
+          <ErrorMessage
+            message={statusMessage}
+            onDismiss={() => {
+              clearError();
+              clearAutoGenerationError();
+            }}
+          />
+        )}
 
         {loading ? (
           <div style={{ padding: 24, textAlign: "center", color: "var(--text-faint)" }}>
              Loading...
+          </div>
+        ) : isPreparingPlan ? (
+          <div style={{ padding: 24, textAlign: "center", color: "var(--text-faint)" }}>
+             Preparing today&apos;s plan...
           </div>
         ) : displayed.length > 0
           ? displayed.map(t => (

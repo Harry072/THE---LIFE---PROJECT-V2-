@@ -1,8 +1,12 @@
 import Icon from "../Icon";
 import { useNavigate } from "react-router-dom";
+import { useUserStore } from "../../store/userStore";
+import { getPreferredAvatarUrl } from "../../utils/userDisplayName";
 
 export default function TopBar() {
   const navigate = useNavigate();
+  const user = useUserStore(state => state.user);
+  const avatarUrl = getPreferredAvatarUrl(user);
 
   return (
     <header style={{
@@ -87,15 +91,21 @@ export default function TopBar() {
         </button>
 
         <IconButton iconName="bell" onClick={() => {}} />
-        <IconButton iconName="user" onClick={() => navigate("/profile")} />
+        <IconButton
+          iconName="user"
+          avatarUrl={avatarUrl}
+          ariaLabel="Open profile"
+          onClick={() => navigate("/profile")}
+        />
       </div>
     </header>
   );
 }
 
-function IconButton({ iconName, onClick }) {
+function IconButton({ iconName, onClick, avatarUrl = "", ariaLabel }) {
   return (
     <button
+      aria-label={ariaLabel || iconName}
       onClick={onClick}
       style={{
         width: 40, height: 40, borderRadius: "50%",
@@ -104,6 +114,8 @@ function IconButton({ iconName, onClick }) {
         color: "var(--text-dim)", cursor: "pointer",
         display: "flex", alignItems: "center",
         justifyContent: "center",
+        position: "relative",
+        overflow: "hidden",
         transition: "all 0.3s",
       }}
       onMouseEnter={e => {
@@ -117,6 +129,22 @@ function IconButton({ iconName, onClick }) {
       }}
     >
       <Icon name={iconName} size={18} />
+      {avatarUrl && (
+        <img
+          src={avatarUrl}
+          alt="User profile photo"
+          onError={e => {
+            e.currentTarget.style.display = "none";
+          }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+      )}
     </button>
   );
 }

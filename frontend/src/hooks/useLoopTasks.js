@@ -3,6 +3,8 @@ import { supabase } from "../lib/supabase";
 import { useAppState } from "../contexts/AppStateContext";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const AUTO_GENERATION_ERROR =
+  "We couldn't prepare today's plan yet. Open The Loop to try again.";
 
 const getLocalDate = () => new Date().toLocaleDateString("en-CA");
 
@@ -48,6 +50,7 @@ export function useLoopTasks() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [hasFetched, setHasFetched] = useState(false);
   const [error, setError] = useState(null);
   const insight = "";
 
@@ -55,10 +58,12 @@ export function useLoopTasks() {
     if (!user?.id) {
       setTasks([]);
       setError(null);
+      setHasFetched(false);
       return [];
     }
 
     setLoading(true);
+    setHasFetched(false);
     setError(null);
 
     try {
@@ -81,16 +86,30 @@ export function useLoopTasks() {
       return [];
     } finally {
       setLoading(false);
+      setHasFetched(true);
     }
   }, [user?.id]);
 
-  const generateTasks = useCallback(async ({ regenerate = false } = {}) => {
+  const generateTasks = useCallback(async ({
+    regenerate = false,
+    auto = false,
+  } = {}) => {
     if (!user?.id) return [];
 
     setGenerating(true);
     setError(null);
 
     try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+
+      if (sessionError || !accessToken) {
+        setError(auto
+          ? AUTO_GENERATION_ERROR
+          : "Your session has expired. Please sign in again to generate your Loop.");
+        return [];
+      }
+
       const struggles = Array.isArray(user?.onboarding_answers)
         ? user.onboarding_answers.filter((value) => typeof value === "string" && value.trim())
         : [];
@@ -110,6 +129,7 @@ export function useLoopTasks() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
         },
         body: JSON.stringify(payload),
       });
@@ -122,15 +142,29 @@ export function useLoopTasks() {
       }
 
       await response.json().catch(() => null);
-      return await fetchTasks();
+      const nextTasks = await fetchTasks();
+      await Promise.allSettled([
+        loadTasks?.(),
+        loadStats?.(),
+      ]);
+      return nextTasks;
     } catch (err) {
       console.error("Error generating tasks:", err);
-      setError(err.message || "AI failed to generate tasks. Please try again.");
+      setError(auto
+        ? AUTO_GENERATION_ERROR
+        : err.message || "AI failed to generate tasks. Please try again.");
       return [];
     } finally {
       setGenerating(false);
     }
-  }, [fetchTasks, user?.id, user?.onboarding_answers, user?.user_tree?.streak]);
+  }, [
+    fetchTasks,
+    loadStats,
+    loadTasks,
+    user?.id,
+    user?.onboarding_answers,
+    user?.user_tree?.streak,
+  ]);
 
   const completeTaskInDb = useCallback(async (taskId) => {
     const { data, error: rpcError } = await supabase.rpc(
@@ -223,6 +257,7 @@ export function useLoopTasks() {
     if (!user?.id) {
       setTasks([]);
       setError(null);
+      setHasFetched(false);
       return;
     }
 
@@ -235,6 +270,7 @@ export function useLoopTasks() {
   return {
     tasks,
     loading,
+    hasFetched,
     error,
     fetchTasks,
     generateTasks,

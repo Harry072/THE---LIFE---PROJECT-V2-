@@ -12,10 +12,14 @@ export function useAmbientAudio() {
     if (ctxRef.current) {
       try {
         nodesRef.current.forEach((n) => {
-          try { n.osc.stop(); n.lfo.stop(); } catch (e) {}
+          try { n.osc.stop(); n.lfo.stop(); } catch {
+            // Nodes may already be stopped during rapid soundscape changes.
+          }
         });
         ctxRef.current.close();
-      } catch (e) {}
+      } catch {
+        // AudioContext cleanup is best-effort across browser states.
+      }
       ctxRef.current = null;
       nodesRef.current = [];
     }
@@ -74,9 +78,13 @@ export function useAmbientAudio() {
     const currentNodes = nodesRef.current;
     setTimeout(() => {
       currentNodes.forEach((n) => {
-        try { n.osc.stop(); n.lfo.stop(); } catch (e) {}
+        try { n.osc.stop(); n.lfo.stop(); } catch {
+          // Nodes may already be stopped by unmount or another reset.
+        }
       });
-      try { currentCtx.close(); } catch (e) {}
+      try { currentCtx.close(); } catch {
+        // Closing an already-closed context is harmless.
+      }
     }, 2000);
     ctxRef.current = null;
     nodesRef.current = [];
@@ -92,10 +100,14 @@ export function useAmbientAudio() {
           gainRef.current.gain.setTargetAtTime(0, ctxRef.current.currentTime, 0.1);
         }
         nodesRef.current.forEach((n) => {
-          try { n.osc.stop(); n.lfo.stop(); } catch (e) {}
+          try { n.osc.stop(); n.lfo.stop(); } catch {
+            // Ignore cleanup races on unmount.
+          }
         });
         if (ctxRef.current) ctxRef.current.close();
-      } catch (e) {}
+      } catch {
+        // Ignore cleanup races on unmount.
+      }
     };
   }, []);
 

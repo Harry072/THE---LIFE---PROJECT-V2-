@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+/* eslint-disable react-hooks/set-state-in-effect */
+import React, { useState, useEffect, useRef } from "react";
 
 const PHASES = [
   { name: "Inhale", duration: 4, className: "inhale" },
@@ -11,15 +12,8 @@ export default function BreathingCircle({ isActive }) {
   const [count, setCount] = useState(4);
   const [cycleCount, setCycleCount] = useState(0);
   const timerRef = useRef(null);
-  const phaseTimerRef = useRef(null);
 
   const phase = PHASES[phaseIndex];
-
-  const startCycle = useCallback(() => {
-    if (!isActive) return;
-    setCount(PHASES[0].duration);
-    setPhaseIndex(0);
-  }, [isActive]);
 
   // Count down each second within a phase
   useEffect(() => {

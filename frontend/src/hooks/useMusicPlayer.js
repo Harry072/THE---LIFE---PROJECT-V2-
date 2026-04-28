@@ -88,7 +88,9 @@ export function useMusicPlayer() {
  
     // FIX #5: wait for any previous play() to settle
     if (playPromiseRef.current) {
-      try { await playPromiseRef.current; } catch (e) {}
+      try { await playPromiseRef.current; } catch {
+        // A previous play attempt may be interrupted by fast switching.
+      }
     }
  
     // Reset UI immediately

@@ -23,24 +23,40 @@ from ai.validator import (
     validate_ai_tasks,
 )
 
-app = FastAPI()
+# Initialize local .env before configuring middleware or clients.
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
-# 1. BULLETPROOF CORS FIX
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def get_cors_origins() -> list[str]:
+    configured_origins = os.environ.get("CORS_ORIGINS")
+    if not configured_origins:
+        return [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+
+    origins = [
+        origin.strip()
+        for origin in configured_origins.split(",")
+        if origin.strip()
+    ]
+    return origins or [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-    ],
+    ]
+
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Initialize Supabase
-load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
-
-
 def get_env_value(name: str) -> str | None:
     value = os.environ.get(name)
     if value is None:
@@ -49,7 +65,10 @@ def get_env_value(name: str) -> str | None:
 
 
 supabase_url = get_env_value("SUPABASE_URL")
-supabase_key = get_env_value("SUPABASE_KEY")
+supabase_key = (
+    get_env_value("SUPABASE_SERVICE_ROLE_KEY")
+    or get_env_value("SUPABASE_KEY")
+)
 
 if not supabase_url or not supabase_key:
     raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in backend/.env")
@@ -57,13 +76,19 @@ if not supabase_url or not supabase_key:
 supabase: Client = create_client(supabase_url, supabase_key)
 
 # Initialize Gemini
-gemini_api_key = get_env_value("GEMINI_API_KEY")
-if not gemini_api_key:
-    raise RuntimeError("GEMINI_API_KEY must be set in backend/.env")
-
 gemini_model_name = get_env_value("GEMINI_MODEL") or "gemini-2.5-flash"
-genai.configure(api_key=gemini_api_key)
-gemini_model = genai.GenerativeModel(gemini_model_name)
+gemini_api_key = get_env_value("GEMINI_API_KEY")
+gemini_model = None
+
+if gemini_api_key:
+    genai.configure(api_key=gemini_api_key)
+    gemini_model = genai.GenerativeModel(gemini_model_name)
+else:
+    print(
+        "AI_TASK_GENERATION "
+        "provider_unavailable=true provider=gemini "
+        "reason=missing_gemini_api_key"
+    )
 
 # 2. SCHEMA FIX: Receive the exact identity and date from React
 class TaskRequest(BaseModel):
@@ -72,6 +97,37 @@ class TaskRequest(BaseModel):
     struggles: list[str] = Field(default_factory=list)
     current_streak: int = 0
     regenerate: bool = False
+
+
+def extract_bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
+
+    parts = authorization.strip().split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        raise HTTPException(status_code=401, detail="Authorization bearer token required")
+
+    return parts[1].strip()
+
+
+def validate_supabase_access_token(authorization: str | None) -> str:
+    token = extract_bearer_token(authorization)
+
+    try:
+        user_response = supabase.auth.get_user(token)
+    except Exception as auth_error:
+        print(
+            "AUTH_VALIDATION_FAILED "
+            f"reason=invalid_token error={type(auth_error).__name__}:{str(auth_error)}"
+        )
+        raise HTTPException(status_code=401, detail="Invalid or expired session") from auth_error
+
+    auth_user = getattr(user_response, "user", None)
+    user_id = getattr(auth_user, "id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+    return str(user_id)
 
 
 def sort_task_rows(rows: list[dict]) -> list[dict]:
@@ -271,7 +327,10 @@ def save_fallback_tasks(context: dict, user_id: str, local_date: str) -> tuple[s
 @app.post("/api/generate-loop-tasks")
 async def generate_tasks(request: TaskRequest, authorization: str | None = Header(default=None)):
     try:
-        auth_header_present = bool(authorization and authorization.lower().startswith("bearer "))
+        token_user_id = validate_supabase_access_token(authorization)
+        if token_user_id != request.user_id:
+            raise HTTPException(status_code=403, detail="Session user does not match request user")
+
         existing_tasks = fetch_today_core_tasks(request.user_id, request.local_date)
 
         if existing_tasks and not request.regenerate:
@@ -291,8 +350,22 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
             local_date=request.local_date,
             existing_tasks=existing_tasks,
         )
-        context["auth_header_present"] = auth_header_present
+        context["auth_user_id"] = token_user_id
         prompt = build_loop_tasks_prompt(context)
+
+        if gemini_model is None:
+            fallback_status, fallback_rows = save_fallback_tasks(
+                context,
+                request.user_id,
+                request.local_date,
+            )
+            log_generation_event(
+                status=fallback_status,
+                provider="fallback",
+                error_reason="provider_unavailable",
+                context=context,
+            )
+            return build_task_response(fallback_status, fallback_rows, context)
 
         try:
             provider_response = generate_with_gemini(
@@ -348,6 +421,8 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
             )
             return build_task_response(fallback_status, fallback_rows, context)
         
+    except HTTPException:
+        raise
     except Exception as e:
         # 5. NO MORE SILENT FAILS: Print error to terminal and alert frontend
         print(f"CRITICAL BACKEND ERROR: {str(e)}") 

@@ -7,8 +7,6 @@ export default function GlobalNowPlaying() {
     isPlaying, 
     progress, 
     duration, 
-    playTrack, 
-    pauseTrack,
     seek, 
     togglePlay 
   } = useAppState();

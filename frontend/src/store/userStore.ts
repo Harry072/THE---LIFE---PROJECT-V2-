@@ -243,25 +243,10 @@ export const useUserStore = create<UserState>((set, get) => ({
         return { ok: false, reason: 'email_unverified' };
       }
 
-      const session = data.session;
       await updateProfile(data.user.id, {
         struggle_tags: struggles,
         onboarding_completed: true
       });
-         
-      // In production, we call the backend API rather than a localized mock.
-      try {
-        await fetch('http://127.0.0.1:8000/api/generate-loop-tasks', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({ context: { struggle_profile: struggles } })
-        });
-      } catch (e) {
-        console.error("Backend API call failed:", e);
-      }
 
       const isValid = await get().fetchUser();
       return isValid ? { ok: true } : { ok: false, reason: 'no_session' };

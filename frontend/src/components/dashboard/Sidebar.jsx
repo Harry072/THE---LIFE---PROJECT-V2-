@@ -2,7 +2,11 @@ import Icon from "../Icon";
 import GrowthTree from "../GrowthTree";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useUserStore } from "../../store/userStore";
-import { getPreferredInitial, getPreferredUsername } from "../../utils/userDisplayName";
+import {
+  getPreferredAvatarUrl,
+  getPreferredInitial,
+  getPreferredUsername,
+} from "../../utils/userDisplayName";
 
 const NAV = [
   { id: "dashboard", label: "Dashboard",     icon: "dashboard", path: "/dashboard" },
@@ -11,7 +15,6 @@ const NAV = [
   { id: "music",     label: "Music",         icon: "music",     path: "/music" },
   { id: "books",     label: "The Curator",   icon: "books",     path: "/curator" },
   { id: "progress",  label: "Progress",      icon: "progress",  path: "/progress" },
-  { id: "story",     label: "Founder Story", icon: "story",     path: "/story" },
 ];
 
 function NavItem({ item, active, onClick }) {
@@ -65,6 +68,7 @@ export default function Sidebar() {
   const profile = useUserStore(state => state.profile);
   const displayName = getPreferredUsername(user, profile);
   const initials = getPreferredInitial(user, profile);
+  const avatarUrl = getPreferredAvatarUrl(user);
 
   return (
     <aside style={{
@@ -158,7 +162,27 @@ export default function Sidebar() {
             fontSize: 14, color: "var(--text)",
             fontFamily: "var(--font-display)",
             fontWeight: 600,
-          }}>{initials}</div>
+            position: "relative",
+            overflow: "hidden",
+          }}>
+            {initials}
+            {avatarUrl && (
+              <img
+                src={avatarUrl}
+                alt="User profile photo"
+                onError={e => {
+                  e.currentTarget.style.display = "none";
+                }}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                }}
+              />
+            )}
+          </div>
           <div>
             <p style={{ margin: 0, fontSize: 13,
               color: "var(--text)", fontWeight: 500 }}>

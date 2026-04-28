@@ -24,7 +24,7 @@ const isLegacyDoneColumnError = (error) => {
 };
 
 export default function LoopTaskCard({
-  task, onToggle, onSkip, onReplace, onHover,
+  task, onToggle, onReplace, onHover,
 }) {
   const { updateTreeStats } = useAppState();
   const [expanded, setExpanded] = useState(false);

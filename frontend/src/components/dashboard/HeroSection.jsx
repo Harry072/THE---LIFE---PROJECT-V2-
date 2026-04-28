@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import SafeImage from "../common/SafeImage";
+import Icon from "../Icon";
 import { getPreferredUsername } from "../../utils/userDisplayName";
 
 // ── Utility: Time-based greeting ──
@@ -12,6 +14,7 @@ function getGreetingByTime() {
 }
 
 export default function HeroSection({ user, profile }) {
+  const navigate = useNavigate();
   const [greeting, setGreeting] = useState(getGreetingByTime());
   const displayName = getPreferredUsername(user, profile, "Friend");
 
@@ -24,7 +27,7 @@ export default function HeroSection({ user, profile }) {
   }, []);
 
   return (
-    <section style={{
+    <section className="dashboard-hero-section" style={{
       display: "grid",
       gridTemplateColumns: "1fr 1fr",
       gap: 32,
@@ -71,29 +74,129 @@ export default function HeroSection({ user, profile }) {
       </div>
  
       {/* Right: Cinematic image */}
-      <div style={{
-        position: "relative",
-        height: 320,
-        borderRadius: "var(--r-lg)",
-        overflow: "hidden",
-        boxShadow: "var(--shadow-lift)",
-      }}>
-        <SafeImage
-          src="/media/hero-forest-walker.jpg"
-          alt="A person walking through a misty forest with sunrays"
-          style={{
-            width: "100%", height: "100%",
-            objectFit: "cover",
-            display: "block",
-          }}
-        />
-        <div style={{
-          position: "absolute", inset: 0,
-          background: "linear-gradient(to right, "
-            + "var(--bg) 0%, transparent 20%, "
-            + "transparent 80%, rgba(10,15,13,0.6) 100%)",
-        }} />
+      <div className="dashboard-hero-image-area">
+        <div className="dashboard-hero-image-card" style={{
+          position: "relative",
+          height: 320,
+          borderRadius: "var(--r-lg)",
+          overflow: "hidden",
+          boxShadow: "var(--shadow-lift)",
+        }}>
+          <SafeImage
+            src="/media/hero-forest-walker.jpg"
+            alt="A person walking through a misty forest with sunrays"
+            style={{
+              width: "100%", height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+          <div style={{
+            position: "absolute", inset: 0,
+            background: "linear-gradient(to right, "
+              + "var(--bg) 0%, transparent 20%, "
+              + "transparent 80%, rgba(10,15,13,0.6) 100%)",
+          }} />
+        </div>
+
+        <button
+          type="button"
+          className="dashboard-founder-story-cta"
+          onClick={() => navigate("/story")}
+          aria-label="Open Founder Story"
+        >
+          <span className="dashboard-founder-story-icon">
+            <Icon name="story" size={17} />
+          </span>
+          <span className="dashboard-founder-story-copy">
+            <span>Founder Story</span>
+            <span>Why this exists</span>
+          </span>
+          <Icon name="arrow" size={16} />
+        </button>
       </div>
+
+      <style>{`
+        .dashboard-hero-image-area {
+          position: relative;
+        }
+
+        .dashboard-founder-story-cta {
+          position: absolute;
+          right: 18px;
+          bottom: 18px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 214px;
+          padding: 12px 14px;
+          border: 1px solid rgba(140, 255, 188, 0.24);
+          border-radius: var(--r-md);
+          background:
+            linear-gradient(135deg, rgba(8, 18, 14, 0.92), rgba(12, 40, 26, 0.82));
+          color: var(--text);
+          box-shadow: 0 18px 42px rgba(0, 0, 0, 0.35),
+            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+          backdrop-filter: blur(12px);
+          cursor: pointer;
+          font-family: var(--font-body);
+          text-align: left;
+          transition: border-color 0.2s ease, transform 0.2s ease,
+            box-shadow 0.2s ease;
+        }
+
+        .dashboard-founder-story-cta:hover {
+          border-color: rgba(140, 255, 188, 0.48);
+          transform: translateY(-2px);
+          box-shadow: 0 22px 50px rgba(0, 0, 0, 0.42),
+            0 0 24px rgba(46, 204, 113, 0.12);
+        }
+
+        .dashboard-founder-story-icon {
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--green-bright);
+          background: rgba(46, 204, 113, 0.12);
+          box-shadow: inset 0 0 0 1px rgba(140, 255, 188, 0.2);
+          flex-shrink: 0;
+        }
+
+        .dashboard-founder-story-copy {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+          min-width: 0;
+        }
+
+        .dashboard-founder-story-copy span:first-child {
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--text);
+        }
+
+        .dashboard-founder-story-copy span:last-child {
+          font-size: 11px;
+          color: var(--text-faint);
+        }
+
+        @media (max-width: 767px) {
+          .dashboard-hero-image-card {
+            height: 260px !important;
+          }
+
+          .dashboard-founder-story-cta {
+            position: static;
+            width: 100%;
+            margin-top: 14px;
+            justify-content: flex-start;
+          }
+        }
+      `}</style>
     </section>
   );
 }

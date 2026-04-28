@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 /**
  * StageUpOverlay — Quiet celebration when the user reaches a new growth stage.
  * Shows new tree image, stage name, and encouragement for 3 seconds.

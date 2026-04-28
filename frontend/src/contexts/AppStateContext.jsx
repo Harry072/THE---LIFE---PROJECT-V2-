@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   createContext, useContext, useState,
   useEffect, useCallback,
@@ -40,6 +41,11 @@ const EMPTY_BEHAVIOR = {
   avg_completion_rate: 0,
   streak: 0,
   total_reflections: 0,
+};
+
+const OPTIONAL_TABLES = {
+  focusSessions: false,
+  readingList: false,
 };
 
 export function AppStateProvider({ children }) {
@@ -151,6 +157,12 @@ export function AppStateProvider({ children }) {
   const endFocus = useCallback(async () => {
     if (!focusSession) return;
 
+    if (!OPTIONAL_TABLES.focusSessions) {
+      setFocusSession(null);
+      loadStats();
+      return;
+    }
+
     /* 
     TABLE MISSING: Disabling focus_sessions insert
     if (user && isSupabaseConfigured) {
@@ -188,6 +200,7 @@ export function AppStateProvider({ children }) {
   };
 
   const addToReadingList = useCallback(async (bookId) => {
+    if (!OPTIONAL_TABLES.readingList) return;
     if (!isSupabaseConfigured) return;
     if (readingList.includes(bookId)) return;
     setReadingList(prev => [...prev, bookId]);

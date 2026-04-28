@@ -14,16 +14,16 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  /* Optional: set to url('/assets/curator/library-forest-bg.jpg') when a real asset exists. */
-  --curator-library-bg-image: none;
+  --curator-library-bg-image: url("/media/curator-library-bg.png");
   background:
-    radial-gradient(ellipse 48% 28% at 28% 19%, rgba(46, 204, 113, 0.18), transparent 64%),
-    radial-gradient(ellipse 70% 42% at 80% 8%, rgba(46, 204, 113, 0.10), transparent 62%),
-    radial-gradient(ellipse 46% 36% at 12% 78%, rgba(240, 165, 0, 0.08), transparent 64%),
+    linear-gradient(180deg, rgba(2, 8, 6, 0.36) 0%, rgba(2, 8, 6, 0.74) 46%, rgba(2, 8, 6, 0.98) 100%),
+    radial-gradient(ellipse 48% 28% at 28% 19%, rgba(46, 204, 113, 0.16), transparent 64%),
+    radial-gradient(ellipse 70% 42% at 80% 8%, rgba(46, 204, 113, 0.08), transparent 62%),
     var(--curator-library-bg-image),
     linear-gradient(120deg, rgba(3, 7, 6, 0.94), rgba(8, 18, 14, 0.92) 44%, rgba(3, 7, 6, 0.98));
   background-size: auto, auto, auto, cover, auto;
-  background-position: center;
+  background-position: center top;
+  background-repeat: no-repeat;
 }
 
 .curator-bg::before,
@@ -34,7 +34,7 @@
 }
 
 .curator-bg::before {
-  opacity: 0.24;
+  opacity: 0.12;
   background:
     linear-gradient(90deg, transparent 0 8%, rgba(240, 165, 0, 0.045) 8.3%, transparent 8.8% 17%),
     linear-gradient(180deg, transparent 0 12%, rgba(255, 255, 255, 0.028) 12.3%, transparent 12.8% 25%),
@@ -44,10 +44,12 @@
 
 .curator-bg::after {
   background:
-    radial-gradient(circle at 50% 18%, transparent 0 24%, rgba(0, 0, 0, 0.28) 58%, rgba(0, 0, 0, 0.62) 100%),
+    linear-gradient(90deg, rgba(2, 8, 6, 0.92) 0%, rgba(2, 8, 6, 0.58) 44%, rgba(2, 8, 6, 0.9) 100%),
+    linear-gradient(180deg, rgba(2, 8, 6, 0.24) 0%, rgba(2, 8, 6, 0.48) 42%, rgba(2, 8, 6, 0.95) 78%, rgba(2, 8, 6, 1) 100%),
+    radial-gradient(circle at 50% 18%, transparent 0 24%, rgba(0, 0, 0, 0.24) 58%, rgba(0, 0, 0, 0.58) 100%),
     radial-gradient(circle at 42% 38%, rgba(255, 255, 255, 0.035) 0 1px, transparent 1.5px);
-  background-size: auto, 5px 5px;
-  opacity: 0.74;
+  background-size: auto, auto, auto, 5px 5px;
+  opacity: 0.88;
 }
 
 .curator-topbar,
@@ -928,6 +930,17 @@
 }
 
 @media (max-width: 760px) {
+  .curator-bg {
+    background-position: center top;
+  }
+
+  .curator-bg::after {
+    background:
+      linear-gradient(90deg, rgba(2, 8, 6, 0.94) 0%, rgba(2, 8, 6, 0.68) 48%, rgba(2, 8, 6, 0.94) 100%),
+      linear-gradient(180deg, rgba(2, 8, 6, 0.24) 0%, rgba(2, 8, 6, 0.72) 46%, rgba(2, 8, 6, 0.98) 82%, rgba(2, 8, 6, 1) 100%);
+    opacity: 0.92;
+  }
+
   .curator-topbar,
   .curator-shell {
     padding-left: 18px;

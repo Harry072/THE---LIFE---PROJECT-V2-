@@ -7,14 +7,10 @@ const fallbackFromEmail = (email, fallback) => {
   if (typeof email !== "string" || !email.includes("@")) return fallback;
 
   const localPart = email.split("@")[0] || "";
-  const cleaned = localPart
-    .replace(/[._-]+/g, " ")
-    .replace(/\d+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
+  const cleaned = localPart.trim().replace(/\s+/g, "");
 
   if (!cleaned) return fallback;
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  return cleaned;
 };
 
 export function getPreferredUsername(user, _profile, fallback = "Explorer") {
@@ -30,4 +26,9 @@ export function getPreferredUsername(user, _profile, fallback = "Explorer") {
 export function getPreferredInitial(user, profile, fallback = "E") {
   const name = getPreferredUsername(user, profile, fallback);
   return (name.charAt(0) || fallback.charAt(0) || "E").toUpperCase();
+}
+
+export function getPreferredAvatarUrl(user) {
+  const avatarUrl = user?.user_metadata?.avatar_url;
+  return typeof avatarUrl === "string" ? avatarUrl.trim() : "";
 }

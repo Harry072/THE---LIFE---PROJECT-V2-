@@ -1,8 +1,8 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion as Motion } from 'framer-motion';
 
 export const GlassCard = ({ children, className = '', ...props }) => (
-  <motion.div 
+  <Motion.div 
     className={`glass-card ${className}`}
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
@@ -10,18 +10,18 @@ export const GlassCard = ({ children, className = '', ...props }) => (
     {...props}
   >
     {children}
-  </motion.div>
+  </Motion.div>
 );
 
 export const PremiumButton = ({ children, variant = 'primary', className = '', ...props }) => (
-  <motion.button
+  <Motion.button
     className={`btn-premium ${variant === 'secondary' ? 'btn-secondary' : ''} ${className}`}
     whileHover={{ scale: 1.02 }}
     whileTap={{ scale: 0.98 }}
     {...props}
   >
     {children}
-  </motion.button>
+  </Motion.button>
 );
 
 export const InputGroup = ({ label, icon: Icon, ...props }) => (
@@ -43,7 +43,7 @@ export const InputGroup = ({ label, icon: Icon, ...props }) => (
 );
 
 export const PageTransition = ({ children }) => (
-  <motion.div
+  <Motion.div
     initial={{ opacity: 0, x: 20 }}
     animate={{ opacity: 1, x: 0 }}
     exit={{ opacity: 0, x: -20 }}
@@ -51,5 +51,5 @@ export const PageTransition = ({ children }) => (
     style={{ width: '100%', height: '100%' }}
   >
     {children}
-  </motion.div>
+  </Motion.div>
 );

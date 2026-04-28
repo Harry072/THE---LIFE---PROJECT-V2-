@@ -38,8 +38,6 @@ export async function buildUserContext(userId) {
   // Yesterday's tasks
   let yesterdayTasks = [];
   try {
-    const yesterday = new Date(Date.now() - 86400000)
-      .toISOString().split("T")[0];
     const { data } = await supabase
       .from("loop_tasks")
       .select("title, category, done, skipped")
@@ -52,8 +50,6 @@ export async function buildUserContext(userId) {
   // 7-day completion rate
   let completionRate = 50;
   try {
-    const weekAgo = new Date(Date.now() - 7 * 86400000)
-      .toISOString().split("T")[0];
     const { data: weekTasks } = await supabase
       .from("loop_tasks")
       .select("done")
