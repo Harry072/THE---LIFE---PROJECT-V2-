@@ -67,16 +67,55 @@ WEEKLY_MIRROR_FIELDS = [
     "next_focus",
 ]
 
+RECOMMENDATION_TYPES = {
+    "task",
+    "reflection",
+    "reset",
+    "book",
+    "real_world_action",
+}
+
+RECOMMENDATION_FIELDS = [
+    "type",
+    "title",
+    "reason",
+    "action_label",
+]
+
 WEEKLY_MIRROR_UNSAFE_PATTERNS = [
     *UNSAFE_PATTERNS,
     r"\byou are\s+(depressed|anxious|broken|lazy|failing|traumatized|unstable)\b",
+    r"\byou have\s+(anxiety|depression|ptsd|adhd|a disorder)\b",
     r"\byour problem is\b",
     r"\byou need to fix\b",
     r"\bthis proves\b",
+    r"\bguarantee(s|d)?\b",
     r"\btrauma\b",
+    r"\bdisorder\b",
+    r"\bdepressed\b",
+    r"\banxiety\b",
     r"\bmental illness\b",
     r"\btherapy\b",
     r"\btherapist\b",
+    r"\bi know exactly how you feel\b",
+    r"\byou need me\b",
+    r"\bi am your only support\b",
+    r"\bi understand you completely\b",
+    r"\balways\b",
+    r"\bnever\b",
+]
+
+RECOMMENDATION_GROUNDING_PATTERNS = [
+    r"\bthe mirror noticed\b",
+    r"\bthis week seemed\b",
+    r"\ba small thing\b",
+    r"\bpattern\b",
+    r"\bmood\b",
+    r"\btask(s)?\b",
+    r"\baction\b",
+    r"\breflection(s)?\b",
+    r"\bfocus\b",
+    r"\bweek\b",
 ]
 
 INTENSITY_DURATION_RANGES = {
@@ -275,6 +314,8 @@ def validate_weekly_mirror_synthesis(raw_text: str) -> dict:
     payload = parse_json_object(raw_text)
     if isinstance(payload.get("synthesis"), dict):
         payload = payload["synthesis"]
+    elif isinstance(payload.get("mirror_insight"), dict):
+        payload = payload["mirror_insight"]
 
     validated: dict[str, str] = {}
     for field in WEEKLY_MIRROR_FIELDS:
@@ -294,7 +335,74 @@ def validate_weekly_mirror_synthesis(raw_text: str) -> dict:
 
         validated[field] = ensure_terminal_punctuation(cleaned)
 
+    validated["recommended_next_step"] = validate_recommended_next_step(
+        payload.get("recommended_next_step"),
+    )
     return validated
+
+
+def clean_weekly_mirror_text(value: object, *, field: str, max_chars: int) -> str:
+    if not isinstance(value, str):
+        raise WeeklyMirrorValidationError(f"missing_{field}")
+
+    cleaned = " ".join(value.strip().split())
+    if not cleaned:
+        raise WeeklyMirrorValidationError(f"empty_{field}")
+    if len(cleaned) > max_chars:
+        raise WeeklyMirrorValidationError(f"too_long_{field}")
+    if sentence_count(cleaned) > 2:
+        raise WeeklyMirrorValidationError(f"too_many_sentences_{field}")
+    if has_pattern(cleaned, WEEKLY_MIRROR_UNSAFE_PATTERNS):
+        raise WeeklyMirrorValidationError(f"unsafe_{field}")
+    return cleaned
+
+
+def validate_recommended_next_step(recommendation: object) -> dict:
+    if not isinstance(recommendation, dict):
+        raise WeeklyMirrorValidationError("missing_recommended_next_step")
+
+    missing_fields = [
+        field for field in RECOMMENDATION_FIELDS
+        if field not in recommendation
+    ]
+    if missing_fields:
+        raise WeeklyMirrorValidationError(
+            f"missing_recommended_next_step_{','.join(missing_fields)}"
+        )
+
+    recommendation_type = str(recommendation.get("type") or "").strip().lower()
+    if recommendation_type not in RECOMMENDATION_TYPES:
+        raise WeeklyMirrorValidationError("invalid_recommended_next_step_type")
+
+    title = clean_weekly_mirror_text(
+        recommendation.get("title"),
+        field="recommended_next_step_title",
+        max_chars=80,
+    )
+    reason = clean_weekly_mirror_text(
+        recommendation.get("reason"),
+        field="recommended_next_step_reason",
+        max_chars=260,
+    )
+    action_label = clean_weekly_mirror_text(
+        recommendation.get("action_label"),
+        field="recommended_next_step_action_label",
+        max_chars=40,
+    )
+
+    if len(title.split()) > 10:
+        raise WeeklyMirrorValidationError("too_many_words_recommended_next_step_title")
+    if len(action_label.split()) > 6:
+        raise WeeklyMirrorValidationError("too_many_words_recommended_next_step_action_label")
+    if not has_pattern(reason, RECOMMENDATION_GROUNDING_PATTERNS):
+        raise WeeklyMirrorValidationError("ungrounded_recommended_next_step_reason")
+
+    return {
+        "type": recommendation_type,
+        "title": title,
+        "reason": ensure_terminal_punctuation(reason),
+        "action_label": action_label,
+    }
 
 
 def normalize_task_for_insert(

@@ -47,6 +47,13 @@ CATEGORY_LABELS = {
     "meaning": "connecting effort to something that matters",
 }
 
+DEFAULT_RECOMMENDATION = {
+    "type": "task",
+    "title": "Start one tiny action",
+    "reason": "The Mirror noticed the week needs one grounded next step. A small thing that may help now is one visible action.",
+    "action_label": "Open The Loop",
+}
+
 
 def normalize_title(value: str) -> str:
     return " ".join(str(value or "").lower().split())
@@ -170,6 +177,52 @@ def describe_category(category: str, fallback: str) -> str:
     return CATEGORY_LABELS.get(str(category or "").lower(), fallback)
 
 
+def choose_weekly_recommendation(context: dict | None = None) -> dict:
+    signals = (context or {}).get("pattern_signals") or {}
+
+    if signals.get("distraction_or_scrolling"):
+        return {
+            "type": "task",
+            "title": "Start one tiny action",
+            "reason": "The Mirror noticed action was harder to carry this week. A small thing that may help now is one visible step.",
+            "action_label": "Open The Loop",
+        }
+
+    if signals.get("overthinking_or_mental_noise"):
+        return {
+            "type": "reflection",
+            "title": "Name the loop once",
+            "reason": "This week seemed to ask for one quiet naming moment. A small reflection can turn mental noise into a clearer next step.",
+            "action_label": "Reflect Tonight",
+        }
+
+    if signals.get("loneliness_or_emotional_heaviness"):
+        return {
+            "type": "real_world_action",
+            "title": "Send one honest message",
+            "reason": "The Mirror noticed heavier emotional weather this week. One grounded connection step may help the day feel less alone.",
+            "action_label": "Carry This Step",
+        }
+
+    if signals.get("lack_of_purpose_or_lost"):
+        return {
+            "type": "book",
+            "title": "Choose a purpose-led read",
+            "reason": "This week seemed to ask for direction rather than a perfect answer. A carefully chosen book can give the next step a steadier frame.",
+            "action_label": "Open Curator",
+        }
+
+    if signals.get("inconsistency_or_starting_quitting"):
+        return {
+            "type": "task",
+            "title": "Repeat one small promise",
+            "reason": "The Mirror noticed starts and stops around action this week. One tiny repeatable task can make consistency feel reachable.",
+            "action_label": "Open The Loop",
+        }
+
+    return dict(DEFAULT_RECOMMENDATION)
+
+
 def generate_insufficient_weekly_mirror(context: dict | None = None) -> dict:
     return {
         "week_sentence": "Your Weekly Mirror is still forming through a few more reflections and small actions.",
@@ -179,6 +232,12 @@ def generate_insufficient_weekly_mirror(context: dict | None = None) -> dict:
         "pulled_back": "The week is still too quiet in the app to reflect back responsibly.",
         "weekly_question": "What is one small moment worth noticing before this week ends?",
         "next_focus": "Leave one honest trace each day.",
+        "recommended_next_step": {
+            "type": "reflection",
+            "title": "Leave one honest trace",
+            "reason": "The Mirror has only a little weekly signal so far. A small reflection will help next week's pattern form with more care.",
+            "action_label": "Reflect Tonight",
+        },
     }
 
 
@@ -230,4 +289,5 @@ def generate_fallback_weekly_mirror(context: dict) -> dict:
         "pulled_back": f"What seemed to pull back momentum was {pulled_phrase}.",
         "weekly_question": "What small promise can still be kept when the mood changes?",
         "next_focus": "Begin smaller, but begin honestly.",
+        "recommended_next_step": choose_weekly_recommendation(context),
     }

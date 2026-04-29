@@ -298,6 +298,7 @@ def build_weekly_response(
     return {
         "status": status,
         "synthesis": synthesis,
+        "mirror_insight": synthesis,
         "meta": {
             "prompt_version": WEEKLY_MIRROR_PROMPT_VERSION,
             "fallback_used": fallback_used,

@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Icon from "../Icon";
 import WeeklyMirrorModal from "../weeklyMirror/WeeklyMirrorModal";
 import { useWeeklyMirror } from "../../hooks/useWeeklyMirror";
 
 export default function WeeklyMirrorCard() {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [phase, setPhase] = useState("intro");
   const {
@@ -13,6 +15,7 @@ export default function WeeklyMirrorCard() {
     loading,
     revealWeeklyMirror,
     carryFocus,
+    carryRecommendation,
     reset,
   } = useWeeklyMirror();
 
@@ -41,6 +44,32 @@ export default function WeeklyMirrorCard() {
   };
 
   const isStillForming = status === "insufficient_data";
+
+  const handleRecommendationAction = (recommendation) => {
+    const routeByType = {
+      task: "/loop",
+      reflection: "/reflection",
+      reset: "/meditation",
+      book: "/curator",
+    };
+    const recommendationType = recommendation?.type;
+
+    if (recommendationType === "real_world_action") {
+      carryRecommendation(recommendation);
+      closeMirror();
+      return;
+    }
+
+    const route = routeByType[recommendationType];
+    if (route) {
+      closeMirror();
+      navigate(route);
+      return;
+    }
+
+    carryRecommendation(recommendation);
+    closeMirror();
+  };
 
   return (
     <>
@@ -176,6 +205,7 @@ export default function WeeklyMirrorCard() {
         onClose={closeMirror}
         onReveal={revealPattern}
         onCarryFocus={carryFocus}
+        onRecommendationAction={handleRecommendationAction}
       />
 
       <style>{`

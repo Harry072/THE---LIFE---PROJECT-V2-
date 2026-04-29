@@ -24,6 +24,7 @@ export default function WeeklyMirrorModal({
   onClose,
   onReveal,
   onCarryFocus,
+  onRecommendationAction,
 }) {
   const [loadingIndex, setLoadingIndex] = useState(0);
 
@@ -52,6 +53,7 @@ export default function WeeklyMirrorModal({
       value: synthesis?.[key],
     })).filter((item) => item.value)
   ), [synthesis]);
+  const recommendation = synthesis?.recommended_next_step;
 
   if (!isOpen) return null;
 
@@ -155,6 +157,23 @@ export default function WeeklyMirrorModal({
                 </article>
               ))}
             </div>
+
+            {recommendation && (
+              <article className="weekly-mirror-recommendation-card">
+                <div>
+                  <p className="weekly-mirror-kicker">Recommended for You</p>
+                  <h3>{recommendation.title}</h3>
+                  <p>{recommendation.reason}</p>
+                </div>
+                <button
+                  type="button"
+                  className="weekly-mirror-recommendation-button"
+                  onClick={() => onRecommendationAction?.(recommendation)}
+                >
+                  {recommendation.action_label || "Open"}
+                </button>
+              </article>
+            )}
 
             <article className="weekly-mirror-focus-card">
               <p className="weekly-mirror-kicker">Next Week Focus</p>
@@ -379,6 +398,7 @@ export default function WeeklyMirrorModal({
 
         .weekly-mirror-hero-card,
         .weekly-mirror-section-card,
+        .weekly-mirror-recommendation-card,
         .weekly-mirror-focus-card {
           border: 1px solid rgba(126, 217, 154, 0.16);
           border-radius: var(--r-md);
@@ -417,12 +437,49 @@ export default function WeeklyMirrorModal({
         }
 
         .weekly-mirror-section-card p,
+        .weekly-mirror-recommendation-card p,
         .weekly-mirror-focus-card p {
           margin: 0;
           color: rgba(232, 232, 227, 0.68);
           font-size: 14px;
           line-height: 1.65;
           overflow-wrap: break-word;
+        }
+
+        .weekly-mirror-recommendation-card {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 18px;
+          align-items: center;
+          margin-top: 12px;
+          padding: 20px;
+          background:
+            radial-gradient(circle at 12% 20%, rgba(126, 217, 154, 0.14), transparent 34%),
+            linear-gradient(145deg, rgba(6, 31, 21, 0.9), rgba(3, 10, 7, 0.74));
+        }
+
+        .weekly-mirror-recommendation-card h3 {
+          margin: 0 0 8px;
+          color: var(--text);
+          font-family: var(--font-display);
+          font-size: clamp(22px, 4vw, 31px);
+          font-weight: 500;
+          line-height: 1.12;
+          overflow-wrap: anywhere;
+        }
+
+        .weekly-mirror-recommendation-button {
+          border: 1px solid rgba(240, 165, 0, 0.32);
+          border-radius: 999px;
+          background: rgba(240, 165, 0, 0.13);
+          color: rgba(255, 223, 166, 0.94);
+          cursor: pointer;
+          font-family: var(--font-body);
+          font-size: 13px;
+          font-weight: 800;
+          line-height: 1.2;
+          padding: 12px 16px;
+          white-space: nowrap;
         }
 
         .weekly-mirror-focus-card {
@@ -470,6 +527,15 @@ export default function WeeklyMirrorModal({
 
           .weekly-mirror-section-list {
             grid-template-columns: 1fr;
+          }
+
+          .weekly-mirror-recommendation-card {
+            grid-template-columns: 1fr;
+          }
+
+          .weekly-mirror-recommendation-button {
+            width: 100%;
+            white-space: normal;
           }
         }
       `}</style>

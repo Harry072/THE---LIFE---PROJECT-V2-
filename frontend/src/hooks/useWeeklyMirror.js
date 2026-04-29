@@ -17,6 +17,9 @@ const getWeekRange = () => {
 };
 
 const getFocusStorageKey = (userId) => `lifeProject.weeklyMirror.nextFocus.${userId}`;
+const getRecommendationStorageKey = (userId) => (
+  `lifeProject.weeklyMirror.recommendedStep.${userId}`
+);
 
 export function useWeeklyMirror() {
   const { user } = useAppState();
@@ -63,10 +66,17 @@ export function useWeeklyMirror() {
         throw new Error(payload?.detail || `Server returned ${response.status}`);
       }
 
+      const mirrorInsight = payload?.mirror_insight || payload?.synthesis || null;
+      const normalizedPayload = {
+        ...(payload || {}),
+        synthesis: mirrorInsight,
+        mirror_insight: mirrorInsight,
+      };
+
       setStatus(payload?.status || "success");
-      setSynthesis(payload?.synthesis || null);
+      setSynthesis(mirrorInsight);
       setMeta(payload?.meta || null);
-      return payload;
+      return normalizedPayload;
     } catch (requestError) {
       const message = requestError?.message || "The mirror could not form right now.";
       setError(message);
@@ -92,6 +102,20 @@ export function useWeeklyMirror() {
     );
   }, [synthesis?.next_focus, user?.id, weekRange]);
 
+  const carryRecommendation = useCallback((recommendation) => {
+    if (!user?.id || !recommendation || typeof window === "undefined") return;
+
+    window.localStorage.setItem(
+      getRecommendationStorageKey(user.id),
+      JSON.stringify({
+        recommended_next_step: recommendation,
+        week_start: weekRange.week_start,
+        week_end: weekRange.week_end,
+        saved_at: new Date().toISOString(),
+      })
+    );
+  }, [user?.id, weekRange]);
+
   const reset = useCallback(() => {
     setStatus("idle");
     setError("");
@@ -106,6 +130,7 @@ export function useWeeklyMirror() {
     weekRange,
     revealWeeklyMirror,
     carryFocus,
+    carryRecommendation,
     reset,
   };
 }

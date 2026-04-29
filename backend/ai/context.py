@@ -41,6 +41,72 @@ CATEGORY_ALIASES = {
     "logotherapy": "meaning",
 }
 
+PATTERN_SIGNAL_KEYWORDS = {
+    "distraction_or_scrolling": {
+        "scroll",
+        "phone",
+        "distract",
+        "distraction",
+        "focus",
+        "procrastinat",
+        "avoid",
+    },
+    "overthinking_or_mental_noise": {
+        "overthink",
+        "thought",
+        "thinking",
+        "mind",
+        "mental",
+        "noise",
+        "loop",
+        "ruminat",
+        "worry",
+        "uncertain",
+    },
+    "loneliness_or_emotional_heaviness": {
+        "alone",
+        "lonely",
+        "connection",
+        "connect",
+        "heavy",
+        "sad",
+        "low",
+        "drained",
+        "numb",
+    },
+    "lack_of_purpose_or_lost": {
+        "purpose",
+        "meaning",
+        "lost",
+        "direction",
+        "why",
+        "stuck",
+        "empty",
+    },
+    "inconsistency_or_starting_quitting": {
+        "consistent",
+        "inconsistent",
+        "quit",
+        "restart",
+        "start",
+        "streak",
+        "routine",
+        "habit",
+    },
+}
+
+HEAVY_MOOD_LABELS = {
+    "heavy",
+    "sad",
+    "low",
+    "tired",
+    "anxious",
+    "overwhelmed",
+    "drained",
+    "numb",
+    "lonely",
+}
+
 
 def normalize_category(value: str | None) -> str:
     raw_category = str(value or "meaning").strip().lower().replace("_", "-")
@@ -181,6 +247,119 @@ def count_values(values: list[str]) -> dict:
 def stable_hash(payload: object) -> str:
     serialized = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def contains_signal_keyword(values: list[str], keywords: set[str]) -> bool:
+    joined = " ".join(str(value or "").lower() for value in values)
+    return any(keyword in joined for keyword in keywords)
+
+
+def category_completion_rate(category_counts: dict, category: str) -> float | None:
+    stats = category_counts.get(category) if isinstance(category_counts, dict) else None
+    if not isinstance(stats, dict):
+        return None
+    total = safe_int(stats.get("total"), 0)
+    if total <= 0:
+        return None
+    return safe_int(stats.get("completed"), 0) / total
+
+
+def choose_category_signal(category_counts: dict, *, strongest: bool) -> str:
+    scored_categories: list[tuple[float, int, str]] = []
+    if not isinstance(category_counts, dict):
+        return ""
+
+    for category in CORE_CATEGORY_ORDER:
+        stats = category_counts.get(category) or {}
+        total = safe_int(stats.get("total"), 0)
+        if total <= 0:
+            continue
+        completed = safe_int(stats.get("completed"), 0)
+        skipped = safe_int(stats.get("skipped"), 0)
+        rate = completed / total
+        score = rate if strongest else -rate
+        pressure = completed if strongest else skipped
+        scored_categories.append((score, pressure, category))
+
+    if not scored_categories:
+        return ""
+    return sorted(scored_categories, reverse=True)[0][2]
+
+
+def describe_completion_pattern(task_count: int, completed_count: int) -> str:
+    if task_count <= 0:
+        return "quiet"
+    completion_rate = completed_count / task_count
+    if completion_rate < 0.34:
+        return "low"
+    if completion_rate < 0.75:
+        return "mixed"
+    return "strong"
+
+
+def build_weekly_pattern_signals(input_summary: dict, task_summary: dict) -> dict:
+    mood_counts = input_summary.get("mood_counts") if isinstance(input_summary, dict) else {}
+    prompt_labels = input_summary.get("prompt_labels") if isinstance(input_summary, dict) else []
+    category_counts = task_summary.get("category_counts") if isinstance(task_summary, dict) else {}
+    mood_labels = list((mood_counts or {}).keys())
+    prompt_label_values = [str(label or "") for label in (prompt_labels or [])]
+    safe_signal_text = [*mood_labels, *prompt_label_values]
+
+    task_count = safe_int(task_summary.get("task_count"), 0)
+    completed_count = safe_int(task_summary.get("completed_task_count"), 0)
+    skipped_count = safe_int(task_summary.get("skipped_task_count"), 0)
+    completion_rate = completed_count / task_count if task_count else 0.0
+    action_rate = category_completion_rate(category_counts, "action")
+    meaning_rate = category_completion_rate(category_counts, "meaning")
+    most_common_mood = str(mood_labels[0]).lower() if mood_labels else ""
+
+    distraction_signal = (
+        contains_signal_keyword(
+            safe_signal_text,
+            PATTERN_SIGNAL_KEYWORDS["distraction_or_scrolling"],
+        )
+        or (action_rate is not None and action_rate < 0.5)
+        or (task_count >= 3 and completion_rate < 0.4)
+    )
+    overthinking_signal = contains_signal_keyword(
+        safe_signal_text,
+        PATTERN_SIGNAL_KEYWORDS["overthinking_or_mental_noise"],
+    )
+    loneliness_signal = (
+        contains_signal_keyword(
+            safe_signal_text,
+            PATTERN_SIGNAL_KEYWORDS["loneliness_or_emotional_heaviness"],
+        )
+        or most_common_mood in HEAVY_MOOD_LABELS
+    )
+    purpose_signal = (
+        contains_signal_keyword(
+            safe_signal_text,
+            PATTERN_SIGNAL_KEYWORDS["lack_of_purpose_or_lost"],
+        )
+        or (meaning_rate is not None and meaning_rate < 0.5)
+    )
+    inconsistency_signal = (
+        contains_signal_keyword(
+            safe_signal_text,
+            PATTERN_SIGNAL_KEYWORDS["inconsistency_or_starting_quitting"],
+        )
+        or (task_count >= 3 and 0 < completion_rate < 0.5)
+        or (skipped_count > completed_count and skipped_count > 0)
+    )
+
+    return {
+        "distraction_or_scrolling": bool(distraction_signal),
+        "overthinking_or_mental_noise": bool(overthinking_signal),
+        "loneliness_or_emotional_heaviness": bool(loneliness_signal),
+        "lack_of_purpose_or_lost": bool(purpose_signal),
+        "inconsistency_or_starting_quitting": bool(inconsistency_signal),
+        "completion_pattern": describe_completion_pattern(task_count, completed_count),
+        "weakest_category": choose_category_signal(category_counts, strongest=False),
+        "strongest_category": choose_category_signal(category_counts, strongest=True),
+        "reflection_count": safe_int(input_summary.get("reflection_count"), 0),
+        "task_count": task_count,
+    }
 
 
 def fetch_latest_reflection_context(supabase, user_id: str) -> tuple[dict, bool]:
@@ -378,7 +557,7 @@ def build_weekly_input_summary(
         },
     }
 
-    return {
+    input_summary = {
         "week_start": week_start,
         "week_end": week_end,
         "reflection_count": len(reflection_rows),
@@ -407,6 +586,11 @@ def build_weekly_input_summary(
         ],
         "source_fingerprint": stable_hash(fingerprint_payload),
     }
+    input_summary["pattern_signals"] = build_weekly_pattern_signals(
+        input_summary,
+        task_summary,
+    )
+    return input_summary
 
 
 def build_weekly_mirror_context(
@@ -446,6 +630,7 @@ def build_weekly_mirror_context(
         "reflections": reflection_prompt_context,
         "task_summary": task_summary,
         "tree_summary": input_summary["tree_summary"],
+        "pattern_signals": input_summary.get("pattern_signals") or {},
         "input_summary": input_summary,
         "data_points": data_points,
         "meaningful_data_points": meaningful_data_points,

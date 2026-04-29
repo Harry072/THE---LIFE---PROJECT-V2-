@@ -2,7 +2,7 @@ import json
 
 
 LOOP_TASKS_PROMPT_VERSION = "loop_tasks_v2"
-WEEKLY_MIRROR_PROMPT_VERSION = "weekly_mirror_v1"
+WEEKLY_MIRROR_PROMPT_VERSION = "weekly_mirror_v2"
 
 
 INTENSITY_GUIDANCE = {
@@ -133,6 +133,7 @@ def build_weekly_mirror_prompt(context: dict) -> str:
         "reflections": context.get("reflections", []),
         "task_summary": context.get("task_summary", {}),
         "tree_summary": context.get("tree_summary", {}),
+        "pattern_signals": context.get("pattern_signals", {}),
     }
     context_json = json.dumps(prompt_context, ensure_ascii=True, sort_keys=True)
 
@@ -147,6 +148,7 @@ Core experience:
 - Help the user gently understand patterns from the past 7 days.
 - Synthesize patterns, not performance.
 - Turn the insight into one small focus for next week.
+- Recommend one bounded next step tied to existing app areas.
 - Make the user feel seen, grounded, and guided.
 
 Safety and tone rules:
@@ -156,9 +158,19 @@ Safety and tone rules:
 - Do not make medical, clinical, therapy, treatment, or trauma claims.
 - Do not use shame-heavy, harsh, dramatic, or absolute language.
 - Do not say "you are", "your problem is", "you need to fix", or "this proves".
+- Do not use fake intimacy such as "I know exactly how you feel", "you need me", "I am your only support", or "I understand you completely".
+- Do not use fake certainty such as "this proves", "always", or "never" about the user's inner life.
 - Use gentle uncertainty language such as "Your reflections suggest", "This week seemed", "You may be returning to", or "One pattern that appeared".
 - Keep every field concise: 1 to 2 sentences maximum.
 - Be specific to the provided weekly context without quoting private journal text.
+- The recommended_next_step.reason must be grounded in pattern_signals, task categories, mood labels, or weekly counts only.
+- recommended_next_step.type must be one of: "task", "reflection", "reset", "book", "real_world_action".
+- If pattern_signals suggest distraction, scrolling, or weak action completion, recommend a task or real_world_action.
+- If pattern_signals suggest overthinking or mental noise, recommend a reflection or reset.
+- If pattern_signals suggest loneliness or emotional heaviness, recommend a real_world_action or reset.
+- If pattern_signals suggest lack of purpose or feeling lost, recommend a book, reflection, or real_world_action.
+- If pattern_signals suggest inconsistency or starting and quitting, recommend one tiny consistency action.
+- Use language like "The Mirror noticed", "This week seemed to ask something from you", "A small thing that may help now", or "You do not need a perfect answer today. You need one honest step."
 
 Return ONLY valid JSON in this exact shape:
 {{
@@ -168,6 +180,12 @@ Return ONLY valid JSON in this exact shape:
   "helped_forward": "Small completed actions seemed to create movement.",
   "pulled_back": "Skipped or unfinished areas seemed to pull attention away from momentum.",
   "weekly_question": "What small promise would still feel honest on a low-energy day?",
-  "next_focus": "Begin smaller, but begin honestly."
+  "next_focus": "Begin smaller, but begin honestly.",
+  "recommended_next_step": {{
+    "type": "task",
+    "title": "Start one tiny action",
+    "reason": "The Mirror noticed action was the harder part this week. A small thing that may help now is one visible step.",
+    "action_label": "Open The Loop"
+  }}
 }}
 """.strip()
