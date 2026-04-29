@@ -84,6 +84,7 @@ export default function WeeklyMirrorModal({
           <Icon name="plus" size={16} style={{ transform: "rotate(45deg)" }} />
         </button>
 
+        <div className="weekly-mirror-content-scroll">
         {phase === "intro" && (
           <div className="weekly-mirror-intro">
             <div className="weekly-mirror-rings" aria-hidden="true" />
@@ -192,12 +193,16 @@ export default function WeeklyMirrorModal({
             </article>
           </div>
         )}
+        </div>
       </section>
 
       <style>{`
         .weekly-mirror-overlay {
           position: fixed;
-          inset: 0;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          left: 240px;
           z-index: 130;
           display: flex;
           align-items: center;
@@ -209,9 +214,13 @@ export default function WeeklyMirrorModal({
 
         .weekly-mirror-shell {
           position: relative;
-          width: min(760px, 100%);
+          width: 100%;
+          max-width: min(100%, 1200px);
           max-height: calc(100vh - 32px);
-          overflow-y: auto;
+          max-height: calc(100dvh - 32px);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
           border: 1px solid rgba(126, 217, 154, 0.22);
           border-radius: var(--r-lg);
           background:
@@ -236,7 +245,6 @@ export default function WeeklyMirrorModal({
           opacity: 0.92;
         }
 
-        .weekly-mirror-close,
         .weekly-mirror-intro,
         .weekly-mirror-loading,
         .weekly-mirror-empty,
@@ -245,10 +253,23 @@ export default function WeeklyMirrorModal({
           z-index: 1;
         }
 
+        .weekly-mirror-content-scroll {
+          flex: 1 1 auto;
+          height: 100%;
+          max-height: calc(100dvh - 32px);
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          width: 100%;
+          position: relative;
+          z-index: 1;
+        }
+
         .weekly-mirror-close {
           position: absolute;
           top: 18px;
           right: 18px;
+          z-index: 10;
           width: 36px;
           height: 36px;
           display: inline-flex;
@@ -264,12 +285,12 @@ export default function WeeklyMirrorModal({
         .weekly-mirror-intro,
         .weekly-mirror-loading,
         .weekly-mirror-empty {
-          min-height: min(560px, calc(100vh - 32px));
+          min-height: auto;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          padding: clamp(28px, 8vw, 72px);
+          padding: clamp(24px, 5vw, 48px);
           text-align: center;
         }
 
@@ -304,6 +325,7 @@ export default function WeeklyMirrorModal({
           font-weight: 500;
           line-height: 1.05;
           letter-spacing: 0;
+          overflow-wrap: anywhere;
         }
 
         .weekly-mirror-intro h2 span {
@@ -509,15 +531,28 @@ export default function WeeklyMirrorModal({
           }
         }
 
-        @media (max-width: 680px) {
+        @media (max-width: 1023px) {
           .weekly-mirror-overlay {
+            left: 64px;
+          }
+        }
+
+        @media (max-width: 767px) {
+          .weekly-mirror-overlay {
+            left: 0;
             padding: 10px;
             align-items: center;
           }
 
           .weekly-mirror-shell {
+            max-width: calc(100vw - 20px);
             max-height: calc(100vh - 20px);
+            max-height: calc(100dvh - 20px);
             border-radius: 18px;
+          }
+
+          .weekly-mirror-content-scroll {
+            max-height: calc(100dvh - 20px);
           }
 
           .weekly-mirror-result-header {

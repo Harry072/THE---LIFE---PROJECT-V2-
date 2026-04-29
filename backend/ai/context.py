@@ -14,6 +14,7 @@ MAX_WEEKLY_REFLECTIONS = 7
 MAX_WEEKLY_TASKS = 21
 MAX_WEEKLY_ANSWER_EXCERPTS = 2
 MAX_WEEKLY_ANSWER_EXCERPT_CHARS = 180
+MAX_COMPANION_TASKS = 6
 
 CATEGORY_ALIASES = {
     "awareness": "awareness",
@@ -392,6 +393,205 @@ def fetch_latest_reflection_context(supabase, user_id: str) -> tuple[dict, bool]
         "latest_mood": clean_short_text(reflection.get("mood"), 24) if isinstance(reflection, dict) else "",
         "prompt_labels": prompt_labels,
     }, True
+
+
+def fetch_life_companion_today_tasks(supabase, user_id: str) -> tuple[list[dict], bool]:
+    local_date = date.today().isoformat()
+    rows = table_select_optional(
+        supabase,
+        "loop_tasks",
+        "life_companion_today_tasks",
+        {
+            "select": "id,title,category,done,completed_at,skipped,is_optional,duration_minutes,preferred_time,sort_order,for_date",
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("eq", ("for_date", local_date)),
+                ("order", ("sort_order",), {"desc": False}),
+                ("limit", (MAX_COMPANION_TASKS,)),
+            ],
+        },
+    )
+    return rows, bool(rows)
+
+
+def summarize_life_companion_tasks(rows: list[dict]) -> dict:
+    core_rows = [
+        row for row in rows
+        if not bool(row.get("is_optional"))
+        and normalize_category(row.get("category")) in ALLOWED_LOOP_CATEGORIES
+    ]
+    completed_categories: list[str] = []
+    skipped_categories: list[str] = []
+    category_counts = {
+        category: {"total": 0, "completed": 0, "skipped": 0}
+        for category in CORE_CATEGORY_ORDER
+    }
+    task_cards: list[dict] = []
+
+    for row in core_rows[:MAX_COMPANION_TASKS]:
+        category = normalize_category(row.get("category"))
+        completed = bool(row.get("completed_at") or row.get("done"))
+        skipped = bool(row.get("skipped"))
+        category_counts[category]["total"] += 1
+        if completed:
+            category_counts[category]["completed"] += 1
+            completed_categories.append(category)
+        if skipped:
+            category_counts[category]["skipped"] += 1
+            skipped_categories.append(category)
+
+        task_cards.append({
+            "title": clean_short_text(row.get("title"), 72),
+            "category": category,
+            "completed": completed,
+            "skipped": skipped,
+            "duration_minutes": safe_int(row.get("duration_minutes"), 0),
+            "preferred_time": clean_short_text(row.get("preferred_time"), 24),
+        })
+
+    completed_count = len(completed_categories)
+    total_count = len(core_rows)
+    completion_pattern = describe_completion_pattern(total_count, completed_count)
+
+    return {
+        "today_tasks": task_cards,
+        "task_count": total_count,
+        "completed_task_count": completed_count,
+        "skipped_task_count": len(skipped_categories),
+        "completed_categories": count_values(completed_categories),
+        "skipped_categories": count_values(skipped_categories),
+        "category_counts": category_counts,
+        "completion_pattern": completion_pattern,
+        "strong_categories": [
+            category
+            for category in CORE_CATEGORY_ORDER
+            if (category_completion_rate(category_counts, category) or 0) >= 0.67
+        ][:2],
+        "weak_categories": [
+            category
+            for category in CORE_CATEGORY_ORDER
+            if (
+                category_counts[category]["total"] > 0
+                and (
+                    (category_completion_rate(category_counts, category) or 0) < 0.5
+                    or category_counts[category]["skipped"] > category_counts[category]["completed"]
+                )
+            )
+        ][:2],
+    }
+
+
+def fetch_life_companion_latest_reflection(supabase, user_id: str) -> tuple[dict, bool]:
+    reflection_data, has_reflection = fetch_latest_reflection_context(supabase, user_id)
+    if not has_reflection:
+        return {}, False
+    return {
+        "latest_mood": reflection_data.get("latest_mood") or "",
+        "prompt_labels": reflection_data.get("prompt_labels") or [],
+    }, True
+
+
+def fetch_life_companion_weekly_mirror(supabase, user_id: str) -> tuple[dict, bool]:
+    rows = table_select_optional(
+        supabase,
+        "weekly_syntheses",
+        "life_companion_weekly_mirror",
+        {
+            "select": "week_start,week_end,status,synthesis_json,prompt_version,updated_at,created_at",
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("order", ("week_end",), {"desc": True}),
+                ("order", ("updated_at",), {"desc": True}),
+                ("limit", (1,)),
+            ],
+        },
+    )
+    if not rows:
+        return {}, False
+
+    row = rows[0]
+    synthesis = row.get("synthesis_json") if isinstance(row.get("synthesis_json"), dict) else {}
+    recommendation = synthesis.get("recommended_next_step")
+    safe_recommendation = recommendation if isinstance(recommendation, dict) else {}
+    return {
+        "week_start": str(row.get("week_start") or ""),
+        "week_end": str(row.get("week_end") or ""),
+        "status": clean_short_text(row.get("status"), 24),
+        "next_focus": clean_short_text(synthesis.get("next_focus"), 140),
+        "recommended_next_step": {
+            "type": clean_short_text(safe_recommendation.get("type"), 32),
+            "title": clean_short_text(safe_recommendation.get("title"), 80),
+            "reason": clean_short_text(safe_recommendation.get("reason"), 180),
+            "action_label": clean_short_text(safe_recommendation.get("action_label"), 48),
+        } if safe_recommendation else {},
+    }, True
+
+
+def fetch_life_companion_onboarding_context(supabase, user_id: str) -> tuple[dict, bool]:
+    rows = table_select_optional(
+        supabase,
+        "profiles",
+        "life_companion_profile",
+        {
+            "select": "struggle_tags,struggle_cluster,onboarding_completed",
+            "ops": [
+                ("eq", ("id", user_id)),
+                ("limit", (1,)),
+            ],
+        },
+    )
+    if not rows:
+        return {}, False
+
+    row = rows[0]
+    struggle_tags = row.get("struggle_tags") if isinstance(row.get("struggle_tags"), list) else []
+    return {
+        "struggle_tags": [
+            clean_short_text(tag, 48)
+            for tag in struggle_tags
+            if clean_short_text(tag, 48)
+        ][:4],
+        "struggle_cluster": clean_short_text(row.get("struggle_cluster"), 48),
+        "onboarding_completed": bool(row.get("onboarding_completed")),
+    }, True
+
+
+def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
+    task_rows, has_tasks = fetch_life_companion_today_tasks(supabase, user_id)
+    tree_data, has_tree = fetch_user_tree_context(supabase, user_id)
+    latest_reflection, has_reflection = fetch_life_companion_latest_reflection(supabase, user_id)
+    weekly_mirror, has_weekly_mirror = fetch_life_companion_weekly_mirror(supabase, user_id)
+    onboarding_context, has_onboarding = fetch_life_companion_onboarding_context(supabase, user_id)
+    task_summary = summarize_life_companion_tasks(task_rows)
+    tree_summary = {
+        "streak": safe_int(tree_data.get("streak"), 0) if has_tree else 0,
+        "vitality": safe_int(tree_data.get("vitality"), 0) if has_tree else 0,
+        "cumulative_score": safe_int(tree_data.get("cumulative_score"), 0) if has_tree else 0,
+    }
+
+    return {
+        "user_id": user_id,
+        "mode": mode,
+        "local_date": date.today().isoformat(),
+        "task_summary": task_summary,
+        "latest_inner_weather": latest_reflection,
+        "weekly_mirror": weekly_mirror,
+        "tree_summary": tree_summary,
+        "streak_band": choose_streak_band(tree_summary["streak"]),
+        "onboarding_need": onboarding_context,
+        "context_used": [
+            source
+            for source, present in {
+                "today_tasks": has_tasks,
+                "latest_mood": has_reflection and bool(latest_reflection.get("latest_mood")),
+                "prompt_labels": has_reflection and bool(latest_reflection.get("prompt_labels")),
+                "weekly_mirror": has_weekly_mirror,
+                "user_tree": has_tree,
+                "onboarding_need": has_onboarding,
+            }.items()
+            if present
+        ],
+    }
 
 
 def fetch_weekly_reflection_rows(

@@ -54,6 +54,24 @@ DEFAULT_RECOMMENDATION = {
     "action_label": "Open The Loop",
 }
 
+COMPANION_ACTIONS = {
+    "loop": {"type": "loop", "label": "Open The Loop", "route": "/loop"},
+    "reflection": {"type": "reflection", "label": "Open Reflection", "route": "/reflection"},
+    "reset": {"type": "reset", "label": "Open Reset Space", "route": "/meditation"},
+    "curator": {"type": "curator", "label": "Open Curator", "route": "/curator"},
+    "weekly_mirror": {"type": "weekly_mirror", "label": "Open Dashboard", "route": "/dashboard"},
+    "real_world_action": {"type": "real_world_action", "label": "Carry This Step", "route": None},
+    "none": {"type": "none", "label": "No action", "route": None},
+}
+
+MIRROR_RECOMMENDATION_TO_COMPANION_ACTION = {
+    "task": "loop",
+    "reflection": "reflection",
+    "reset": "reset",
+    "book": "curator",
+    "real_world_action": "real_world_action",
+}
+
 
 def normalize_title(value: str) -> str:
     return " ".join(str(value or "").lower().split())
@@ -221,6 +239,141 @@ def choose_weekly_recommendation(context: dict | None = None) -> dict:
         }
 
     return dict(DEFAULT_RECOMMENDATION)
+
+
+def companion_action(action_type: str, label: str | None = None) -> dict:
+    action = dict(COMPANION_ACTIONS.get(action_type, COMPANION_ACTIONS["none"]))
+    if label:
+        action["label"] = label
+    return action
+
+
+def build_life_companion_response(
+    *,
+    reply: str,
+    action_type: str,
+    label: str | None = None,
+    tone: str = "grounded",
+    risk_level: str = "none",
+    safety_message: str | None = None,
+) -> dict:
+    return {
+        "reply": reply,
+        "suggested_action": companion_action(action_type, label),
+        "tone": tone,
+        "safety": {
+            "risk_level": risk_level,
+            "message": safety_message,
+        },
+    }
+
+
+def generate_life_companion_crisis_response() -> dict:
+    return build_life_companion_response(
+        reply=(
+            "I am really glad you said this here. If you might hurt yourself or you are in immediate danger, "
+            "please contact local emergency services now or reach a trusted person who can stay with you. "
+            "Do not stay alone with this if the danger feels close."
+        ),
+        action_type="none",
+        tone="serious",
+        risk_level="crisis",
+        safety_message="Immediate support is more important than using the app right now.",
+    )
+
+
+def choose_companion_action_from_weekly_mirror(context: dict) -> dict | None:
+    recommendation = ((context.get("weekly_mirror") or {}).get("recommended_next_step") or {})
+    recommendation_type = str(recommendation.get("type") or "").strip().lower()
+    action_type = MIRROR_RECOMMENDATION_TO_COMPANION_ACTION.get(recommendation_type)
+    if not action_type:
+        return None
+    return companion_action(
+        action_type,
+        recommendation.get("action_label") or COMPANION_ACTIONS[action_type]["label"],
+    )
+
+
+def generate_life_companion_fallback(
+    mode: str,
+    context: dict | None = None,
+    *,
+    prompt_injection: bool = False,
+) -> dict:
+    safe_context = context or {}
+    task_summary = safe_context.get("task_summary") or {}
+    weekly_mirror = safe_context.get("weekly_mirror") or {}
+    next_focus = weekly_mirror.get("next_focus") or "Begin with one honest, small step."
+    weak_categories = task_summary.get("weak_categories") or []
+    first_weak_category = weak_categories[0] if weak_categories else "action"
+
+    if prompt_injection:
+        return build_life_companion_response(
+            reply=(
+                "I cannot help with that request. What I can do is stay with your actual day: "
+                "choose one grounded step, then return to the app area that supports it."
+            ),
+            action_type="loop",
+            tone="grounded",
+            risk_level="low",
+            safety_message="The request tried to move outside the companion boundaries.",
+        )
+
+    if mode == "make_today_easier":
+        return build_life_companion_response(
+            reply=(
+                "I hear the friction. When the day feels heavy, the useful move is not a perfect plan; "
+                f"it is one smaller {first_weak_category} step. Open The Loop and choose the task that takes the least resistance."
+            ),
+            action_type="loop",
+        )
+
+    if mode == "reset_my_mind":
+        return build_life_companion_response(
+            reply=(
+                "Your mind sounds like it needs less argument and more ground. Give it a short reset: breathe, lower the pressure, "
+                "and let the next choice become visible after your body settles."
+            ),
+            action_type="reset",
+        )
+
+    if mode == "help_me_reflect":
+        return build_life_companion_response(
+            reply=(
+                "You do not need a perfect reflection tonight. Start with one line: "
+                "\"The thing I kept returning to today was...\" That is enough to open the door."
+            ),
+            action_type="reflection",
+            label="Open Reflection",
+        )
+
+    if mode == "suggest_next_step":
+        mirror_action = choose_companion_action_from_weekly_mirror(safe_context)
+        if mirror_action:
+            return {
+                "reply": (
+                    f"Your latest Weekly Mirror points toward this focus: {next_focus} "
+                    "You do not need to solve the whole pattern today. Carry one clear next step."
+                ),
+                "suggested_action": mirror_action,
+                "tone": "grounded",
+                "safety": {"risk_level": "none", "message": None},
+            }
+        return build_life_companion_response(
+            reply=(
+                "The cleanest next step is to give the day one shape. Open The Loop and choose the smallest useful action available."
+            ),
+            action_type="loop",
+        )
+
+    return build_life_companion_response(
+        reply=(
+            "I hear you. When the inside feels crowded, it helps to name the pattern without turning it into a verdict. "
+            "Take one honest step now, then let the larger answer come later."
+        ),
+        action_type="reflection",
+        label="Open Reflection",
+    )
 
 
 def generate_insufficient_weekly_mirror(context: dict | None = None) -> dict:

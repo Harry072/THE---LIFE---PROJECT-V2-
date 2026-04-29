@@ -12,6 +12,7 @@ import ProgressPage from './pages/ProgressPage';
 import ProfilePage from './pages/ProfilePage';
 import TheLoopPage from './pages/TheLoopPage';
 import CuratorPage from './features/curator/CuratorPage';
+import LifeCompanionPage from './pages/LifeCompanionPage';
 
 const ProtectedRoute = ({ children }) => {
   const user = useUserStore(state => state.user);
@@ -53,6 +54,9 @@ function AppRoutes() {
         {/* Protected — TODO pages (redirect to dashboard until built) */}
         <Route path="/loop" element={
           <ProtectedRoute><TheLoopPage /></ProtectedRoute>
+        } />
+        <Route path="/companion" element={
+          <ProtectedRoute><LifeCompanionPage /></ProtectedRoute>
         } />
         <Route path="/music" element={
           <ProtectedRoute><MeditationPage /></ProtectedRoute>

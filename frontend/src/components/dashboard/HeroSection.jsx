@@ -7,7 +7,7 @@ import { getPreferredUsername } from "../../utils/userDisplayName";
 // ── Utility: Time-based greeting ──
 function getGreetingByTime() {
   const hour = new Date().getHours();
-  if (hour >= 5  && hour < 12) return "GOOD MORNING";
+  if (hour >= 5 && hour < 12) return "GOOD MORNING";
   if (hour >= 12 && hour < 17) return "GOOD AFTERNOON";
   if (hour >= 17 && hour < 21) return "GOOD EVENING";
   return "GOOD NIGHT";
@@ -72,7 +72,7 @@ export default function HeroSection({ user, profile }) {
           Stay consistent. Trust the process.
         </p>
       </div>
- 
+
       {/* Right: Cinematic image */}
       <div className="dashboard-hero-image-area">
         <div className="dashboard-hero-image-card" style={{
@@ -105,12 +105,18 @@ export default function HeroSection({ user, profile }) {
           onClick={() => navigate("/story")}
           aria-label="Open Founder Story"
         >
-          <span className="dashboard-founder-story-icon">
-            <Icon name="story" size={17} />
+          <span className="dashboard-founder-story-badge">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="14" r="3" />
+              <path d="M12 17v4" />
+              <path d="M9.5 16.5l-2.5 2.5" />
+              <path d="M14.5 16.5l2.5 2.5" />
+              <path d="M12 11C12 11 9 8.5 12 3C12 3 15 5.5 15 8C15 9.5 12 11 12 11Z" />
+            </svg>
           </span>
           <span className="dashboard-founder-story-copy">
             <span>Founder Story</span>
-            <span>Why this exists</span>
+            <span>Why this Project exists</span>
           </span>
           <Icon name="arrow" size={16} />
         </button>
@@ -152,17 +158,25 @@ export default function HeroSection({ user, profile }) {
             0 0 24px rgba(46, 204, 113, 0.12);
         }
 
-        .dashboard-founder-story-icon {
-          width: 34px;
-          height: 34px;
+        .dashboard-founder-story-badge {
+          width: 36px;
+          height: 36px;
           border-radius: 50%;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          color: var(--green-bright);
-          background: rgba(46, 204, 113, 0.12);
-          box-shadow: inset 0 0 0 1px rgba(140, 255, 188, 0.2);
+          color: rgba(110, 231, 183, 0.9);
+          background: rgba(2, 44, 34, 0.5);
+          border: 1px solid rgba(52, 211, 153, 0.25);
+          box-shadow: 0 0 24px rgba(52, 211, 153, 0.12), inset 0 0 8px rgba(52, 211, 153, 0.08);
           flex-shrink: 0;
+          transition: all 0.3s ease;
+        }
+
+        .dashboard-founder-story-cta:hover .dashboard-founder-story-badge {
+          border-color: rgba(110, 231, 183, 0.45);
+          box-shadow: 0 0 28px rgba(52, 211, 153, 0.18), inset 0 0 16px rgba(52, 211, 153, 0.12);
+          color: #a7f3d0;
         }
 
         .dashboard-founder-story-copy {

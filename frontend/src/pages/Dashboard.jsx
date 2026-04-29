@@ -7,6 +7,7 @@ import TodaysPlan from "../components/dashboard/TodaysPlan";
 import FocusTimer from "../components/dashboard/FocusTimer";
 import StatCards from "../components/dashboard/StatCards";
 import WeeklyMirrorCard from "../components/dashboard/WeeklyMirrorCard";
+import LifeCompanionCard from "../components/dashboard/LifeCompanionCard";
 import MeditationSection from "../components/dashboard/MeditationSection";
 import BooksGrid from "../components/dashboard/BooksGrid";
 import NightReflection
@@ -73,6 +74,7 @@ export default function Dashboard() {
           </div>
 
           <WeeklyMirrorCard />
+          <LifeCompanionCard />
  
           {/* Row 4: Meditation */}
           <MeditationSection />

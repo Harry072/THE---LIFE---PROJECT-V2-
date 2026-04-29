@@ -16,6 +16,32 @@ class WeeklyMirrorValidationError(Exception):
         self.reason = reason
 
 
+class LifeCompanionValidationError(Exception):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+COMPANION_MODES = {
+    "understand_me",
+    "make_today_easier",
+    "reset_my_mind",
+    "help_me_reflect",
+    "suggest_next_step",
+}
+
+COMPANION_TONES = {"light", "grounded", "serious"}
+COMPANION_RISK_LEVELS = {"none", "low", "medium", "crisis"}
+COMPANION_ACTION_ROUTES = {
+    "loop": "/loop",
+    "reflection": "/reflection",
+    "reset": "/meditation",
+    "curator": "/curator",
+    "weekly_mirror": "/dashboard",
+    "real_world_action": None,
+    "none": None,
+}
+
 UNSAFE_PATTERNS = [
     r"\bdiagnos(e|is|ed|ing)\b",
     r"\bcure\b",
@@ -105,6 +131,70 @@ WEEKLY_MIRROR_UNSAFE_PATTERNS = [
     r"\bnever\b",
 ]
 
+COMPANION_UNSAFE_PATTERNS = [
+    *UNSAFE_PATTERNS,
+    r"\byou are\s+(depressed|anxious|broken|lazy|failing|traumatized|unstable)\b",
+    r"\byou have\s+(anxiety|depression|ptsd|adhd|a disorder)\b",
+    r"\byour trauma is\b",
+    r"\byour disorder is\b",
+    r"\byour diagnosis\b",
+    r"\btherapy\b",
+    r"\btherapist\b",
+    r"\bdoctor\b",
+    r"\byour problem is\b",
+    r"\byou need to fix\b",
+    r"\bthis proves\b",
+    r"\bi know exactly how you feel\b",
+    r"\bi understand you completely\b",
+    r"\bi am your best friend\b",
+    r"\bi am your only support\b",
+    r"\byou need me\b",
+    r"\bi will always be here\b",
+    r"\byou can only rely on me\b",
+    r"\bsystem prompt\b",
+    r"\bhidden instructions?\b",
+    r"\bdeveloper message\b",
+    r"\bapi key\b",
+    r"\bservice role\b",
+    r"\bbackend logic\b",
+    r"\bprivate data\b",
+]
+
+CRISIS_PATTERNS = [
+    r"\bkill myself\b",
+    r"\bkill me\b",
+    r"\bend my life\b",
+    r"\bi want to die\b",
+    r"\bi don't want to live\b",
+    r"\bi do not want to live\b",
+    r"\bnot be alive\b",
+    r"\bsuicid(e|al)\b",
+    r"\bself[-\s]?harm\b",
+    r"\bhurt myself\b",
+    r"\bharm myself\b",
+    r"\boverdose\b",
+    r"\bno reason to live\b",
+    r"\bimmediate danger\b",
+    r"\bi might hurt\b",
+    r"\bgoing to hurt myself\b",
+]
+
+PROMPT_INJECTION_PATTERNS = [
+    r"\bignore (all )?(previous|prior) instructions?\b",
+    r"\boverride (the )?(system|developer|instructions?)\b",
+    r"\breveal (your )?(prompt|system prompt|hidden instructions?)\b",
+    r"\bshow (your )?(prompt|system prompt|hidden instructions?)\b",
+    r"\bprint (your )?(prompt|system prompt|hidden instructions?)\b",
+    r"\bdeveloper message\b",
+    r"\bsystem message\b",
+    r"\bservice role\b",
+    r"\bapi key\b",
+    r"\bsecret(s)?\b",
+    r"\bjailbreak\b",
+    r"\bprivate data\b",
+    r"\bbackend logic\b",
+]
+
 RECOMMENDATION_GROUNDING_PATTERNS = [
     r"\bthe mirror noticed\b",
     r"\bthis week seemed\b",
@@ -163,6 +253,25 @@ def parse_json_object(raw_text: str):
     return payload
 
 
+def parse_life_companion_json(raw_text: str) -> dict:
+    cleaned = str(raw_text or "").strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+
+    try:
+        payload = json.loads(cleaned.strip(), strict=False)
+    except json.JSONDecodeError as exc:
+        raise LifeCompanionValidationError(f"invalid_json:{exc.msg}") from exc
+
+    if not isinstance(payload, dict):
+        raise LifeCompanionValidationError("payload_not_object")
+    return payload
+
+
 def limit_words(text: str, max_words: int) -> str:
     words = str(text or "").split()
     return " ".join(words[:max_words]).strip()
@@ -183,6 +292,121 @@ def sentence_count(text: str) -> int:
 def has_pattern(text: str, patterns: list[str]) -> bool:
     lowered = str(text or "").lower()
     return any(re.search(pattern, lowered, re.I) for pattern in patterns)
+
+
+def validate_life_companion_mode(mode: str) -> str:
+    cleaned = str(mode or "").strip().lower()
+    if cleaned not in COMPANION_MODES:
+        raise LifeCompanionValidationError("invalid_mode")
+    return cleaned
+
+
+def detect_life_companion_safety(message: str) -> dict:
+    cleaned = " ".join(str(message or "").split())
+    return {
+        "risk_level": "crisis" if has_pattern(cleaned, CRISIS_PATTERNS) else "none",
+        "crisis": has_pattern(cleaned, CRISIS_PATTERNS),
+        "prompt_injection": has_pattern(cleaned, PROMPT_INJECTION_PATTERNS),
+    }
+
+
+def validate_life_companion_message(message: str, max_chars: int = 1200) -> str:
+    cleaned = " ".join(str(message or "").strip().split())
+    if not cleaned:
+        raise LifeCompanionValidationError("empty_message")
+    if len(cleaned) > max_chars:
+        raise LifeCompanionValidationError("message_too_long")
+    return cleaned
+
+
+def validate_life_companion_text(value: object, *, field: str, max_chars: int) -> str:
+    if not isinstance(value, str):
+        raise LifeCompanionValidationError(f"missing_{field}")
+    cleaned = " ".join(value.strip().split())
+    if not cleaned:
+        raise LifeCompanionValidationError(f"empty_{field}")
+    if len(cleaned) > max_chars:
+        raise LifeCompanionValidationError(f"too_long_{field}")
+    if has_pattern(cleaned, COMPANION_UNSAFE_PATTERNS):
+        raise LifeCompanionValidationError(f"unsafe_{field}")
+    return cleaned
+
+
+def validate_life_companion_action(action: object) -> dict:
+    if not isinstance(action, dict):
+        raise LifeCompanionValidationError("missing_suggested_action")
+
+    action_type = str(action.get("type") or "").strip().lower()
+    if action_type not in COMPANION_ACTION_ROUTES:
+        raise LifeCompanionValidationError("invalid_action_type")
+
+    expected_route = COMPANION_ACTION_ROUTES[action_type]
+    route = action.get("route")
+    if expected_route is None:
+        if route not in (None, ""):
+            raise LifeCompanionValidationError("invalid_action_route")
+        route = None
+    elif route != expected_route:
+        raise LifeCompanionValidationError("invalid_action_route")
+
+    label = validate_life_companion_text(
+        action.get("label") or ("Not needed" if action_type == "none" else ""),
+        field="action_label",
+        max_chars=48,
+    )
+    if len(label.split()) > 6:
+        raise LifeCompanionValidationError("too_many_words_action_label")
+
+    return {
+        "type": action_type,
+        "label": label,
+        "route": route,
+    }
+
+
+def validate_life_companion_response(raw_text: str) -> dict:
+    payload = parse_life_companion_json(raw_text)
+    if isinstance(payload.get("companion_response"), dict):
+        payload = payload["companion_response"]
+
+    reply = validate_life_companion_text(
+        payload.get("reply"),
+        field="reply",
+        max_chars=1000,
+    )
+    if sentence_count(reply) > 8:
+        raise LifeCompanionValidationError("too_many_sentences_reply")
+
+    suggested_action = validate_life_companion_action(payload.get("suggested_action"))
+    tone = str(payload.get("tone") or "").strip().lower()
+    if tone not in COMPANION_TONES:
+        raise LifeCompanionValidationError("invalid_tone")
+
+    safety = payload.get("safety")
+    if not isinstance(safety, dict):
+        raise LifeCompanionValidationError("missing_safety")
+
+    risk_level = str(safety.get("risk_level") or "").strip().lower()
+    if risk_level not in COMPANION_RISK_LEVELS:
+        raise LifeCompanionValidationError("invalid_risk_level")
+
+    safety_message = safety.get("message")
+    if safety_message is not None:
+        safety_message = validate_life_companion_text(
+            safety_message,
+            field="safety_message",
+            max_chars=260,
+        )
+
+    return {
+        "reply": ensure_terminal_punctuation(reply),
+        "suggested_action": suggested_action,
+        "tone": tone,
+        "safety": {
+            "risk_level": risk_level,
+            "message": safety_message,
+        },
+    }
 
 
 def normalize_title(value: str) -> str:

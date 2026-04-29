@@ -13,6 +13,7 @@ from ai.context import (
     ALLOWED_LOOP_CATEGORIES,
     CORE_CATEGORY_ORDER,
     build_generation_context,
+    build_life_companion_context,
     build_weekly_mirror_context,
     normalize_category,
 )
@@ -20,18 +21,31 @@ from ai.fallbacks import (
     generate_fallback_tasks,
     generate_fallback_weekly_mirror,
     generate_insufficient_weekly_mirror,
+    generate_life_companion_crisis_response,
+    generate_life_companion_fallback,
+)
+from ai.companion_gateway import (
+    CompanionProviderError,
+    generate_life_companion_with_openai,
 )
 from ai.gateway import AIGenerationError, generate_with_gemini
 from ai.prompts import (
     LOOP_TASKS_PROMPT_VERSION,
+    LIFE_COMPANION_PROMPT_VERSION,
     WEEKLY_MIRROR_PROMPT_VERSION,
+    build_life_companion_prompt,
     build_loop_tasks_prompt,
     build_weekly_mirror_prompt,
 )
 from ai.validator import (
+    LifeCompanionValidationError,
     TaskValidationError,
     WeeklyMirrorValidationError,
+    detect_life_companion_safety,
     normalize_task_for_insert,
+    validate_life_companion_message,
+    validate_life_companion_mode,
+    validate_life_companion_response,
     validate_ai_tasks,
     validate_weekly_mirror_synthesis,
 )
@@ -116,6 +130,12 @@ class WeeklySynthesisRequest(BaseModel):
     user_id: str
     week_start: str
     week_end: str
+
+
+class LifeCompanionRequest(BaseModel):
+    user_id: str
+    mode: str
+    message: str
 
 
 def extract_bearer_token(authorization: str | None) -> str:
@@ -305,6 +325,49 @@ def build_weekly_response(
             "data_points": context.get("data_points") or {"reflections": 0, "tasks": 0},
         },
     }
+
+
+def build_life_companion_response(status: str, companion_response: dict) -> dict:
+    return {
+        "status": status,
+        "reply": companion_response.get("reply") or "",
+        "suggested_action": companion_response.get("suggested_action") or {
+            "type": "none",
+            "label": "No action",
+            "route": None,
+        },
+        "tone": companion_response.get("tone") or "grounded",
+        "safety": companion_response.get("safety") or {
+            "risk_level": "none",
+            "message": None,
+        },
+    }
+
+
+def log_life_companion_event(
+    *,
+    status: str,
+    mode: str,
+    provider: str = "deterministic",
+    latency_ms: int | None = None,
+    validation_failure_reason: str | None = None,
+    error_reason: str | None = None,
+    risk_level: str = "none",
+    context: dict | None = None,
+) -> None:
+    context_used = ",".join((context or {}).get("context_used") or []) or "none"
+    print(
+        "LIFE_COMPANION "
+        f"status={status} "
+        f"provider={provider} "
+        f"prompt_version={LIFE_COMPANION_PROMPT_VERSION} "
+        f"mode={mode} "
+        f"context_used={context_used} "
+        f"risk_level={risk_level} "
+        f"latency_ms={latency_ms if latency_ms is not None else 'n/a'} "
+        f"validation_failure_reason={validation_failure_reason or 'none'} "
+        f"error_reason={error_reason or 'none'}"
+    )
 
 
 def log_weekly_mirror_event(
@@ -503,6 +566,102 @@ def save_fallback_tasks(context: dict, user_id: str, local_date: str) -> tuple[s
     if insert_status in {"existing", "fallback_existing"}:
         return insert_status, rows
     return "fallback", rows
+
+
+@app.post("/api/life-companion/chat")
+async def life_companion_chat(
+    request: LifeCompanionRequest,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        if token_user_id != request.user_id:
+            raise HTTPException(status_code=403, detail="Session user does not match request user")
+
+        try:
+            mode = validate_life_companion_mode(request.mode)
+            user_message = validate_life_companion_message(request.message)
+        except LifeCompanionValidationError as validation_error:
+            raise HTTPException(status_code=400, detail=validation_error.reason) from validation_error
+
+        safety_signal = detect_life_companion_safety(user_message)
+        if safety_signal.get("crisis"):
+            companion_response = generate_life_companion_crisis_response()
+            log_life_companion_event(
+                status="safety",
+                mode=mode,
+                provider="deterministic",
+                risk_level="crisis",
+            )
+            return build_life_companion_response("safety", companion_response)
+
+        context = build_life_companion_context(supabase, request.user_id, mode)
+
+        if safety_signal.get("prompt_injection"):
+            companion_response = generate_life_companion_fallback(
+                mode,
+                context,
+                prompt_injection=True,
+            )
+            log_life_companion_event(
+                status="fallback",
+                mode=mode,
+                provider="deterministic",
+                error_reason="prompt_injection_detected",
+                risk_level=companion_response["safety"]["risk_level"],
+                context=context,
+            )
+            return build_life_companion_response("fallback", companion_response)
+
+        prompt = build_life_companion_prompt(context, mode, user_message)
+        try:
+            provider_response = generate_life_companion_with_openai(
+                prompt,
+                prompt_version=LIFE_COMPANION_PROMPT_VERSION,
+            )
+            companion_response = validate_life_companion_response(provider_response.text)
+            log_life_companion_event(
+                status="success",
+                mode=mode,
+                provider=provider_response.provider,
+                latency_ms=provider_response.latency_ms,
+                risk_level=companion_response["safety"]["risk_level"],
+                context=context,
+            )
+            return build_life_companion_response("success", companion_response)
+        except LifeCompanionValidationError as validation_error:
+            companion_response = generate_life_companion_fallback(mode, context)
+            log_life_companion_event(
+                status="fallback",
+                mode=mode,
+                provider="fallback",
+                validation_failure_reason=validation_error.reason,
+                risk_level=companion_response["safety"]["risk_level"],
+                context=context,
+            )
+            return build_life_companion_response("fallback", companion_response)
+        except CompanionProviderError as provider_error:
+            companion_response = generate_life_companion_fallback(mode, context)
+            log_life_companion_event(
+                status="fallback",
+                mode=mode,
+                provider="fallback",
+                latency_ms=provider_error.latency_ms,
+                error_reason=provider_error.reason,
+                risk_level=companion_response["safety"]["risk_level"],
+                context=context,
+            )
+            return build_life_companion_response("fallback", companion_response)
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "LIFE_COMPANION "
+            "status=critical_error "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to generate Life Companion response") from error
 
 
 @app.post("/api/weekly-synthesis")

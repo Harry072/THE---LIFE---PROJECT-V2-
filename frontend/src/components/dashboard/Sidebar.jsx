@@ -10,6 +10,7 @@ import {
 
 const NAV = [
   { id: "dashboard", label: "Dashboard",     icon: "dashboard", path: "/dashboard" },
+  { id: "companion", label: "Companion",     icon: "sparkle",   path: "/companion" },
   { id: "loop",      label: "The Loop",      icon: "loop",      path: "/loop" },
   { id: "meditate",  label: "Reset Space",   icon: "meditate",  path: "/meditation" },
   { id: "music",     label: "Music",         icon: "music",     path: "/music" },
