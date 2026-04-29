@@ -1,3 +1,6 @@
+import hashlib
+import json
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 
@@ -7,6 +10,10 @@ MAX_CONTEXT_STRUGGLES = 4
 MAX_STRUGGLE_CHARS = 48
 MAX_RECENT_TITLES = 8
 MAX_PROMPT_LABELS = 3
+MAX_WEEKLY_REFLECTIONS = 7
+MAX_WEEKLY_TASKS = 21
+MAX_WEEKLY_ANSWER_EXCERPTS = 2
+MAX_WEEKLY_ANSWER_EXCERPT_CHARS = 180
 
 CATEGORY_ALIASES = {
     "awareness": "awareness",
@@ -159,6 +166,23 @@ def extract_prompt_label(item: object) -> str:
     return ""
 
 
+def extract_answer_excerpt(item: object) -> str:
+    if not isinstance(item, dict):
+        return ""
+    answer = item.get("answer") if "answer" in item else item.get("a")
+    return clean_short_text(answer, MAX_WEEKLY_ANSWER_EXCERPT_CHARS)
+
+
+def count_values(values: list[str]) -> dict:
+    counts = Counter(value for value in values if value)
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
+def stable_hash(payload: object) -> str:
+    serialized = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 def fetch_latest_reflection_context(supabase, user_id: str) -> tuple[dict, bool]:
     rows = table_select_optional(
         supabase,
@@ -189,6 +213,243 @@ def fetch_latest_reflection_context(supabase, user_id: str) -> tuple[dict, bool]
         "latest_mood": clean_short_text(reflection.get("mood"), 24) if isinstance(reflection, dict) else "",
         "prompt_labels": prompt_labels,
     }, True
+
+
+def fetch_weekly_reflection_rows(
+    supabase,
+    user_id: str,
+    week_start: str,
+    week_end: str,
+) -> list[dict]:
+    rows = table_select_optional(
+        supabase,
+        "reflections",
+        "weekly_reflections",
+        {
+            "select": "id,for_date,mood,questions,created_at,updated_at",
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("gte", ("for_date", week_start)),
+                ("lte", ("for_date", week_end)),
+                ("order", ("for_date",), {"desc": True}),
+                ("order", ("created_at",), {"desc": True}),
+                ("limit", (MAX_WEEKLY_REFLECTIONS,)),
+            ],
+        },
+    )
+    return rows
+
+
+def fetch_weekly_task_rows(
+    supabase,
+    user_id: str,
+    week_start: str,
+    week_end: str,
+) -> list[dict]:
+    rows = table_select_optional(
+        supabase,
+        "loop_tasks",
+        "weekly_loop_tasks",
+        {
+            "select": "id,title,category,done,completed_at,skipped,is_optional,for_date,created_at",
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("gte", ("for_date", week_start)),
+                ("lte", ("for_date", week_end)),
+                ("order", ("for_date",), {"desc": True}),
+                ("order", ("created_at",), {"desc": True}),
+                ("limit", (MAX_WEEKLY_TASKS,)),
+            ],
+        },
+    )
+    return rows
+
+
+def build_reflection_prompt_context(rows: list[dict]) -> list[dict]:
+    prompt_context: list[dict] = []
+    for row in rows[:MAX_WEEKLY_REFLECTIONS]:
+        questions = row.get("questions") if isinstance(row.get("questions"), list) else []
+        prompt_labels = [
+            label
+            for label in (extract_prompt_label(item) for item in questions)
+            if label
+        ][:MAX_PROMPT_LABELS]
+        answer_excerpts = [
+            excerpt
+            for excerpt in (extract_answer_excerpt(item) for item in questions)
+            if excerpt
+        ][:MAX_WEEKLY_ANSWER_EXCERPTS]
+        prompt_context.append({
+            "for_date": str(row.get("for_date") or ""),
+            "mood": clean_short_text(row.get("mood"), 24),
+            "prompt_labels": prompt_labels,
+            "answer_excerpts": answer_excerpts,
+        })
+    return prompt_context
+
+
+def summarize_weekly_tasks(rows: list[dict]) -> dict:
+    core_rows = [
+        row for row in rows
+        if not bool(row.get("is_optional"))
+        and normalize_category(row.get("category")) in ALLOWED_LOOP_CATEGORIES
+    ]
+    completed_categories: list[str] = []
+    skipped_categories: list[str] = []
+    category_counts = {
+        category: {"total": 0, "completed": 0, "skipped": 0}
+        for category in CORE_CATEGORY_ORDER
+    }
+
+    for row in core_rows:
+        category = normalize_category(row.get("category"))
+        category_counts[category]["total"] += 1
+        if row.get("completed_at") or row.get("done"):
+            category_counts[category]["completed"] += 1
+            completed_categories.append(category)
+        if row.get("skipped"):
+            category_counts[category]["skipped"] += 1
+            skipped_categories.append(category)
+
+    completed_count = len(completed_categories)
+    skipped_count = len(skipped_categories)
+    return {
+        "task_count": len(core_rows),
+        "completed_task_count": completed_count,
+        "skipped_task_count": skipped_count,
+        "completed_categories": count_values(completed_categories),
+        "skipped_categories": count_values(skipped_categories),
+        "category_counts": category_counts,
+    }
+
+
+def build_weekly_input_summary(
+    *,
+    week_start: str,
+    week_end: str,
+    reflection_rows: list[dict],
+    task_rows: list[dict],
+    task_summary: dict,
+    tree_data: dict,
+    has_tree: bool,
+) -> dict:
+    moods = [
+        clean_short_text(row.get("mood"), 24)
+        for row in reflection_rows
+        if clean_short_text(row.get("mood"), 24)
+    ]
+    prompt_labels: list[str] = []
+    for row in reflection_rows:
+        questions = row.get("questions") if isinstance(row.get("questions"), list) else []
+        prompt_labels.extend(
+            label
+            for label in (extract_prompt_label(item) for item in questions)
+            if label
+        )
+
+    fingerprint_payload = {
+        "week_start": week_start,
+        "week_end": week_end,
+        "reflections": [
+            {
+                "id": row.get("id"),
+                "for_date": str(row.get("for_date") or ""),
+                "mood": clean_short_text(row.get("mood"), 24),
+                "updated_at": str(row.get("updated_at") or row.get("created_at") or ""),
+            }
+            for row in reflection_rows
+        ],
+        "tasks": [
+            {
+                "id": row.get("id"),
+                "for_date": str(row.get("for_date") or ""),
+                "category": normalize_category(row.get("category")),
+                "completed_at": str(row.get("completed_at") or ""),
+                "done": bool(row.get("done")),
+                "skipped": bool(row.get("skipped")),
+                "created_at": str(row.get("created_at") or ""),
+            }
+            for row in task_rows
+        ],
+        "tree": {
+            "streak": safe_int(tree_data.get("streak"), 0) if has_tree else 0,
+            "vitality": safe_int(tree_data.get("vitality"), 0) if has_tree else 0,
+            "updated_at": str(tree_data.get("updated_at") or "") if has_tree else "",
+        },
+    }
+
+    return {
+        "week_start": week_start,
+        "week_end": week_end,
+        "reflection_count": len(reflection_rows),
+        "task_count": task_summary["task_count"],
+        "completed_task_count": task_summary["completed_task_count"],
+        "skipped_task_count": task_summary["skipped_task_count"],
+        "mood_counts": count_values(moods),
+        "prompt_labels": list(count_values(prompt_labels).keys())[:MAX_PROMPT_LABELS],
+        "completed_categories": task_summary["completed_categories"],
+        "skipped_categories": task_summary["skipped_categories"],
+        "task_category_counts": task_summary["category_counts"],
+        "tree_summary": {
+            "streak": safe_int(tree_data.get("streak"), 0) if has_tree else 0,
+            "vitality": safe_int(tree_data.get("vitality"), 0) if has_tree else 0,
+            "cumulative_score": safe_int(tree_data.get("cumulative_score"), 0) if has_tree else 0,
+        },
+        "context_used": [
+            source
+            for source, present in {
+                "reflections": bool(reflection_rows),
+                "moods": bool(moods),
+                "loop_tasks": bool(task_rows),
+                "user_tree": has_tree,
+            }.items()
+            if present
+        ],
+        "source_fingerprint": stable_hash(fingerprint_payload),
+    }
+
+
+def build_weekly_mirror_context(
+    supabase,
+    user_id: str,
+    week_start: str,
+    week_end: str,
+) -> dict:
+    reflection_rows = fetch_weekly_reflection_rows(supabase, user_id, week_start, week_end)
+    task_rows = fetch_weekly_task_rows(supabase, user_id, week_start, week_end)
+    tree_data, has_tree = fetch_user_tree_context(supabase, user_id)
+    task_summary = summarize_weekly_tasks(task_rows)
+    input_summary = build_weekly_input_summary(
+        week_start=week_start,
+        week_end=week_end,
+        reflection_rows=reflection_rows,
+        task_rows=task_rows,
+        task_summary=task_summary,
+        tree_data=tree_data,
+        has_tree=has_tree,
+    )
+    reflection_prompt_context = build_reflection_prompt_context(reflection_rows)
+    data_points = {
+        "reflections": len(reflection_rows),
+        "tasks": task_summary["task_count"],
+    }
+    meaningful_data_points = (
+        len(reflection_rows)
+        + task_summary["completed_task_count"]
+        + task_summary["skipped_task_count"]
+    )
+
+    return {
+        "user_id": user_id,
+        "week_start": week_start,
+        "week_end": week_end,
+        "reflections": reflection_prompt_context,
+        "task_summary": task_summary,
+        "tree_summary": input_summary["tree_summary"],
+        "input_summary": input_summary,
+        "data_points": data_points,
+        "meaningful_data_points": meaningful_data_points,
+    }
 
 
 def summarize_task_history(rows: list[dict]) -> dict:

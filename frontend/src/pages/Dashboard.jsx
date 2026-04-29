@@ -1,5 +1,4 @@
 import "../styles/tokens.css";
-import { useNavigate } from "react-router-dom";
 import { useUserStore } from "../store/userStore";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
@@ -7,8 +6,8 @@ import HeroSection from "../components/dashboard/HeroSection";
 import TodaysPlan from "../components/dashboard/TodaysPlan";
 import FocusTimer from "../components/dashboard/FocusTimer";
 import StatCards from "../components/dashboard/StatCards";
-import { MeditationCard, QuickPlaylist }
-  from "../components/dashboard/MeditationSection";
+import WeeklyMirrorCard from "../components/dashboard/WeeklyMirrorCard";
+import MeditationSection from "../components/dashboard/MeditationSection";
 import BooksGrid from "../components/dashboard/BooksGrid";
 import NightReflection
   from "../components/dashboard/NightReflection";
@@ -18,7 +17,6 @@ import QuoteFooter
   from "../components/dashboard/QuoteFooter";
  
 export default function Dashboard() {
-  const navigate = useNavigate();
   const user = useUserStore(state => state.user);
   const profile = useUserStore(state => state.profile);
   return (
@@ -73,45 +71,11 @@ export default function Dashboard() {
           }}>
             <StatCards />
           </div>
+
+          <WeeklyMirrorCard />
  
           {/* Row 4: Meditation */}
-          <section style={{
-            marginBottom: 32,
-            animation: "fadeUp 0.6s ease 0.45s both",
-          }}>
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              marginBottom: 14,
-            }}>
-              <h3 style={{
-                margin: 0, fontSize: 11, fontWeight: 500,
-                letterSpacing: 2.5,
-                textTransform: "uppercase",
-                color: "var(--text-faint)",
-              }}>
-                Meditation &amp; Music
-              </h3>
-              <button
-                onClick={() => navigate("/meditation")}
-                style={{
-                  background: "none", border: "none",
-                  color: "var(--green-bright)",
-                  fontSize: 12, cursor: "pointer",
-                }}
-              >
-                Explore More &rarr;
-              </button>
-            </div>
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "1.4fr 1fr",
-              gap: 24,
-            }}>
-              <MeditationCard />
-              <QuickPlaylist />
-            </div>
-          </section>
+          <MeditationSection />
  
           {/* Row 5: Books */}
           <div style={{

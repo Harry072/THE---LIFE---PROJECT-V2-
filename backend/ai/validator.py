@@ -10,6 +10,12 @@ class TaskValidationError(Exception):
         self.reason = reason
 
 
+class WeeklyMirrorValidationError(Exception):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 UNSAFE_PATTERNS = [
     r"\bdiagnos(e|is|ed|ing)\b",
     r"\bcure\b",
@@ -51,6 +57,28 @@ VAGUE_ACTION_PATTERNS = [
     r"\btry harder\b",
 ]
 
+WEEKLY_MIRROR_FIELDS = [
+    "week_sentence",
+    "inner_weather_pattern",
+    "repeated_theme",
+    "helped_forward",
+    "pulled_back",
+    "weekly_question",
+    "next_focus",
+]
+
+WEEKLY_MIRROR_UNSAFE_PATTERNS = [
+    *UNSAFE_PATTERNS,
+    r"\byou are\s+(depressed|anxious|broken|lazy|failing|traumatized|unstable)\b",
+    r"\byour problem is\b",
+    r"\byou need to fix\b",
+    r"\bthis proves\b",
+    r"\btrauma\b",
+    r"\bmental illness\b",
+    r"\btherapy\b",
+    r"\btherapist\b",
+]
+
 INTENSITY_DURATION_RANGES = {
     "gentle": (2, 10),
     "normal": (10, 20),
@@ -77,6 +105,25 @@ def parse_model_json(raw_text: str):
     return payload
 
 
+def parse_json_object(raw_text: str):
+    cleaned = str(raw_text or "").strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+
+    try:
+        payload = json.loads(cleaned.strip(), strict=False)
+    except json.JSONDecodeError as exc:
+        raise WeeklyMirrorValidationError(f"invalid_json:{exc.msg}") from exc
+
+    if not isinstance(payload, dict):
+        raise WeeklyMirrorValidationError("payload_not_object")
+    return payload
+
+
 def limit_words(text: str, max_words: int) -> str:
     words = str(text or "").split()
     return " ".join(words[:max_words]).strip()
@@ -87,6 +134,11 @@ def ensure_terminal_punctuation(text: str) -> str:
     if not cleaned:
         return cleaned
     return cleaned if cleaned[-1] in ".!?" else f"{cleaned}."
+
+
+def sentence_count(text: str) -> int:
+    parts = [part for part in re.split(r"[.!?]+", str(text or "")) if part.strip()]
+    return len(parts)
 
 
 def has_pattern(text: str, patterns: list[str]) -> bool:
@@ -217,6 +269,32 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
         raise TaskValidationError(f"missing_categories:{','.join(missing)}")
 
     return [selected[category] for category in CORE_CATEGORY_ORDER]
+
+
+def validate_weekly_mirror_synthesis(raw_text: str) -> dict:
+    payload = parse_json_object(raw_text)
+    if isinstance(payload.get("synthesis"), dict):
+        payload = payload["synthesis"]
+
+    validated: dict[str, str] = {}
+    for field in WEEKLY_MIRROR_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str):
+            raise WeeklyMirrorValidationError(f"missing_{field}")
+
+        cleaned = " ".join(value.strip().split())
+        if not cleaned:
+            raise WeeklyMirrorValidationError(f"empty_{field}")
+        if len(cleaned) > 280:
+            raise WeeklyMirrorValidationError(f"too_long_{field}")
+        if sentence_count(cleaned) > 2:
+            raise WeeklyMirrorValidationError(f"too_many_sentences_{field}")
+        if has_pattern(cleaned, WEEKLY_MIRROR_UNSAFE_PATTERNS):
+            raise WeeklyMirrorValidationError(f"unsafe_{field}")
+
+        validated[field] = ensure_terminal_punctuation(cleaned)
+
+    return validated
 
 
 def normalize_task_for_insert(

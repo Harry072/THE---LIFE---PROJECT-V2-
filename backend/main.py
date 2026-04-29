@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,15 +13,27 @@ from ai.context import (
     ALLOWED_LOOP_CATEGORIES,
     CORE_CATEGORY_ORDER,
     build_generation_context,
+    build_weekly_mirror_context,
     normalize_category,
 )
-from ai.fallbacks import generate_fallback_tasks
+from ai.fallbacks import (
+    generate_fallback_tasks,
+    generate_fallback_weekly_mirror,
+    generate_insufficient_weekly_mirror,
+)
 from ai.gateway import AIGenerationError, generate_with_gemini
-from ai.prompts import LOOP_TASKS_PROMPT_VERSION, build_loop_tasks_prompt
+from ai.prompts import (
+    LOOP_TASKS_PROMPT_VERSION,
+    WEEKLY_MIRROR_PROMPT_VERSION,
+    build_loop_tasks_prompt,
+    build_weekly_mirror_prompt,
+)
 from ai.validator import (
     TaskValidationError,
+    WeeklyMirrorValidationError,
     normalize_task_for_insert,
     validate_ai_tasks,
+    validate_weekly_mirror_synthesis,
 )
 
 # Initialize local .env before configuring middleware or clients.
@@ -97,6 +110,12 @@ class TaskRequest(BaseModel):
     struggles: list[str] = Field(default_factory=list)
     current_streak: int = 0
     regenerate: bool = False
+
+
+class WeeklySynthesisRequest(BaseModel):
+    user_id: str
+    week_start: str
+    week_end: str
 
 
 def extract_bearer_token(authorization: str | None) -> str:
@@ -241,6 +260,167 @@ def build_task_response(
     }
 
 
+def parse_iso_date_strict(value: str, field_name: str):
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be YYYY-MM-DD",
+        ) from exc
+
+
+def validate_week_range(week_start: str, week_end: str) -> tuple[str, str]:
+    start_date = parse_iso_date_strict(week_start, "week_start")
+    end_date = parse_iso_date_strict(week_end, "week_end")
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="week_end must be after week_start")
+    if (end_date - start_date).days > 6:
+        raise HTTPException(status_code=400, detail="Weekly Mirror range cannot exceed 7 days")
+    return start_date.isoformat(), end_date.isoformat()
+
+
+def is_insufficient_weekly_data(context: dict) -> bool:
+    data_points = context.get("data_points") or {}
+    reflection_count = int(data_points.get("reflections") or 0)
+    task_count = int(data_points.get("tasks") or 0)
+    meaningful_count = int(context.get("meaningful_data_points") or 0)
+    return (reflection_count == 0 and task_count == 0) or meaningful_count < 2
+
+
+def build_weekly_response(
+    status: str,
+    synthesis: dict,
+    context: dict,
+    *,
+    fallback_used: bool,
+) -> dict:
+    return {
+        "status": status,
+        "synthesis": synthesis,
+        "meta": {
+            "prompt_version": WEEKLY_MIRROR_PROMPT_VERSION,
+            "fallback_used": fallback_used,
+            "data_points": context.get("data_points") or {"reflections": 0, "tasks": 0},
+        },
+    }
+
+
+def log_weekly_mirror_event(
+    *,
+    status: str,
+    provider: str = "gemini",
+    latency_ms: int | None = None,
+    validation_failure_reason: str | None = None,
+    error_reason: str | None = None,
+    context: dict | None = None,
+) -> None:
+    data_points = (context or {}).get("data_points") or {}
+    input_summary = (context or {}).get("input_summary") or {}
+    context_used = ",".join(input_summary.get("context_used") or []) or "none"
+    print(
+        "WEEKLY_MIRROR "
+        f"status={status} "
+        f"provider={provider} "
+        f"prompt_version={WEEKLY_MIRROR_PROMPT_VERSION} "
+        f"reflections={data_points.get('reflections', 0)} "
+        f"tasks={data_points.get('tasks', 0)} "
+        f"context_used={context_used} "
+        f"latency_ms={latency_ms if latency_ms is not None else 'n/a'} "
+        f"validation_failure_reason={validation_failure_reason or 'none'} "
+        f"error_reason={error_reason or 'none'}"
+    )
+
+
+def get_cached_weekly_synthesis(
+    user_id: str,
+    week_start: str,
+    week_end: str,
+    source_fingerprint: str,
+) -> dict | None:
+    try:
+        response = (
+            supabase.table("weekly_syntheses")
+            .select("status,synthesis_json,input_summary_json,prompt_version,fallback_used")
+            .eq("user_id", user_id)
+            .eq("week_start", week_start)
+            .eq("week_end", week_end)
+            .limit(1)
+            .execute()
+        )
+    except Exception as error:
+        print(
+            "WEEKLY_MIRROR "
+            "status=storage_lookup_failed "
+            f"error_type={type(error).__name__} "
+            f"error_code={getattr(error, 'code', 'n/a') or 'n/a'}"
+        )
+        return None
+
+    row = (response.data or [None])[0]
+    if not row:
+        return None
+
+    input_summary = row.get("input_summary_json") or {}
+    if (
+        row.get("prompt_version") == WEEKLY_MIRROR_PROMPT_VERSION
+        and input_summary.get("source_fingerprint") == source_fingerprint
+        and isinstance(row.get("synthesis_json"), dict)
+    ):
+        return row
+    return None
+
+
+def save_weekly_synthesis(
+    *,
+    user_id: str,
+    week_start: str,
+    week_end: str,
+    status: str,
+    synthesis: dict,
+    input_summary: dict,
+    fallback_used: bool,
+) -> None:
+    payload = {
+        "user_id": user_id,
+        "week_start": week_start,
+        "week_end": week_end,
+        "status": status,
+        "synthesis_json": synthesis,
+        "input_summary_json": input_summary,
+        "prompt_version": WEEKLY_MIRROR_PROMPT_VERSION,
+        "fallback_used": fallback_used,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    try:
+        existing = (
+            supabase.table("weekly_syntheses")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("week_start", week_start)
+            .eq("week_end", week_end)
+            .limit(1)
+            .execute()
+        )
+        row = (existing.data or [None])[0]
+        if row and row.get("id"):
+            (
+                supabase.table("weekly_syntheses")
+                .update(payload)
+                .eq("id", row["id"])
+                .execute()
+            )
+        else:
+            supabase.table("weekly_syntheses").insert(payload).execute()
+    except Exception as error:
+        print(
+            "WEEKLY_MIRROR "
+            "status=persistence_failed "
+            f"error_type={type(error).__name__} "
+            f"error_code={getattr(error, 'code', 'n/a') or 'n/a'}"
+        )
+
+
 def is_duplicate_insert_error(error: Exception) -> bool:
     error_code = str(getattr(error, "code", "") or "")
     error_message = str(error).lower()
@@ -322,6 +502,178 @@ def save_fallback_tasks(context: dict, user_id: str, local_date: str) -> tuple[s
     if insert_status in {"existing", "fallback_existing"}:
         return insert_status, rows
     return "fallback", rows
+
+
+@app.post("/api/weekly-synthesis")
+async def weekly_synthesis(
+    request: WeeklySynthesisRequest,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        if token_user_id != request.user_id:
+            raise HTTPException(status_code=403, detail="Session user does not match request user")
+
+        week_start, week_end = validate_week_range(request.week_start, request.week_end)
+        context = build_weekly_mirror_context(
+            supabase,
+            request.user_id,
+            week_start,
+            week_end,
+        )
+        input_summary = context.get("input_summary") or {}
+        source_fingerprint = input_summary.get("source_fingerprint") or ""
+
+        cached = get_cached_weekly_synthesis(
+            request.user_id,
+            week_start,
+            week_end,
+            source_fingerprint,
+        )
+        if cached:
+            log_weekly_mirror_event(
+                status=f"cached_{cached.get('status', 'success')}",
+                provider="cache",
+                context=context,
+            )
+            return build_weekly_response(
+                cached.get("status") or "success",
+                cached.get("synthesis_json") or {},
+                context,
+                fallback_used=bool(cached.get("fallback_used")),
+            )
+
+        if is_insufficient_weekly_data(context):
+            synthesis = generate_insufficient_weekly_mirror(context)
+            save_weekly_synthesis(
+                user_id=request.user_id,
+                week_start=week_start,
+                week_end=week_end,
+                status="insufficient_data",
+                synthesis=synthesis,
+                input_summary=input_summary,
+                fallback_used=False,
+            )
+            log_weekly_mirror_event(
+                status="insufficient_data",
+                provider="deterministic",
+                context=context,
+            )
+            return build_weekly_response(
+                "insufficient_data",
+                synthesis,
+                context,
+                fallback_used=False,
+            )
+
+        if gemini_model is None:
+            synthesis = generate_fallback_weekly_mirror(context)
+            save_weekly_synthesis(
+                user_id=request.user_id,
+                week_start=week_start,
+                week_end=week_end,
+                status="fallback",
+                synthesis=synthesis,
+                input_summary=input_summary,
+                fallback_used=True,
+            )
+            log_weekly_mirror_event(
+                status="fallback",
+                provider="fallback",
+                error_reason="provider_unavailable",
+                context=context,
+            )
+            return build_weekly_response(
+                "fallback",
+                synthesis,
+                context,
+                fallback_used=True,
+            )
+
+        prompt = build_weekly_mirror_prompt(context)
+        try:
+            provider_response = generate_with_gemini(
+                gemini_model,
+                prompt,
+                prompt_version=WEEKLY_MIRROR_PROMPT_VERSION,
+            )
+            synthesis = validate_weekly_mirror_synthesis(provider_response.text)
+            save_weekly_synthesis(
+                user_id=request.user_id,
+                week_start=week_start,
+                week_end=week_end,
+                status="success",
+                synthesis=synthesis,
+                input_summary=input_summary,
+                fallback_used=False,
+            )
+            log_weekly_mirror_event(
+                status="success",
+                provider=provider_response.provider,
+                latency_ms=provider_response.latency_ms,
+                context=context,
+            )
+            return build_weekly_response(
+                "success",
+                synthesis,
+                context,
+                fallback_used=False,
+            )
+        except WeeklyMirrorValidationError as validation_error:
+            synthesis = generate_fallback_weekly_mirror(context)
+            save_weekly_synthesis(
+                user_id=request.user_id,
+                week_start=week_start,
+                week_end=week_end,
+                status="fallback",
+                synthesis=synthesis,
+                input_summary=input_summary,
+                fallback_used=True,
+            )
+            log_weekly_mirror_event(
+                status="fallback",
+                validation_failure_reason=validation_error.reason,
+                context=context,
+            )
+            return build_weekly_response(
+                "fallback",
+                synthesis,
+                context,
+                fallback_used=True,
+            )
+        except AIGenerationError as ai_error:
+            synthesis = generate_fallback_weekly_mirror(context)
+            save_weekly_synthesis(
+                user_id=request.user_id,
+                week_start=week_start,
+                week_end=week_end,
+                status="fallback",
+                synthesis=synthesis,
+                input_summary=input_summary,
+                fallback_used=True,
+            )
+            log_weekly_mirror_event(
+                status="fallback",
+                latency_ms=ai_error.latency_ms,
+                error_reason=ai_error.reason,
+                context=context,
+            )
+            return build_weekly_response(
+                "fallback",
+                synthesis,
+                context,
+                fallback_used=True,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "WEEKLY_MIRROR "
+            "status=critical_error "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to generate Weekly Mirror") from error
 
 
 @app.post("/api/generate-loop-tasks")

@@ -25,6 +25,28 @@ ALTERNATE_TITLES = {
     ],
 }
 
+MOOD_DESCRIPTIONS = {
+    "clear": "a clearer, steadier tone",
+    "heavy": "a heavier emotional weather",
+    "restless": "a restless current",
+    "grateful": "a softer, grateful tone",
+    "hopeful": "a hopeful pull toward movement",
+    "quiet": "a quieter inner weather",
+    "numb": "a harder-to-name inner weather",
+    "sad": "a lower emotional weather",
+    "low": "a lower emotional weather",
+    "tired": "a tired, slower rhythm",
+    "anxious": "a restless and uncertain rhythm",
+    "overwhelmed": "a crowded inner weather",
+    "drained": "a drained, low-energy pattern",
+}
+
+CATEGORY_LABELS = {
+    "awareness": "noticing the pattern before acting",
+    "action": "turning thought into one concrete step",
+    "meaning": "connecting effort to something that matters",
+}
+
 
 def normalize_title(value: str) -> str:
     return " ".join(str(value or "").lower().split())
@@ -136,3 +158,76 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
     }
 
     return [tasks_by_category[category] for category in CORE_CATEGORY_ORDER]
+
+
+def first_key(counts: dict, fallback: str = "") -> str:
+    if not isinstance(counts, dict) or not counts:
+        return fallback
+    return next(iter(counts.keys()), fallback)
+
+
+def describe_category(category: str, fallback: str) -> str:
+    return CATEGORY_LABELS.get(str(category or "").lower(), fallback)
+
+
+def generate_insufficient_weekly_mirror(context: dict | None = None) -> dict:
+    return {
+        "week_sentence": "Your Weekly Mirror is still forming through a few more reflections and small actions.",
+        "inner_weather_pattern": "There is not enough weekly signal yet to name a pattern with care.",
+        "repeated_theme": "A clearer theme will appear after a little more lived data.",
+        "helped_forward": "Saving one reflection or completing one small task will give the mirror something real to hold.",
+        "pulled_back": "The week is still too quiet in the app to reflect back responsibly.",
+        "weekly_question": "What is one small moment worth noticing before this week ends?",
+        "next_focus": "Leave one honest trace each day.",
+    }
+
+
+def generate_fallback_weekly_mirror(context: dict) -> dict:
+    input_summary = context.get("input_summary") or {}
+    task_summary = context.get("task_summary") or {}
+    tree_summary = context.get("tree_summary") or {}
+    mood = first_key(input_summary.get("mood_counts") or {}, "")
+    completed_category = first_key(task_summary.get("completed_categories") or {}, "")
+    skipped_category = first_key(task_summary.get("skipped_categories") or {}, "")
+    reflection_count = int((context.get("data_points") or {}).get("reflections") or 0)
+    completed_count = int(task_summary.get("completed_task_count") or 0)
+    skipped_count = int(task_summary.get("skipped_task_count") or 0)
+    streak = int(tree_summary.get("streak") or 0)
+
+    mood_phrase = MOOD_DESCRIPTIONS.get(mood.lower(), "mixed inner weather") if mood else "mixed inner weather"
+    helped_phrase = (
+        describe_category(completed_category, "small completed actions")
+        if completed_count
+        else "returning to awareness in small ways"
+    )
+    pulled_phrase = (
+        describe_category(skipped_category, "an area that was harder to begin")
+        if skipped_count
+        else "the gap between noticing and beginning"
+    )
+    theme_phrase = describe_category(
+        completed_category or skipped_category,
+        "choosing a small next step before the whole week feels clear",
+    )
+
+    if reflection_count and completed_count:
+        week_sentence = "This week seemed to pair reflection with small moments of movement."
+    elif reflection_count:
+        week_sentence = "This week seemed to leave a quiet trail of reflection and returning awareness."
+    else:
+        week_sentence = "This week began forming a pattern through small actions and returning awareness."
+
+    if streak > 0:
+        helped_forward = f"What helped most was {helped_phrase}, supported by a continuing streak."
+    else:
+        helped_forward = f"What helped most was {helped_phrase}."
+
+    return {
+        "week_sentence": week_sentence,
+        "inner_weather_pattern": f"Your reflections suggest {mood_phrase}.",
+        "repeated_theme": f"One pattern that appeared was {theme_phrase}.",
+        "helped_forward": helped_forward,
+        "pulled_back": f"What seemed to pull back momentum was {pulled_phrase}.",
+        "weekly_question": "What small promise can still be kept when the mood changes?",
+        "next_focus": "Begin smaller, but begin honestly.",
+    }
