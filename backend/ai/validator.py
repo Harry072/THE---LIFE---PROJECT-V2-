@@ -180,11 +180,11 @@ CRISIS_PATTERNS = [
 ]
 
 PROMPT_INJECTION_PATTERNS = [
-    r"\bignore (all )?(previous|prior) instructions?\b",
+    r"\bignore (all )?(previous|prior) (instructions?|rules)\b",
     r"\boverride (the )?(system|developer|instructions?)\b",
-    r"\breveal (your )?(prompt|system prompt|hidden instructions?)\b",
-    r"\bshow (your )?(prompt|system prompt|hidden instructions?)\b",
-    r"\bprint (your )?(prompt|system prompt|hidden instructions?)\b",
+    r"\breveal (me )?(your )?(prompt|system prompt|hidden prompt|hidden instructions?)\b",
+    r"\bshow (me )?(your )?(prompt|system prompt|hidden prompt|hidden instructions?)\b",
+    r"\bprint (me )?(your )?(prompt|system prompt|hidden prompt|hidden instructions?)\b",
     r"\bdeveloper message\b",
     r"\bsystem message\b",
     r"\bservice role\b",
@@ -261,11 +261,23 @@ def parse_life_companion_json(raw_text: str) -> dict:
         cleaned = cleaned[3:]
     if cleaned.endswith("```"):
         cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
 
     try:
-        payload = json.loads(cleaned.strip(), strict=False)
+        payload = json.loads(cleaned, strict=False)
     except json.JSONDecodeError as exc:
-        raise LifeCompanionValidationError(f"invalid_json:{exc.msg}") from exc
+        decoder = json.JSONDecoder(strict=False)
+        payload = None
+        for match in re.finditer(r"{", cleaned):
+            try:
+                candidate, _ = decoder.raw_decode(cleaned[match.start():])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                payload = candidate
+                break
+        if payload is None:
+            raise LifeCompanionValidationError(f"invalid_json:{exc.msg}") from exc
 
     if not isinstance(payload, dict):
         raise LifeCompanionValidationError("payload_not_object")
@@ -285,7 +297,8 @@ def ensure_terminal_punctuation(text: str) -> str:
 
 
 def sentence_count(text: str) -> int:
-    parts = [part for part in re.split(r"[.!?]+", str(text or "")) if part.strip()]
+    cleaned = re.sub(r"(?<!\w)\d+[.)]\s+", "", str(text or ""))
+    parts = [part for part in re.split(r"[.!?]+", cleaned) if part.strip()]
     return len(parts)
 
 
@@ -349,8 +362,22 @@ def validate_life_companion_action(action: object) -> dict:
     elif route != expected_route:
         raise LifeCompanionValidationError("invalid_action_route")
 
+    if action_type == "none":
+        raw_label = action.get("label")
+        if raw_label not in (None, ""):
+            validate_life_companion_text(
+                raw_label,
+                field="action_label",
+                max_chars=48,
+            )
+        return {
+            "type": action_type,
+            "label": "",
+            "route": None,
+        }
+
     label = validate_life_companion_text(
-        action.get("label") or ("Not needed" if action_type == "none" else ""),
+        action.get("label") or "",
         field="action_label",
         max_chars=48,
     )

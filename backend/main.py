@@ -1,5 +1,7 @@
 from pathlib import Path
 from datetime import datetime
+from time import perf_counter
+from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +19,10 @@ from ai.context import (
     build_weekly_mirror_context,
     normalize_category,
 )
+from ai.companion_knowledge import (
+    detect_companion_intent,
+    retrieve_companion_knowledge,
+)
 from ai.fallbacks import (
     generate_fallback_tasks,
     generate_fallback_weekly_mirror,
@@ -25,8 +31,7 @@ from ai.fallbacks import (
     generate_life_companion_fallback,
 )
 from ai.companion_gateway import (
-    CompanionProviderError,
-    generate_life_companion_with_openai,
+    generate_life_companion_response,
 )
 from ai.gateway import AIGenerationError, generate_with_gemini
 from ai.prompts import (
@@ -45,7 +50,6 @@ from ai.validator import (
     normalize_task_for_insert,
     validate_life_companion_message,
     validate_life_companion_mode,
-    validate_life_companion_response,
     validate_ai_tasks,
     validate_weekly_mirror_synthesis,
 )
@@ -133,9 +137,14 @@ class WeeklySynthesisRequest(BaseModel):
 
 
 class LifeCompanionRequest(BaseModel):
-    user_id: str
+    user_id: str | None = None
     mode: str
     message: str
+    conversation_id: str | None = None
+
+
+class CompanionConversationCreateRequest(BaseModel):
+    title: str | None = None
 
 
 def extract_bearer_token(authorization: str | None) -> str:
@@ -157,7 +166,7 @@ def validate_supabase_access_token(authorization: str | None) -> str:
     except Exception as auth_error:
         print(
             "AUTH_VALIDATION_FAILED "
-            f"reason=invalid_token error={type(auth_error).__name__}:{str(auth_error)}"
+            f"reason=invalid_token error_type={type(auth_error).__name__}"
         )
         raise HTTPException(status_code=401, detail="Invalid or expired session") from auth_error
 
@@ -327,13 +336,20 @@ def build_weekly_response(
     }
 
 
-def build_life_companion_response(status: str, companion_response: dict) -> dict:
-    return {
+def build_life_companion_response(
+    status: str,
+    companion_response: dict,
+    *,
+    meta: dict | None = None,
+    conversation_id: str | None = None,
+    conversation: dict | None = None,
+) -> dict:
+    response = {
         "status": status,
         "reply": companion_response.get("reply") or "",
         "suggested_action": companion_response.get("suggested_action") or {
             "type": "none",
-            "label": "No action",
+            "label": "",
             "route": None,
         },
         "tone": companion_response.get("tone") or "grounded",
@@ -342,6 +358,13 @@ def build_life_companion_response(status: str, companion_response: dict) -> dict
             "message": None,
         },
     }
+    if meta:
+        response["meta"] = meta
+    if conversation_id is not None:
+        response["conversation_id"] = conversation_id
+    if conversation is not None:
+        response["conversation"] = conversation
+    return response
 
 
 def log_life_companion_event(
@@ -350,12 +373,23 @@ def log_life_companion_event(
     mode: str,
     provider: str = "deterministic",
     latency_ms: int | None = None,
+    total_request_ms: int | None = None,
+    context_build_ms: int | None = None,
+    prompt_build_ms: int | None = None,
+    retrieval_ms: int | None = None,
+    provider_ms: int | None = None,
+    validation_ms: int | None = None,
+    fallback_reason: str | None = None,
+    provider_selected: str | None = None,
+    final_response_mode: str | None = None,
     validation_failure_reason: str | None = None,
     error_reason: str | None = None,
     risk_level: str = "none",
     context: dict | None = None,
+    knowledge_chunk_ids: list[str] | None = None,
 ) -> None:
     context_used = ",".join((context or {}).get("context_used") or []) or "none"
+    knowledge_used = ",".join(knowledge_chunk_ids or []) or "none"
     print(
         "LIFE_COMPANION "
         f"status={status} "
@@ -364,9 +398,234 @@ def log_life_companion_event(
         f"mode={mode} "
         f"context_used={context_used} "
         f"risk_level={risk_level} "
+        f"total_request_ms={total_request_ms if total_request_ms is not None else 'n/a'} "
+        f"context_build_ms={context_build_ms if context_build_ms is not None else 'n/a'} "
+        f"prompt_build_ms={prompt_build_ms if prompt_build_ms is not None else 'n/a'} "
+        f"retrieval_ms={retrieval_ms if retrieval_ms is not None else 'n/a'} "
+        f"provider_ms={provider_ms if provider_ms is not None else 'n/a'} "
+        f"validation_ms={validation_ms if validation_ms is not None else 'n/a'} "
+        f"knowledge_used={knowledge_used} "
+        f"fallback_reason={fallback_reason or 'none'} "
+        f"provider_selected={provider_selected or provider} "
+        f"final_response_mode={final_response_mode or status} "
         f"latency_ms={latency_ms if latency_ms is not None else 'n/a'} "
         f"validation_failure_reason={validation_failure_reason or 'none'} "
         f"error_reason={error_reason or 'none'}"
+    )
+
+
+def log_life_companion_route_hit(
+    *,
+    request: LifeCompanionRequest,
+    authorization_present: bool,
+) -> None:
+    raw_message = str(getattr(request, "message", "") or "")
+    print(
+        "LIFE_COMPANION_ROUTE "
+        "route_hit=true "
+        f"mode={str(getattr(request, 'mode', '') or 'missing').strip().lower() or 'missing'} "
+        f"user_id_present={bool(getattr(request, 'user_id', None))} "
+        f"conversation_id_present={bool(getattr(request, 'conversation_id', None))} "
+        f"authorization_present={authorization_present} "
+        f"message_chars={len(raw_message)}"
+    )
+
+
+def build_life_companion_meta(
+    *,
+    provider_selected: str,
+    final_response_mode: str,
+    context: dict | None = None,
+    fallback_reason: str | None = None,
+    provider_ms: int | None = None,
+    validation_ms: int | None = None,
+    total_request_ms: int | None = None,
+    context_build_ms: int | None = None,
+    prompt_build_ms: int | None = None,
+    retrieval_ms: int | None = None,
+    knowledge_chunk_ids: list[str] | None = None,
+) -> dict:
+    return {
+        "prompt_version": LIFE_COMPANION_PROMPT_VERSION,
+        "provider_selected": provider_selected,
+        "final_response_mode": final_response_mode,
+        "fallback_reason": fallback_reason,
+        "provider_ms": provider_ms,
+        "validation_ms": validation_ms,
+        "total_request_ms": total_request_ms,
+        "context_build_ms": context_build_ms,
+        "prompt_build_ms": prompt_build_ms,
+        "retrieval_ms": retrieval_ms,
+        "context_used": (context or {}).get("context_used") or [],
+        "knowledge_chunk_ids": knowledge_chunk_ids or [],
+    }
+
+
+COMPANION_CONVERSATION_COLUMNS = (
+    "id,user_id,title,last_message_preview,archived,created_at,updated_at"
+)
+COMPANION_MESSAGE_COLUMNS = (
+    "id,conversation_id,user_id,role,content,mode,suggested_action_json,"
+    "tone,risk_level,created_at"
+)
+DEFAULT_COMPANION_CONVERSATION_TITLE = "New conversation"
+
+
+def utc_now_iso() -> str:
+    return datetime.utcnow().isoformat()
+
+
+def validate_companion_uuid(value: str | None, *, field: str) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail=f"{field} is required")
+    try:
+        UUID(cleaned)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"Invalid {field}") from error
+    return cleaned
+
+
+def compact_companion_text(value: object, *, max_chars: int) -> str:
+    compacted = " ".join(str(value or "").split())
+    if len(compacted) <= max_chars:
+        return compacted
+    return compacted[: max_chars - 3].rstrip() + "..."
+
+
+def derive_companion_conversation_title(message: str) -> str:
+    return compact_companion_text(message, max_chars=56) or DEFAULT_COMPANION_CONVERSATION_TITLE
+
+
+def normalize_companion_conversation_title(title: str | None) -> str:
+    return (
+        compact_companion_text(title, max_chars=80)
+        or DEFAULT_COMPANION_CONVERSATION_TITLE
+    )
+
+
+def get_owned_companion_conversation(
+    *,
+    user_id: str,
+    conversation_id: str,
+    allow_archived: bool = False,
+) -> dict:
+    normalized_conversation_id = validate_companion_uuid(
+        conversation_id,
+        field="conversation_id",
+    )
+    query = (
+        supabase.table("companion_conversations")
+        .select(COMPANION_CONVERSATION_COLUMNS)
+        .eq("id", normalized_conversation_id)
+        .eq("user_id", user_id)
+        .limit(1)
+    )
+    if not allow_archived:
+        query = query.eq("archived", False)
+
+    response = query.execute()
+    row = (response.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return row
+
+
+def create_companion_conversation(
+    *,
+    user_id: str,
+    title: str | None = None,
+) -> dict:
+    payload = {
+        "user_id": user_id,
+        "title": normalize_companion_conversation_title(title),
+    }
+    response = (
+        supabase.table("companion_conversations")
+        .insert(payload)
+        .execute()
+    )
+    row = (response.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create conversation")
+    return row
+
+
+def update_companion_conversation_after_reply(
+    *,
+    user_id: str,
+    conversation: dict,
+    user_message: str,
+    assistant_reply: str,
+) -> dict:
+    existing_title = compact_companion_text(conversation.get("title"), max_chars=80)
+    payload = {
+        "last_message_preview": compact_companion_text(
+            assistant_reply or user_message,
+            max_chars=120,
+        ),
+        "updated_at": utc_now_iso(),
+    }
+    if not existing_title or existing_title == DEFAULT_COMPANION_CONVERSATION_TITLE:
+        payload["title"] = derive_companion_conversation_title(user_message)
+
+    response = (
+        supabase.table("companion_conversations")
+        .update(payload)
+        .eq("id", conversation["id"])
+        .eq("user_id", user_id)
+        .execute()
+    )
+    row = (response.data or [None])[0]
+    if row:
+        return row
+    return get_owned_companion_conversation(
+        user_id=user_id,
+        conversation_id=conversation["id"],
+        allow_archived=True,
+    )
+
+
+def persist_companion_exchange(
+    *,
+    user_id: str,
+    conversation: dict,
+    mode: str,
+    user_message: str,
+    companion_response: dict,
+) -> dict:
+    safety = companion_response.get("safety") or {}
+    assistant_reply = companion_response.get("reply") or ""
+    message_rows = [
+        {
+            "conversation_id": conversation["id"],
+            "user_id": user_id,
+            "role": "user",
+            "content": user_message,
+            "mode": mode,
+            "risk_level": "none",
+        },
+        {
+            "conversation_id": conversation["id"],
+            "user_id": user_id,
+            "role": "assistant",
+            "content": assistant_reply,
+            "mode": mode,
+            "suggested_action_json": companion_response.get("suggested_action"),
+            "tone": companion_response.get("tone"),
+            "risk_level": safety.get("risk_level") or "none",
+        },
+    ]
+    (
+        supabase.table("companion_messages")
+        .insert(message_rows)
+        .execute()
+    )
+    return update_companion_conversation_after_reply(
+        user_id=user_id,
+        conversation=conversation,
+        user_message=user_message,
+        assistant_reply=assistant_reply,
     )
 
 
@@ -568,15 +827,133 @@ def save_fallback_tasks(context: dict, user_id: str, local_date: str) -> tuple[s
     return "fallback", rows
 
 
+@app.get("/api/life-companion/conversations")
+async def list_life_companion_conversations(
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        response = (
+            supabase.table("companion_conversations")
+            .select(COMPANION_CONVERSATION_COLUMNS)
+            .eq("user_id", token_user_id)
+            .eq("archived", False)
+            .order("updated_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        return {"conversations": response.data or []}
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "LIFE_COMPANION_HISTORY "
+            "status=list_failed "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to load conversations") from error
+
+
+@app.post("/api/life-companion/conversations")
+async def create_life_companion_conversation(
+    request: CompanionConversationCreateRequest,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        conversation = create_companion_conversation(
+            user_id=token_user_id,
+            title=request.title,
+        )
+        return {"conversation": conversation}
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "LIFE_COMPANION_HISTORY "
+            "status=create_failed "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to create conversation") from error
+
+
+@app.get("/api/life-companion/conversations/{conversation_id}/messages")
+async def list_life_companion_messages(
+    conversation_id: str,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        conversation = get_owned_companion_conversation(
+            user_id=token_user_id,
+            conversation_id=conversation_id,
+        )
+        response = (
+            supabase.table("companion_messages")
+            .select(COMPANION_MESSAGE_COLUMNS)
+            .eq("user_id", token_user_id)
+            .eq("conversation_id", conversation["id"])
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return {"messages": response.data or []}
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "LIFE_COMPANION_HISTORY "
+            "status=messages_failed "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to load messages") from error
+
+
+@app.delete("/api/life-companion/conversations/{conversation_id}")
+async def delete_life_companion_conversation(
+    conversation_id: str,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        conversation = get_owned_companion_conversation(
+            user_id=token_user_id,
+            conversation_id=conversation_id,
+            allow_archived=True,
+        )
+        (
+            supabase.table("companion_conversations")
+            .delete()
+            .eq("id", conversation["id"])
+            .eq("user_id", token_user_id)
+            .execute()
+        )
+        return {"status": "deleted", "conversation_id": conversation["id"]}
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "LIFE_COMPANION_HISTORY "
+            "status=delete_failed "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete conversation") from error
+
+
 @app.post("/api/life-companion/chat")
 async def life_companion_chat(
     request: LifeCompanionRequest,
     authorization: str | None = Header(default=None),
 ):
+    request_started = perf_counter()
+    context_build_ms = 0
+    prompt_build_ms = 0
+    retrieval_ms = 0
     try:
+        log_life_companion_route_hit(
+            request=request,
+            authorization_present=bool(authorization),
+        )
         token_user_id = validate_supabase_access_token(authorization)
-        if token_user_id != request.user_id:
-            raise HTTPException(status_code=403, detail="Session user does not match request user")
 
         try:
             mode = validate_life_companion_mode(request.mode)
@@ -584,6 +961,14 @@ async def life_companion_chat(
         except LifeCompanionValidationError as validation_error:
             raise HTTPException(status_code=400, detail=validation_error.reason) from validation_error
 
+        conversation = None
+        if request.conversation_id:
+            conversation = get_owned_companion_conversation(
+                user_id=token_user_id,
+                conversation_id=request.conversation_id,
+            )
+
+        detected_intent = detect_companion_intent(user_message, mode)
         safety_signal = detect_life_companion_safety(user_message)
         if safety_signal.get("crisis"):
             companion_response = generate_life_companion_crisis_response()
@@ -592,66 +977,174 @@ async def life_companion_chat(
                 mode=mode,
                 provider="deterministic",
                 risk_level="crisis",
+                total_request_ms=int((perf_counter() - request_started) * 1000),
+                context_build_ms=context_build_ms,
+                prompt_build_ms=prompt_build_ms,
+                retrieval_ms=retrieval_ms,
+                provider_ms=0,
+                validation_ms=0,
+                provider_selected="deterministic",
+                final_response_mode="safety",
             )
-            return build_life_companion_response("safety", companion_response)
+            total_request_ms = int((perf_counter() - request_started) * 1000)
+            return build_life_companion_response(
+                "safety",
+                companion_response,
+                meta=build_life_companion_meta(
+                    provider_selected="deterministic",
+                    final_response_mode="safety",
+                    fallback_reason=None,
+                    provider_ms=0,
+                    validation_ms=0,
+                    total_request_ms=total_request_ms,
+                    context_build_ms=context_build_ms,
+                    prompt_build_ms=prompt_build_ms,
+                    retrieval_ms=retrieval_ms,
+                ),
+                conversation_id=conversation.get("id") if conversation else None,
+            )
 
-        context = build_life_companion_context(supabase, request.user_id, mode)
+        if conversation is None:
+            conversation = create_companion_conversation(
+                user_id=token_user_id,
+            )
+
+        context_started = perf_counter()
+        context = build_life_companion_context(supabase, token_user_id, mode)
+        context_build_ms = int((perf_counter() - context_started) * 1000)
+
+        retrieval_started = perf_counter()
+        knowledge_chunks = retrieve_companion_knowledge(
+            user_message,
+            mode,
+            detected_intent,
+            max_chunks=4,
+        )
+        retrieval_ms = int((perf_counter() - retrieval_started) * 1000)
+        knowledge_chunk_ids = [
+            str(chunk.get("id") or "")
+            for chunk in knowledge_chunks
+            if isinstance(chunk, dict) and chunk.get("id")
+        ]
 
         if safety_signal.get("prompt_injection"):
             companion_response = generate_life_companion_fallback(
                 mode,
                 context,
                 prompt_injection=True,
+                user_message=user_message,
             )
             log_life_companion_event(
                 status="fallback",
                 mode=mode,
                 provider="deterministic",
                 error_reason="prompt_injection_detected",
+                fallback_reason="unsafe_output",
                 risk_level=companion_response["safety"]["risk_level"],
                 context=context,
+                total_request_ms=int((perf_counter() - request_started) * 1000),
+                context_build_ms=context_build_ms,
+                prompt_build_ms=prompt_build_ms,
+                retrieval_ms=retrieval_ms,
+                provider_ms=0,
+                validation_ms=0,
+                provider_selected="deterministic",
+                final_response_mode="fallback",
+                knowledge_chunk_ids=knowledge_chunk_ids,
             )
-            return build_life_companion_response("fallback", companion_response)
+            total_request_ms = int((perf_counter() - request_started) * 1000)
+            updated_conversation = persist_companion_exchange(
+                user_id=token_user_id,
+                conversation=conversation,
+                mode=mode,
+                user_message=user_message,
+                companion_response=companion_response,
+            )
+            return build_life_companion_response(
+                "fallback",
+                companion_response,
+                meta=build_life_companion_meta(
+                    provider_selected="deterministic",
+                    final_response_mode="fallback",
+                    context=context,
+                    fallback_reason="unsafe_output",
+                    provider_ms=0,
+                    validation_ms=0,
+                    total_request_ms=total_request_ms,
+                    context_build_ms=context_build_ms,
+                    prompt_build_ms=prompt_build_ms,
+                    retrieval_ms=retrieval_ms,
+                    knowledge_chunk_ids=knowledge_chunk_ids,
+                ),
+                conversation_id=updated_conversation["id"],
+                conversation=updated_conversation,
+            )
 
-        prompt = build_life_companion_prompt(context, mode, user_message)
-        try:
-            provider_response = generate_life_companion_with_openai(
-                prompt,
-                prompt_version=LIFE_COMPANION_PROMPT_VERSION,
-            )
-            companion_response = validate_life_companion_response(provider_response.text)
-            log_life_companion_event(
-                status="success",
+        prompt_started = perf_counter()
+        prompt = build_life_companion_prompt(
+            context,
+            mode,
+            user_message,
+            intent=detected_intent,
+            knowledge_chunks=knowledge_chunks,
+        )
+        prompt_build_ms = int((perf_counter() - prompt_started) * 1000)
+        gateway_result = generate_life_companion_response(
+            prompt=prompt,
+            prompt_version=LIFE_COMPANION_PROMPT_VERSION,
+            mode=mode,
+            context=context,
+            user_message=user_message,
+        )
+        log_life_companion_event(
+            status=gateway_result.status,
+            mode=mode,
+            provider=gateway_result.provider,
+            latency_ms=gateway_result.latency_ms,
+            total_request_ms=int((perf_counter() - request_started) * 1000),
+            context_build_ms=context_build_ms,
+            prompt_build_ms=prompt_build_ms,
+            retrieval_ms=retrieval_ms,
+            provider_ms=gateway_result.provider_ms,
+            validation_ms=gateway_result.validation_ms,
+            fallback_reason=gateway_result.fallback_reason,
+            provider_selected=gateway_result.provider,
+            final_response_mode=gateway_result.final_response_mode,
+            validation_failure_reason=gateway_result.validation_failure_reason,
+            error_reason=gateway_result.error_reason,
+            risk_level=gateway_result.companion_response["safety"]["risk_level"],
+            context=context,
+            knowledge_chunk_ids=knowledge_chunk_ids,
+        )
+        total_request_ms = int((perf_counter() - request_started) * 1000)
+        updated_conversation = None
+        if gateway_result.status != "safety":
+            updated_conversation = persist_companion_exchange(
+                user_id=token_user_id,
+                conversation=conversation,
                 mode=mode,
-                provider=provider_response.provider,
-                latency_ms=provider_response.latency_ms,
-                risk_level=companion_response["safety"]["risk_level"],
-                context=context,
+                user_message=user_message,
+                companion_response=gateway_result.companion_response,
             )
-            return build_life_companion_response("success", companion_response)
-        except LifeCompanionValidationError as validation_error:
-            companion_response = generate_life_companion_fallback(mode, context)
-            log_life_companion_event(
-                status="fallback",
-                mode=mode,
-                provider="fallback",
-                validation_failure_reason=validation_error.reason,
-                risk_level=companion_response["safety"]["risk_level"],
+        return build_life_companion_response(
+            gateway_result.status,
+            gateway_result.companion_response,
+            meta=build_life_companion_meta(
+                provider_selected=gateway_result.provider,
+                final_response_mode=gateway_result.final_response_mode,
                 context=context,
-            )
-            return build_life_companion_response("fallback", companion_response)
-        except CompanionProviderError as provider_error:
-            companion_response = generate_life_companion_fallback(mode, context)
-            log_life_companion_event(
-                status="fallback",
-                mode=mode,
-                provider="fallback",
-                latency_ms=provider_error.latency_ms,
-                error_reason=provider_error.reason,
-                risk_level=companion_response["safety"]["risk_level"],
-                context=context,
-            )
-            return build_life_companion_response("fallback", companion_response)
+                fallback_reason=gateway_result.fallback_reason,
+                provider_ms=gateway_result.provider_ms,
+                validation_ms=gateway_result.validation_ms,
+                total_request_ms=total_request_ms,
+                context_build_ms=context_build_ms,
+                prompt_build_ms=prompt_build_ms,
+                retrieval_ms=retrieval_ms,
+                knowledge_chunk_ids=knowledge_chunk_ids,
+            ),
+            conversation_id=(updated_conversation or conversation)["id"],
+            conversation=updated_conversation,
+        )
 
     except HTTPException:
         raise
@@ -659,7 +1152,8 @@ async def life_companion_chat(
         print(
             "LIFE_COMPANION "
             "status=critical_error "
-            f"error_type={type(error).__name__}"
+            f"error_type={type(error).__name__} "
+            f"total_request_ms={int((perf_counter() - request_started) * 1000)}"
         )
         raise HTTPException(status_code=500, detail="Failed to generate Life Companion response") from error
 

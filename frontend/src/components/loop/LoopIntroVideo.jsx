@@ -42,8 +42,8 @@ export default function LoopIntroVideo({ isOpen, onDismiss }) {
         className="loop-intro-video-shell"
         style={{
           width: "100%",
-          maxWidth: 520,
-          maxHeight: "92vh",
+          maxWidth: 900,
+          maxHeight: "88vh",
           overflowY: "auto",
           borderRadius: 28,
           border: "1px solid rgba(126,217,154,0.22)",
@@ -90,7 +90,7 @@ export default function LoopIntroVideo({ isOpen, onDismiss }) {
             </h2>
             <p
               style={{
-                maxWidth: 420,
+                maxWidth: 640,
                 margin: "14px 0 0",
                 color: "rgba(255,255,255,0.7)",
                 fontSize: 15,
@@ -127,14 +127,10 @@ export default function LoopIntroVideo({ isOpen, onDismiss }) {
 
         <div style={{ padding: "0 24px 24px" }}>
           <div
-            className="loop-intro-video-frame"
             style={{
               margin: "0 auto",
               display: "flex",
-              width: "clamp(280px, 32vw, 420px)",
-              maxWidth: "92vw",
-              maxHeight: "72vh",
-              aspectRatio: "9 / 16",
+              maxHeight: "70vh",
               alignItems: "center",
               justifyContent: "center",
               overflow: "hidden",
@@ -148,7 +144,7 @@ export default function LoopIntroVideo({ isOpen, onDismiss }) {
               <div
                 style={{
                   width: "100%",
-                  height: "100%",
+                  minHeight: 280,
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
@@ -203,8 +199,8 @@ export default function LoopIntroVideo({ isOpen, onDismiss }) {
                 onError={() => setHasVideoError(true)}
                 style={{
                   width: "100%",
-                  height: "100%",
-                  maxHeight: "72vh",
+                  height: "auto",
+                  maxHeight: "70vh",
                   objectFit: "contain",
                   background: "#000",
                   borderRadius: 20,
@@ -298,11 +294,6 @@ export default function LoopIntroVideo({ isOpen, onDismiss }) {
           .loop-intro-video-shell {
             max-height: 92vh !important;
             border-radius: 22px !important;
-          }
-
-          .loop-intro-video-frame {
-            width: min(92vw, 420px) !important;
-            max-height: 70vh !important;
           }
         }
       `}</style>

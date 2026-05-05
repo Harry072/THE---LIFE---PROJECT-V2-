@@ -491,6 +491,31 @@ def fetch_life_companion_latest_reflection(supabase, user_id: str) -> tuple[dict
     }, True
 
 
+def fetch_life_companion_latest_reflection_metadata(supabase, user_id: str) -> tuple[dict, bool]:
+    rows = table_select_optional(
+        supabase,
+        "reflections",
+        "life_companion_latest_reflection_metadata",
+        {
+            "select": "mood,for_date,created_at",
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("order", ("for_date",), {"desc": True}),
+                ("order", ("created_at",), {"desc": True}),
+                ("limit", (1,)),
+            ],
+        },
+    )
+    if not rows:
+        return {}, False
+
+    row = rows[0]
+    return {
+        "latest_mood": clean_short_text(row.get("mood"), 24) if isinstance(row, dict) else "",
+        "prompt_labels": [],
+    }, True
+
+
 def fetch_life_companion_weekly_mirror(supabase, user_id: str) -> tuple[dict, bool]:
     rows = table_select_optional(
         supabase,
@@ -557,11 +582,35 @@ def fetch_life_companion_onboarding_context(supabase, user_id: str) -> tuple[dic
 
 
 def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
-    task_rows, has_tasks = fetch_life_companion_today_tasks(supabase, user_id)
-    tree_data, has_tree = fetch_user_tree_context(supabase, user_id)
-    latest_reflection, has_reflection = fetch_life_companion_latest_reflection(supabase, user_id)
-    weekly_mirror, has_weekly_mirror = fetch_life_companion_weekly_mirror(supabase, user_id)
-    onboarding_context, has_onboarding = fetch_life_companion_onboarding_context(supabase, user_id)
+    normalized_mode = str(mode or "understand_me").strip().lower()
+    include_tasks = normalized_mode in {"make_today_easier", "suggest_next_step", "understand_me"}
+    include_tree = normalized_mode in {"make_today_easier", "reset_my_mind", "suggest_next_step", "understand_me"}
+    include_reflection = normalized_mode in {"reset_my_mind", "help_me_reflect", "understand_me"}
+    include_weekly_mirror = normalized_mode == "suggest_next_step"
+    include_onboarding = normalized_mode == "understand_me"
+
+    task_rows: list[dict] = []
+    tree_data: dict = {}
+    latest_reflection: dict = {}
+    weekly_mirror: dict = {}
+    onboarding_context: dict = {}
+    has_tasks = False
+    has_tree = False
+    has_reflection = False
+    has_weekly_mirror = False
+    has_onboarding = False
+
+    if include_tasks:
+        task_rows, has_tasks = fetch_life_companion_today_tasks(supabase, user_id)
+    if include_tree:
+        tree_data, has_tree = fetch_user_tree_context(supabase, user_id)
+    if include_reflection:
+        latest_reflection, has_reflection = fetch_life_companion_latest_reflection_metadata(supabase, user_id)
+    if include_weekly_mirror:
+        weekly_mirror, has_weekly_mirror = fetch_life_companion_weekly_mirror(supabase, user_id)
+    if include_onboarding:
+        onboarding_context, has_onboarding = fetch_life_companion_onboarding_context(supabase, user_id)
+
     task_summary = summarize_life_companion_tasks(task_rows)
     tree_summary = {
         "streak": safe_int(tree_data.get("streak"), 0) if has_tree else 0,
@@ -571,7 +620,7 @@ def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
 
     return {
         "user_id": user_id,
-        "mode": mode,
+        "mode": normalized_mode,
         "local_date": date.today().isoformat(),
         "task_summary": task_summary,
         "latest_inner_weather": latest_reflection,

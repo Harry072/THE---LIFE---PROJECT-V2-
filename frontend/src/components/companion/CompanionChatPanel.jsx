@@ -4,6 +4,7 @@ import CompanionMessageBubble from "./CompanionMessageBubble";
 export default function CompanionChatPanel({
   messages,
   loading,
+  loadingMessages = false,
   onAction,
 }) {
   const endRef = useRef(null);
@@ -14,7 +15,15 @@ export default function CompanionChatPanel({
 
   return (
     <div className="companion-chat-panel" aria-live="polite">
-      {messages.map((message) => (
+      {loadingMessages && (
+        <div className="companion-message-row">
+          <article className="companion-message-bubble assistant loading">
+            <p>Opening conversation...</p>
+          </article>
+        </div>
+      )}
+
+      {!loadingMessages && messages.map((message) => (
         <CompanionMessageBubble
           key={message.id}
           message={message}
@@ -22,7 +31,7 @@ export default function CompanionChatPanel({
         />
       ))}
 
-      {loading && (
+      {!loadingMessages && loading && (
         <div className="companion-message-row">
           <article className="companion-message-bubble assistant loading">
             <p>Listening carefully...</p>

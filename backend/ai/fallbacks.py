@@ -1,3 +1,4 @@
+from .companion_knowledge import detect_companion_intent
 from .context import CORE_CATEGORY_ORDER
 
 
@@ -61,7 +62,7 @@ COMPANION_ACTIONS = {
     "curator": {"type": "curator", "label": "Open Curator", "route": "/curator"},
     "weekly_mirror": {"type": "weekly_mirror", "label": "Open Dashboard", "route": "/dashboard"},
     "real_world_action": {"type": "real_world_action", "label": "Carry This Step", "route": None},
-    "none": {"type": "none", "label": "No action", "route": None},
+    "none": {"type": "none", "label": "", "route": None},
 }
 
 MIRROR_RECOMMENDATION_TO_COMPANION_ACTION = {
@@ -248,6 +249,238 @@ def companion_action(action_type: str, label: str | None = None) -> dict:
     return action
 
 
+def has_any(text: str, phrases: list[str]) -> bool:
+    lowered = str(text or "").lower()
+    return any(phrase in lowered for phrase in phrases)
+
+
+def detect_companion_fallback_intent(message: str) -> dict:
+    lowered = str(message or "").lower().replace("’", "'")
+    normalized = lowered.replace("don't", "do not").replace("dont", "do not")
+    no_reflection = (
+        "do not send me to reflection" in lowered
+        or "don't send me to reflection" in lowered
+        or "dont send me to reflection" in lowered
+        or "do not send me reflection" in lowered
+        or "don't send me reflection" in lowered
+        or "dont send me reflection" in lowered
+        or "do not need reflection" in lowered
+        or "don't need reflection" in lowered
+        or "dont need reflection" in lowered
+        or "i don't need reflection" in lowered
+        or "i dont need reflection" in lowered
+        or "no journaling" in lowered
+        or "no journal" in lowered
+        or "no reflection" in lowered
+    )
+    no_task = has_any(
+        lowered,
+        [
+            "do not want a task",
+            "don't want a task",
+            "dont want a task",
+            "i don't want a task",
+            "i dont want a task",
+            "no task",
+            "not a task",
+            "don't make this a task",
+            "dont make this a task",
+        ],
+    )
+    no_app_action = has_any(
+        normalized,
+        [
+            "no app",
+            "no action",
+            "no suggested action",
+            "do not send me anywhere",
+            "do not open anything",
+            "do not route me",
+            "do not send me to loop",
+            "no loop",
+            "just answer",
+        ],
+    )
+    serious_talk = has_any(
+        lowered,
+        [
+            "something serious",
+            "talk about something serious",
+            "need to talk",
+            "i need to talk",
+            "can we talk",
+            "we need to talk",
+            "serious thing",
+            "serious issue",
+        ],
+    )
+    wants_talk = has_any(
+        lowered,
+        [
+            "want to talk",
+            "i want to talk",
+            "need your assistance",
+            "need assistance",
+            "need your help",
+            "talk to me",
+            "help me understand",
+            "can you help me",
+            "i need help",
+        ],
+    )
+    return {
+        "quote_request": has_any(
+            lowered,
+            [
+                "quote",
+                "need quote",
+                "give me a quote",
+                "caption",
+                "one line",
+                "some words",
+            ],
+        ),
+        "moral_question": has_any(
+            lowered,
+            [
+                "good person",
+                "bad person",
+                "am i good",
+                "can i be good",
+                "right thing",
+                "wrong thing",
+                "moral",
+                "guilt",
+            ],
+        ),
+        "public_speaking": has_any(
+            lowered,
+            [
+                "seminar",
+                "speech",
+                "public speaking",
+                "presentation",
+                "stage fear",
+            ],
+        ),
+        "serious_talk": serious_talk,
+        "wants_talk": wants_talk,
+        "no_task": no_task,
+        "no_reflection": no_reflection,
+        "no_app_action": no_app_action,
+        "physical_action": has_any(
+            lowered,
+            [
+                "physical action",
+                "stand up",
+                "move my body",
+                "body action",
+                "one thing i can do now",
+                "action i can do now",
+                "away from the screen",
+            ],
+        ),
+        "routine_request": has_any(
+            normalized,
+            [
+                "make me routine",
+                "make a routine",
+                "make routine",
+                "create routine",
+                "create a routine",
+                "better routine",
+                "make me better routine",
+                "skipping my routine",
+                "skip my routine",
+                "routine according",
+                "routine",
+            ],
+        ),
+        "time_management": has_any(normalized, ["time management", "manage my time", "managing my time", "time blocking"]),
+        "study_plan": has_any(
+            normalized,
+            ["study routine", "study plan", "exam study", "exam timetable", "study timetable", "study schedule"],
+        ),
+        "schedule_request": has_any(
+            normalized,
+            ["make schedule", "create schedule", "make timetable", "create timetable", "daily plan", "schedule", "timetable", "time table"],
+        ),
+        "checklist_request": has_any(normalized, ["checklist", "check list", "to-do list", "todo list"]),
+        "plan_request": has_any(
+            normalized,
+            ["give me plan", "make plan", "make a plan", "create plan", "create a plan", "roadmap", "make roadmap", "make a roadmap", "give me steps", "suggest steps", "according to my problem"],
+        ),
+        "direct_help_request": has_any(
+            normalized,
+            ["just simply make", "do not ask, make", "do not ask just make", "make me better", "according to my odds"],
+        ),
+        "next_action_request": has_any(
+            normalized,
+            ["what should i do now", "what should i do", "give me tasks", "give me task", "give me one task", "next action", "next step", "one thing to do", "suggest next step"],
+        ),
+        "scrolling": has_any(lowered, ["scrolling", "doomscroll", "wasting time", "waste time"]),
+        "productivity": has_any(
+            lowered,
+            [
+                "productive",
+                "productivity",
+                "focus",
+                "study",
+                "work",
+                "task",
+                "procrastinat",
+                "discipline",
+                "start working",
+                "get started",
+            ],
+        ),
+        "purpose": has_any(
+            lowered,
+            [
+                "purpose",
+                "meaning",
+                "direction",
+                "feel lost",
+                "feeling lost",
+                "philosophy",
+                "what should i read",
+                "book",
+            ],
+        ),
+        "weekly_patterns": has_any(
+            lowered,
+            [
+                "weekly mirror",
+                "this week",
+                "weekly pattern",
+                "patterns this week",
+                "week direction",
+                "my week",
+            ],
+        ),
+        "reflective_writing": (
+            not no_reflection
+            and has_any(
+                lowered,
+                [
+                    "reflect",
+                    "reflection",
+                    "journal",
+                    "write about",
+                    "write this down",
+                    "understand my thoughts",
+                    "process my thoughts",
+                ],
+            )
+        ),
+        "overwhelmed": has_any(
+            lowered,
+            ["overwhelmed", "overthinking", "pressure", "crowded", "anxious", "spiral", "stressed", "too much", "heavy"],
+        ),
+        "lonely": has_any(lowered, ["lonely", "alone", "sad", "isolated"]),
+    }
+
+
 def build_life_companion_response(
     *,
     reply: str,
@@ -299,6 +532,7 @@ def generate_life_companion_fallback(
     context: dict | None = None,
     *,
     prompt_injection: bool = False,
+    user_message: str = "",
 ) -> dict:
     safe_context = context or {}
     task_summary = safe_context.get("task_summary") or {}
@@ -306,23 +540,281 @@ def generate_life_companion_fallback(
     next_focus = weekly_mirror.get("next_focus") or "Begin with one honest, small step."
     weak_categories = task_summary.get("weak_categories") or []
     first_weak_category = weak_categories[0] if weak_categories else "action"
+    flags = detect_companion_fallback_intent(user_message)
+    deterministic_intent = detect_companion_intent(user_message, mode)
 
-    if prompt_injection:
+    if prompt_injection or deterministic_intent == "prompt_injection":
         return build_life_companion_response(
             reply=(
-                "I cannot help with that request. What I can do is stay with your actual day: "
-                "choose one grounded step, then return to the app area that supports it."
+                "I cannot help with that request. I can still help with what is happening for you right now, in ordinary words."
             ),
-            action_type="loop",
+            action_type="none",
             tone="grounded",
             risk_level="low",
             safety_message="The request tried to move outside the companion boundaries.",
         )
 
+    if deterministic_intent == "quote_request":
+        return build_life_companion_response(
+            reply=(
+                "\"Do not wait to feel fearless. Carry your preparation calmly, and let one honest sentence begin the day.\""
+            ),
+            action_type="none",
+            tone="grounded",
+        )
+
+    if deterministic_intent == "seminar_public_speaking":
+        return build_life_companion_response(
+            reply=(
+                "\"Let your first sentence be steady, not perfect.\" Speak slower than your nerves want. "
+                "The room does not need a flawless version of you; it needs your presence and one clear idea."
+            ),
+            action_type="none",
+            tone="grounded",
+        )
+
+    if deterministic_intent == "moral_question":
+        return build_life_companion_response(
+            reply=(
+                "Yes, you can become a good person, not by feeling perfect, but by choosing honestly again and again. "
+                "What made you ask this today: did you hurt someone, disappoint yourself, or feel afraid of who you are becoming?"
+            ),
+            action_type="none",
+            tone="grounded",
+        )
+
+    if deterministic_intent == "identity_question":
+        return build_life_companion_response(
+            reply=(
+                "You are not only the worst thought you have about yourself. Identity is built through repeated choices, repairs, and responsibilities. "
+                "What part of yourself are you questioning most right now?"
+            ),
+            action_type="none",
+            tone="grounded",
+        )
+
+    if deterministic_intent in {"serious_talk", "wants_talk"}:
+        return build_life_companion_response(
+            reply=(
+                "Okay. We do not need to turn this into a task right now. Tell me the main thing: did something happen, "
+                "or is this a feeling that has been building?"
+            ),
+            action_type="none",
+            tone="serious",
+            risk_level="low" if deterministic_intent == "serious_talk" else "none",
+        )
+
+    if deterministic_intent == "physical_action":
+        return build_life_companion_response(
+            reply=(
+                "Stand up, drink water, and put your phone across the room. Then do one visible task for two minutes. "
+                "No reflection needed right now, just movement."
+            ),
+            action_type="real_world_action",
+            label="Do one physical reset",
+        )
+
+    concrete_action_type = "none" if flags["no_task"] or flags["no_app_action"] else "loop"
+    concrete_label = "Open The Loop" if concrete_action_type == "loop" else None
+
+    if deterministic_intent in {"routine_request", "time_management"}:
+        return build_life_companion_response(
+            reply=(
+                "Use this simple routine for now:\n\n"
+                "1. Start with one anchor: wake, water, bed.\n"
+                "2. Do one 25-minute focus block before checking your phone.\n"
+                "3. Take a five-minute reset break.\n"
+                "4. Do one 45-minute main task block.\n"
+                "5. End the day by writing tomorrow's first task.\n\n"
+                "Keep it small enough to repeat. Your goal is consistency, not perfection."
+            ),
+            action_type=concrete_action_type,
+            label=concrete_label,
+            tone="grounded",
+        )
+
+    if deterministic_intent == "study_plan":
+        return build_life_companion_response(
+            reply=(
+                "Use this study routine today:\n\n"
+                "1. First 10 minutes: list the exact chapters or topics.\n"
+                "2. Block one: 40 minutes on the easiest important topic.\n"
+                "3. Break: five minutes away from the phone.\n"
+                "4. Block two: 45 minutes on the hardest topic.\n"
+                "5. Close: 15 minutes of recall without looking at notes.\n\n"
+                "Repeat this once more only if your energy stays steady."
+            ),
+            action_type=concrete_action_type,
+            label=concrete_label,
+            tone="grounded",
+        )
+
+    if deterministic_intent == "schedule_request":
+        return build_life_companion_response(
+            reply=(
+                "Use this simple timetable:\n\n"
+                "1. Morning: 25 minutes on the easiest important task.\n"
+                "2. Late morning: 45 minutes on your main task.\n"
+                "3. Afternoon: one small admin or cleanup task.\n"
+                "4. Evening: 30 minutes of review, practice, or preparation.\n"
+                "5. Night: write tomorrow's first move before sleep.\n\n"
+                "Keep the blocks flexible; the anchor matters more than the exact clock."
+            ),
+            action_type=concrete_action_type,
+            label=concrete_label,
+            tone="grounded",
+        )
+
+    if deterministic_intent == "checklist_request":
+        return build_life_companion_response(
+            reply=(
+                "Here is your checklist:\n\n"
+                "1. Choose one priority for today.\n"
+                "2. Remove one obvious distraction.\n"
+                "3. Work for 25 minutes on the first step.\n"
+                "4. Take a five-minute reset break.\n"
+                "5. Finish by writing the next step, even if today was imperfect."
+            ),
+            action_type=concrete_action_type,
+            label=concrete_label,
+            tone="grounded",
+        )
+
+    if deterministic_intent in {"plan_request", "direct_help_request"}:
+        return build_life_companion_response(
+            reply=(
+                "Here is a simple plan:\n\n"
+                "1. Name the problem in one line.\n"
+                "2. Pick the smallest action that proves movement.\n"
+                "3. Do it for 25 minutes before checking your phone.\n"
+                "4. Take a short reset instead of quitting completely.\n"
+                "5. End by choosing tomorrow's first task.\n\n"
+                "Do not build a perfect system. Build one repeatable move."
+            ),
+            action_type=concrete_action_type,
+            label=concrete_label,
+            tone="grounded",
+        )
+
+    if deterministic_intent == "next_action_request":
+        next_action_type = "none" if flags["no_task"] or flags["no_app_action"] else "real_world_action"
+        next_action_label = "Carry This Step" if next_action_type == "real_world_action" else None
+        return build_life_companion_response(
+            reply=(
+                "Do this now: stand up, drink water, clear one small surface, then work for ten minutes on the easiest useful task. "
+                "After ten minutes, stop and choose whether to continue for one more block."
+            ),
+            action_type=next_action_type,
+            label=next_action_label,
+            tone="grounded",
+        )
+
+    if flags["no_task"] or flags["no_reflection"]:
+        if flags["no_reflection"]:
+            reply = (
+                "Understood. No Reflection page. We can keep this here: what do you need help sorting out first?"
+            )
+        else:
+            reply = (
+                "Got it. No task right now. Let's just name the shape of it: what feels most urgent to say?"
+            )
+        return build_life_companion_response(
+            reply=reply,
+            action_type="none",
+        )
+
+    if deterministic_intent == "anxiety_overwhelm":
+        return build_life_companion_response(
+            reply=(
+                "First, lower the pressure to solve everything. Put both feet on the floor, unclench your jaw, "
+                "and take one slow breath. What is the single thought looping the loudest right now?"
+            ),
+            action_type="reset",
+            label="Open Reset Space",
+            tone="grounded",
+        )
+
+    if deterministic_intent == "loneliness":
+        return build_life_companion_response(
+            reply=(
+                "That sounds lonely, and it does not need a productivity answer. "
+                "What kind of connection are you missing most right now: being understood, being included, or having someone stay?"
+            ),
+            action_type="none",
+            tone="grounded",
+        )
+
+    if deterministic_intent == "scrolling_distraction":
+        return build_life_companion_response(
+            reply=(
+                "The scrolling is probably doing a job: delaying the first uncomfortable step. Put the phone face down, "
+                "stand up, drink water, then do two minutes of the smallest visible task."
+            ),
+            action_type="real_world_action",
+            label="Break The Scroll",
+        )
+
+    if deterministic_intent == "productivity":
+        return build_life_companion_response(
+            reply=(
+                "You do not need a perfect system right now. You need a clean first move. Open the smallest task, "
+                "work for five minutes, and stop before your brain turns it into a life referendum."
+            ),
+            action_type="loop",
+            label="Open The Loop",
+        )
+
+    if deterministic_intent == "reset_need":
+        return build_life_companion_response(
+            reply=(
+                "When everything feels loud, the next move is not to solve everything. Lower the volume first: "
+                "unclench your jaw, breathe once, and choose only the next visible step."
+            ),
+            action_type="reset",
+            label="Open Reset Space",
+        )
+
+    if deterministic_intent == "purpose_question":
+        return build_life_companion_response(
+            reply=(
+                "Purpose usually does not arrive as a lightning bolt; it shows up through repeated honest choices. "
+                "Start with this: what responsibility, person, or skill still feels worth becoming stronger for?"
+            ),
+            action_type="none",
+        )
+
+    if deterministic_intent == "reading_or_learning":
+        return build_life_companion_response(
+            reply=(
+                "A good idea can become a handrail when life feels vague. Choose one book or idea that makes you more honest, "
+                "then test one sentence from it in your day."
+            ),
+            action_type="curator",
+            label="Open Curator",
+        )
+
+    if deterministic_intent == "weekly_pattern":
+        return build_life_companion_response(
+            reply=(
+                "For patterns, the useful view is wider than this one moment. Check your latest Weekly Mirror, then bring back the part that feels true."
+            ),
+            action_type="weekly_mirror",
+            label="Open Dashboard",
+        )
+
+    if deterministic_intent == "reflective_writing":
+        return build_life_companion_response(
+            reply=(
+                "Writing can help if you want to understand the thought rather than solve it instantly. Start with one plain line: what keeps returning?"
+            ),
+            action_type="reflection",
+            label="Open Reflection",
+        )
+
     if mode == "make_today_easier":
         return build_life_companion_response(
             reply=(
-                "I hear the friction. When the day feels heavy, the useful move is not a perfect plan; "
+                "The friction makes sense. When the day feels heavy, the useful move is not a perfect plan; "
                 f"it is one smaller {first_weak_category} step. Open The Loop and choose the task that takes the least resistance."
             ),
             action_type="loop",
@@ -338,6 +830,13 @@ def generate_life_companion_fallback(
         )
 
     if mode == "help_me_reflect":
+        if flags["no_reflection"]:
+            return build_life_companion_response(
+                reply=(
+                    "Understood. We can skip Reflection. Say the problem in one plain sentence here, and we can work from that."
+                ),
+                action_type="none",
+            )
         return build_life_companion_response(
             reply=(
                 "You do not need a perfect reflection tonight. Start with one line: "
@@ -368,11 +867,10 @@ def generate_life_companion_fallback(
 
     return build_life_companion_response(
         reply=(
-            "I hear you. When the inside feels crowded, it helps to name the pattern without turning it into a verdict. "
-            "Take one honest step now, then let the larger answer come later."
+            "I understand. Let's keep this close to the ground: name the strongest thing in the room right now, "
+            "then we can decide whether this needs conversation, a reset, or a small action. What is the part you want help with first?"
         ),
-        action_type="reflection",
-        label="Open Reflection",
+        action_type="none",
     )
 
 
