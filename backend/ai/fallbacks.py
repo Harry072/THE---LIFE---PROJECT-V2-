@@ -8,6 +8,12 @@ INTENSITY_DURATIONS = {
     "deeper": {"awareness": 20, "action": 25, "meaning": 20},
 }
 
+INTENSITY_LIMITS = {
+    "gentle": (2, 10),
+    "normal": (10, 20),
+    "deeper": (20, 30),
+}
+
 ALTERNATE_TITLES = {
     "awareness": [
         "Notice the Main Thought",
@@ -92,7 +98,38 @@ def avoid_recent_title(category: str, preferred_title: str, recent_titles: list[
 
 def get_duration(context: dict, category: str) -> int:
     intensity = str(context.get("suggested_intensity") or "normal").lower()
-    return INTENSITY_DURATIONS.get(intensity, INTENSITY_DURATIONS["normal"])[category]
+    base_duration = INTENSITY_DURATIONS.get(intensity, INTENSITY_DURATIONS["normal"])[category]
+    adaptation_mode = str(context.get("adaptation_mode") or "steady").lower()
+    try:
+        multiplier = float(context.get("duration_multiplier") or 1.0)
+    except (TypeError, ValueError):
+        multiplier = 1.0
+
+    if adaptation_mode == "simplify":
+        multiplier = min(multiplier, 0.5)
+    elif adaptation_mode == "stretch_slightly":
+        multiplier = max(1.0, min(multiplier, 1.15))
+    else:
+        multiplier = 1.0
+
+    adjusted = round(base_duration * multiplier)
+    if adaptation_mode == "stretch_slightly":
+        adjusted = min(base_duration + 5, adjusted)
+
+    min_duration, max_duration = INTENSITY_LIMITS.get(intensity, INTENSITY_LIMITS["normal"])
+    return max(min_duration, min(max_duration, adjusted))
+
+
+def task_metadata(context: dict, success_condition: str, smaller_version: str) -> dict:
+    intensity = str(context.get("suggested_intensity") or "normal").lower()
+    if intensity not in INTENSITY_DURATIONS:
+        intensity = "normal"
+    return {
+        "difficulty_level": intensity,
+        "success_condition": success_condition,
+        "smaller_version": smaller_version,
+        "post_completion_question": "Was this too easy, right-sized, or too heavy?",
+    }
 
 
 def minute_word(minutes: int) -> str:
@@ -156,6 +193,11 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "supportive_line": "You only need to notice one pattern today.",
             "why_chosen": "This keeps the first step small and visible.",
             "easier_version": "Write one sentence about the pattern.",
+            **task_metadata(
+                context,
+                "You write one honest sentence about the pattern.",
+                "Write one sentence about the pattern.",
+            ),
         },
         "action": {
             "category": "action",
@@ -168,6 +210,11 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "supportive_line": "Starting small still counts.",
             "why_chosen": "This turns pressure into a concrete next move.",
             "easier_version": "Do the first two minutes only.",
+            **task_metadata(
+                context,
+                "You begin the visible next step, even briefly.",
+                "Do the first two minutes only.",
+            ),
         },
         "meaning": {
             "category": "meaning",
@@ -180,6 +227,11 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "supportive_line": "Small service can make today feel less random.",
             "why_chosen": "This connects effort to something beyond the current mood.",
             "easier_version": "Write one sentence about who this effort helps.",
+            **task_metadata(
+                context,
+                "You complete one helpful action or name who it helps.",
+                "Write one sentence about who this effort helps.",
+            ),
         },
     }
 

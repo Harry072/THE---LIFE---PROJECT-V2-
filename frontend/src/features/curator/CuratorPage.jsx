@@ -12,10 +12,15 @@ import MysteryPathSection from "./MysteryPathSection";
 import ActiveReadingShelf from "./ActiveReadingShelf";
 import FirstPageRitualModal from "./FirstPageRitualModal";
 import HiddenShelfGate from "./HiddenShelfGate";
+import { supabase } from "../../lib/supabase";
+import { useAppState } from "../../contexts/AppStateContext";
 import "./CuratorPage.css";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 export default function CuratorPage() {
   const navigate = useNavigate();
+  const { user } = useAppState();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryBookId = searchParams.get("book");
   const expandedBookId = queryBookId;
@@ -42,7 +47,41 @@ export default function CuratorPage() {
     }, 120);
   }, [queryBookId]);
 
+  const saveCuratorInteraction = async ({
+    actionType,
+    bookId = null,
+    pathSlug = null,
+  }) => {
+    if (!user?.id || !actionType) return;
+
+    try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (sessionError || !accessToken) return;
+
+      await fetch(`${API_BASE_URL}/api/curator/interactions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          user_id: user.id,
+          action_type: actionType,
+          book_id: bookId,
+          path_slug: pathSlug,
+        }),
+      });
+    } catch {
+      // Metadata should never interrupt the reading experience.
+    }
+  };
+
   const handlePathSelect = (path) => {
+    void saveCuratorInteraction({
+      actionType: "path_opened",
+      pathSlug: path.slug,
+    });
     document
       .getElementById(`curator-path-${path.slug}`)
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -52,10 +91,35 @@ export default function CuratorPage() {
     const nextBookId = expandedBookId === bookId ? null : bookId;
 
     if (nextBookId) {
+      const book = getBookById(nextBookId);
+      void saveCuratorInteraction({
+        actionType: "book_opened",
+        bookId: nextBookId,
+        pathSlug: book?.pathSlug,
+      });
       setSearchParams({ book: nextBookId });
     } else {
       setSearchParams({});
     }
+  };
+
+  const handleFindBook = (bookId) => {
+    const book = getBookById(bookId);
+    void saveCuratorInteraction({
+      actionType: "find_book_opened",
+      bookId,
+      pathSlug: book?.pathSlug,
+    });
+  };
+
+  const handleRemoveBook = (bookId) => {
+    const book = getBookById(bookId);
+    shelf.removeBook(bookId);
+    void saveCuratorInteraction({
+      actionType: "book_removed",
+      bookId,
+      pathSlug: book?.pathSlug,
+    });
   };
 
   const handleBeginRitual = (bookId) => {
@@ -76,6 +140,11 @@ export default function CuratorPage() {
 
     setRitualMessage("");
     setRitualBookId(null);
+    void saveCuratorInteraction({
+      actionType: "book_saved",
+      bookId: ritualBook.id,
+      pathSlug: ritualBook.pathSlug,
+    });
   };
 
   return (
@@ -118,7 +187,7 @@ export default function CuratorPage() {
         <ActiveReadingShelf
           books={activeBooks}
           maxBooks={shelf.maxActiveBooks}
-          onRemoveBook={shelf.removeBook}
+          onRemoveBook={handleRemoveBook}
           onOpenBook={handleToggleBook}
         />
 
@@ -137,6 +206,7 @@ export default function CuratorPage() {
                 isBookActive={shelf.isActive}
                 onToggleBook={handleToggleBook}
                 onBeginRitual={handleBeginRitual}
+                onFindBook={handleFindBook}
               />
             );
           })}

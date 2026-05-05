@@ -13,7 +13,16 @@ import {
   RESET_NEEDS,
   SOUND_SESSIONS,
 } from "../data/sessions";
+import { supabase } from "../lib/supabase";
+import { useAppState } from "../contexts/AppStateContext";
 import "./MeditationPage.css";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+const normalizeResetMood = (value) => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[-\s]+/g, "_");
 
 function filterByNeed(items, activeNeed) {
   if (!activeNeed) return items;
@@ -22,6 +31,7 @@ function filterByNeed(items, activeNeed) {
 
 export default function ResetSpace() {
   const navigate = useNavigate();
+  const { user } = useAppState();
   const [activeNeed, setActiveNeed] = useState("");
   const [activeSession, setActiveSession] = useState(null);
   const [completedSessionId, setCompletedSessionId] = useState("");
@@ -52,6 +62,48 @@ export default function ResetSpace() {
     setActiveSession(null);
     setCompletedSessionId("");
   };
+
+  const handleSaveCheckin = useCallback(async ({
+    session,
+    moodAfter,
+    reflectionTag,
+    durationSeconds,
+  }) => {
+    if (!user?.id) {
+      throw new Error("Sign in again to save this reset signal.");
+    }
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+    if (sessionError || !accessToken) {
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/reset-sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        user_id: user.id,
+        session_id: session?.id,
+        session_type: session?.type,
+        session_category: session?.category,
+        reset_need: activeNeed || null,
+        duration_seconds: durationSeconds,
+        mood_after: normalizeResetMood(moodAfter),
+        reflection_tag: reflectionTag,
+      }),
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `Server returned ${response.status}`);
+    }
+
+    return payload;
+  }, [activeNeed, user?.id]);
 
   const selectedNeedLabel =
     RESET_NEEDS.find((need) => need.id === activeNeed)?.label || "All resets";
@@ -142,6 +194,7 @@ export default function ResetSpace() {
           session={activeSession}
           onClose={handleClosePlayer}
           onComplete={handleComplete}
+          onSaveCheckin={handleSaveCheckin}
           onReturn={() => navigate("/loop")}
         />
       ) : null}

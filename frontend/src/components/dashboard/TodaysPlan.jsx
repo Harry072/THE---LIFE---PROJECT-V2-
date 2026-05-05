@@ -1,9 +1,10 @@
 import Icon from "../Icon";
 import { useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useLoopTasks } from "../../hooks/useLoopTasks";
 import { useEnsureTodayLoopTasks } from "../../hooks/useEnsureTodayLoopTasks";
 import { useAppState } from "../../contexts/AppStateContext";
+import PostActionFeedbackModal from "../loop/PostActionFeedbackModal";
 
 function ErrorMessage({ message, onDismiss }) {
   useEffect(() => {
@@ -142,7 +143,11 @@ export default function TodaysPlan() {
     clearError,
     generating,
     generateTasks,
+    saveTaskFeedback,
   } = useLoopTasks();
+  const [feedbackTask, setFeedbackTask] = useState(null);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackError, setFeedbackError] = useState("");
   const {
     autoGenerationError,
     clearAutoGenerationError,
@@ -163,15 +168,40 @@ export default function TodaysPlan() {
   const isPreparingPlan = preparingTodayPlan
     || (generating && displayed.length === 0);
 
+  const handleTaskToggle = useCallback(async (taskId) => {
+    const result = await toggleTask(taskId);
+    const completedTask = result?.completionPayload?.task;
+    if (completedTask) {
+      setFeedbackTask(completedTask);
+      setFeedbackError("");
+    }
+    return result;
+  }, [toggleTask]);
+
+  const handleSubmitFeedback = useCallback(async (feedback) => {
+    if (!feedbackTask?.id) return;
+    setFeedbackSaving(true);
+    setFeedbackError("");
+    try {
+      await saveTaskFeedback(feedbackTask.id, feedback);
+      setFeedbackTask(null);
+    } catch (requestError) {
+      setFeedbackError(requestError?.message || "Could not save this signal yet.");
+    } finally {
+      setFeedbackSaving(false);
+    }
+  }, [feedbackTask?.id, saveTaskFeedback]);
+
   return (
-    <div style={{
-      background: "var(--bg-card)",
-      backdropFilter: "blur(24px)",
-      border: "1px solid var(--border)",
-      borderRadius: "var(--r-md)",
-      padding: "24px",
-      minHeight: 280,
-    }}>
+    <>
+      <div style={{
+        background: "var(--bg-card)",
+        backdropFilter: "blur(24px)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-md)",
+        padding: "24px",
+        minHeight: 280,
+      }}>
       {/* Header */}
       <div style={{
         display: "flex",
@@ -228,13 +258,26 @@ export default function TodaysPlan() {
               <TaskRow
                 key={t.id}
                 task={t}
-                onToggle={toggleTask}
+                onToggle={handleTaskToggle}
                 onOpen={() => navigate("/loop")}
               />
             ))
           : <EmptyState onClick={() => navigate("/loop")} />
         }
       </div>
-    </div>
+      </div>
+      {feedbackTask ? (
+        <PostActionFeedbackModal
+          task={feedbackTask}
+          isSaving={feedbackSaving}
+          error={feedbackError}
+          onSubmit={handleSubmitFeedback}
+          onClose={() => {
+            setFeedbackTask(null);
+            setFeedbackError("");
+          }}
+        />
+      ) : null}
+    </>
   );
 }

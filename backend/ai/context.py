@@ -107,6 +107,21 @@ HEAVY_MOOD_LABELS = {
     "numb",
     "lonely",
 }
+HEAVY_FEEDBACK_MOOD_LABELS = HEAVY_MOOD_LABELS | {
+    "still_heavy",
+    "still heavy",
+    "restless",
+    "overwhelmed",
+}
+CLEAR_FEEDBACK_MOOD_LABELS = {
+    "clear",
+    "clearer",
+    "focused",
+    "proud",
+    "hopeful",
+    "grateful",
+}
+TASK_FRICTION_LEVELS = {"too_easy", "right_sized", "too_heavy"}
 
 
 def normalize_category(value: str | None) -> str:
@@ -149,6 +164,11 @@ def parse_local_date(value: str) -> date:
 def clean_short_text(value: object, max_chars: int) -> str:
     cleaned = " ".join(str(value or "").replace("\n", " ").split()).strip()
     return cleaned[:max_chars].strip()
+
+
+def clean_label(value: object, max_chars: int = 32) -> str:
+    cleaned = clean_short_text(value, max_chars).lower().replace("-", "_").replace(" ", "_")
+    return "".join(char for char in cleaned if char.isalnum() or char == "_")
 
 
 def clean_request_struggles(struggles: list[str]) -> list[str]:
@@ -212,7 +232,11 @@ def fetch_task_history_context(supabase, user_id: str, local_date: str) -> tuple
         "loop_tasks",
         "loop_tasks_history",
         {
-            "select": "title,category,done,completed_at,skipped,is_optional,duration_minutes,for_date,created_at",
+            "select": (
+                "title,category,done,completed_at,skipped,is_optional,duration_minutes,"
+                "for_date,created_at,task_friction_level,post_action_mood,mood_after,"
+                "completion_state,skip_reason_label"
+            ),
             "ops": [
                 ("eq", ("user_id", user_id)),
                 ("gte", ("for_date", week_start)),
@@ -894,6 +918,9 @@ def summarize_task_history(rows: list[dict]) -> dict:
     durations: list[int] = []
     recent_titles: list[str] = []
     seen_titles: set[str] = set()
+    friction_values: list[str] = []
+    mood_after_values: list[str] = []
+    skip_reason_values: list[str] = []
 
     for row in rows:
         category = normalize_category(row.get("category"))
@@ -905,10 +932,21 @@ def summarize_task_history(rows: list[dict]) -> dict:
             stats[category]["completed"] += 1
         if row.get("skipped"):
             stats[category]["skipped"] += 1
+            skip_reason = clean_label(row.get("skip_reason_label"))
+            if skip_reason:
+                skip_reason_values.append(skip_reason)
 
         duration = safe_int(row.get("duration_minutes"), 0)
         if duration > 0:
             durations.append(duration)
+
+        friction = clean_label(row.get("task_friction_level"))
+        if friction in TASK_FRICTION_LEVELS:
+            friction_values.append(friction)
+
+        mood_after = clean_label(row.get("mood_after") or row.get("post_action_mood"))
+        if mood_after:
+            mood_after_values.append(mood_after)
 
         title = clean_short_text(row.get("title"), 56)
         title_key = title.lower()
@@ -942,6 +980,43 @@ def summarize_task_history(rows: list[dict]) -> dict:
             weak_categories.append(category)
 
     average_duration = round(sum(durations) / len(durations)) if durations else 10
+    friction_counts = count_values(friction_values)
+    mood_after_counts = count_values(mood_after_values)
+    skip_reason_counts = count_values(skip_reason_values)
+    too_heavy_count = safe_int(friction_counts.get("too_heavy"), 0)
+    too_easy_count = safe_int(friction_counts.get("too_easy"), 0)
+    heavy_mood_count = sum(
+        safe_int(mood_after_counts.get(label), 0)
+        for label in HEAVY_FEEDBACK_MOOD_LABELS
+    )
+    clear_mood_count = sum(
+        safe_int(mood_after_counts.get(label), 0)
+        for label in CLEAR_FEEDBACK_MOOD_LABELS
+    )
+    skipped_tasks = sum(item["skipped"] for item in stats.values())
+    adaptation_mode = "steady"
+    duration_multiplier = 1.0
+    feedback_note = "No strong post-action friction signal yet."
+    if (
+        too_heavy_count >= 1
+        or skipped_tasks >= max(2, completed_tasks + 1)
+        or (heavy_mood_count >= 2 and completion_pattern == "low")
+    ):
+        adaptation_mode = "simplify"
+        duration_multiplier = 0.5
+        feedback_note = (
+            "Recent safe feedback suggests tasks may need to be halved or made easier to begin."
+        )
+    elif (
+        too_easy_count >= 2
+        and clear_mood_count >= 1
+        and completion_pattern == "strong"
+    ):
+        adaptation_mode = "stretch_slightly"
+        duration_multiplier = 1.15
+        feedback_note = (
+            "Recent safe feedback suggests a slight increase is okay, while keeping a smaller version."
+        )
 
     return {
         "completion_pattern": completion_pattern,
@@ -950,6 +1025,15 @@ def summarize_task_history(rows: list[dict]) -> dict:
         "weak_categories": weak_categories[:2],
         "recent_titles_to_avoid": recent_titles[:MAX_RECENT_TITLES],
         "average_duration": average_duration,
+        "task_feedback_summary": {
+            "feedback_count": len(friction_values) + len(mood_after_values),
+            "friction_counts": friction_counts,
+            "mood_after_counts": mood_after_counts,
+            "skip_reason_counts": skip_reason_counts,
+            "adaptation_mode": adaptation_mode,
+            "duration_multiplier": duration_multiplier,
+            "feedback_note": feedback_note,
+        },
     }
 
 
@@ -975,9 +1059,12 @@ def choose_intensity(
     completion_pattern: str,
     latest_mood: str,
     vitality: int | None,
+    feedback_adaptation: str = "steady",
 ) -> str:
     mood = str(latest_mood or "").lower()
     heavy_moods = {"heavy", "sad", "low", "tired", "anxious", "overwhelmed", "drained"}
+    if feedback_adaptation == "simplify":
+        return "gentle"
     if mood in heavy_moods or completion_pattern == "low" or streak_band == "new":
         return "gentle"
     if vitality is not None and vitality < 35:
@@ -1043,6 +1130,8 @@ def build_generation_context(
                 context_used.append("prompt_labels")
 
     history_summary = summarize_task_history(task_history)
+    task_feedback_summary = history_summary.get("task_feedback_summary") or {}
+    feedback_adaptation = task_feedback_summary.get("adaptation_mode") or "steady"
     existing_titles = [
         str(task.get("title") or "").strip()
         for task in (existing_tasks or [])
@@ -1064,10 +1153,22 @@ def build_generation_context(
         completion_pattern=history_summary["completion_pattern"],
         latest_mood=latest_mood,
         vitality=vitality,
+        feedback_adaptation=feedback_adaptation,
     )
 
     if cleaned_struggles:
         context_used.append("struggles")
+    if task_feedback_summary.get("feedback_count"):
+        context_used.append("task_feedback")
+
+    context_note = build_context_note(
+        history_summary["strong_categories"],
+        history_summary["weak_categories"],
+        history_summary["completion_pattern"],
+    )
+    feedback_note = task_feedback_summary.get("feedback_note")
+    if feedback_note:
+        context_note = f"{context_note} {feedback_note}"
 
     return {
         "struggles": cleaned_struggles,
@@ -1084,13 +1185,12 @@ def build_generation_context(
         "recent_titles": recent_titles_to_avoid,
         "recent_titles_to_avoid": recent_titles_to_avoid,
         "average_duration": history_summary["average_duration"],
+        "task_feedback_summary": task_feedback_summary,
+        "adaptation_mode": feedback_adaptation,
+        "duration_multiplier": safe_float(task_feedback_summary.get("duration_multiplier"), 1.0),
         "suggested_intensity": suggested_intensity,
         "latest_mood": latest_mood,
         "prompt_labels": reflection_data.get("prompt_labels") or [],
-        "context_note": build_context_note(
-            history_summary["strong_categories"],
-            history_summary["weak_categories"],
-            history_summary["completion_pattern"],
-        ),
+        "context_note": context_note,
         "context_used": sorted(set(context_used)),
     }

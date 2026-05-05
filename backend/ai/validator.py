@@ -680,6 +680,25 @@ def normalize_task_for_insert(
         str(task.get("supportive_line") or task.get("inline_quote") or "").strip(),
         18,
     )
+    difficulty_level = str(task.get("difficulty_level") or "").strip().lower()
+    if difficulty_level not in {"gentle", "normal", "deeper"}:
+        difficulty_level = None
+    smaller_version = str(
+        task.get("smaller_version")
+        or task.get("easier_version")
+        or ""
+    ).strip()
+    success_condition = limit_words(
+        str(task.get("success_condition") or "").strip(),
+        20,
+    )
+    post_completion_question = limit_words(
+        str(
+            task.get("post_completion_question")
+            or "Was this too easy, right-sized, or too heavy?"
+        ).strip(),
+        14,
+    )
 
     return {
         "user_id": user_id,
@@ -697,4 +716,9 @@ def normalize_task_for_insert(
         "ai_generated": ai_generated,
         "is_optional": False,
         "done": False,
+        "completion_state": "pending",
+        "difficulty_level": difficulty_level,
+        "success_condition": success_condition or None,
+        "smaller_version": smaller_version or None,
+        "post_completion_question": post_completion_question or None,
     }

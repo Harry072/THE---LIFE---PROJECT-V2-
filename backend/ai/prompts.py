@@ -18,6 +18,12 @@ INTENSITY_EXAMPLE_DURATIONS = {
     "deeper": {"awareness": 20, "action": 25, "meaning": 20},
 }
 
+INTENSITY_DURATION_LIMITS = {
+    "gentle": (2, 10),
+    "normal": (10, 20),
+    "deeper": (20, 30),
+}
+
 COMPANION_MODE_GUIDANCE = {
     "understand_me": (
         "Help the user express what they feel and gently understand the pattern behind it. "
@@ -55,6 +61,9 @@ def build_loop_tasks_prompt(context: dict) -> str:
     prompt_labels = context.get("prompt_labels") or []
     context_note = context.get("context_note") or "Use balanced, concrete tasks that are easy to start today."
     recent_titles = context.get("recent_titles_to_avoid") or context.get("recent_titles") or []
+    task_feedback_summary = context.get("task_feedback_summary") or {}
+    adaptation_mode = context.get("adaptation_mode") or task_feedback_summary.get("adaptation_mode") or "steady"
+    duration_multiplier = context.get("duration_multiplier") or task_feedback_summary.get("duration_multiplier") or 1.0
     recent_title_text = ", ".join(recent_titles[:8]) if recent_titles else "none"
     prompt_label_text = ", ".join(prompt_labels[:3]) if prompt_labels else "none"
     intensity_guidance = INTENSITY_GUIDANCE.get(
@@ -65,6 +74,39 @@ def build_loop_tasks_prompt(context: dict) -> str:
         suggested_intensity,
         INTENSITY_EXAMPLE_DURATIONS["normal"],
     )
+    duration_limits = INTENSITY_DURATION_LIMITS.get(
+        suggested_intensity,
+        INTENSITY_DURATION_LIMITS["normal"],
+    )
+
+    try:
+        safe_multiplier = float(duration_multiplier)
+    except (TypeError, ValueError):
+        safe_multiplier = 1.0
+    if adaptation_mode == "simplify":
+        safe_multiplier = min(safe_multiplier, 0.5)
+    elif adaptation_mode == "stretch_slightly":
+        safe_multiplier = max(1.0, min(safe_multiplier, 1.15))
+    else:
+        safe_multiplier = 1.0
+
+    def adaptive_duration(category: str) -> int:
+        base_duration = example_durations[category]
+        adjusted = round(base_duration * safe_multiplier)
+        if adaptation_mode == "stretch_slightly":
+            adjusted = min(base_duration + 5, adjusted)
+        return max(duration_limits[0], min(duration_limits[1], adjusted))
+
+    adaptive_durations = {
+        category: adaptive_duration(category)
+        for category in ("awareness", "action", "meaning")
+    }
+    feedback_note = task_feedback_summary.get("feedback_note") or "No strong post-action feedback signal yet."
+    adaptation_instruction = {
+        "simplify": "Halve or simplify tasks. Make the first visible step easy enough to begin.",
+        "stretch_slightly": "Increase only slightly, and keep the smaller version genuinely easy.",
+        "steady": "Keep tasks steady, concrete, and repeatable.",
+    }.get(adaptation_mode, "Keep tasks steady, concrete, and repeatable.")
 
     return f"""
 Generate exactly 3 daily core practices for The Life Project.
@@ -80,6 +122,8 @@ Use only this compact, privacy-safe personalization context:
 - Context note: {context_note}
 - Current day guidance: {journey_guidance}
 - Suggested intensity: {suggested_intensity}. {intensity_guidance}
+- Safe post-action feedback: {feedback_note}
+- Adaptive sizing mode: {adaptation_mode}. {adaptation_instruction}
 - Recent task titles to avoid repeating exactly: {recent_title_text}
 
 Create one task for each category, in this exact order:
@@ -103,10 +147,16 @@ Safety and quality rules:
 - "subtitle" must be a short human label, not a slogan.
 - "detail_description" must be one calm reason sentence followed by "Action:" and one concrete action.
 - "duration_minutes" must match suggested intensity.
+- If adaptive sizing mode is simplify, duration_minutes must be smaller and the action must be easier to start.
+- If adaptive sizing mode is stretch_slightly, increase difficulty only slightly.
 - "preferred_time_of_day" must be morning, afternoon, evening, or today.
 - "supportive_line" must be one calm sentence, max 16 words.
 - "why_chosen" must be one calm sentence, max 18 words.
 - "easier_version" must be one smaller version of the same task.
+- "smaller_version" must be the same smaller action as "easier_version".
+- "success_condition" must say exactly what counts as done today.
+- "post_completion_question" must ask one short safe metadata question about mood or fit.
+- "difficulty_level" must be one of: gentle, normal, deeper.
 
 Output ONLY valid JSON in this exact shape:
 [
@@ -116,11 +166,15 @@ Output ONLY valid JSON in this exact shape:
     "subtitle": "Awareness Practice",
     "why_this_helps": "Naming the loop makes your next choice easier.",
     "detail_description": "Naming the thought lowers its grip. Action: Sit quietly and write the thought your mind keeps returning to.",
-    "duration_minutes": {example_durations["awareness"]},
+    "duration_minutes": {adaptive_durations["awareness"]},
     "preferred_time_of_day": "morning",
     "supportive_line": "Clarity begins when the loop is no longer invisible.",
     "why_chosen": "This helps you notice the loop before it controls the day.",
-    "easier_version": "Write one sentence naming the recurring thought."
+    "easier_version": "Write one sentence naming the recurring thought.",
+    "smaller_version": "Write one sentence naming the recurring thought.",
+    "success_condition": "You write one honest sentence.",
+    "post_completion_question": "Did this feel too easy, right-sized, or too heavy?",
+    "difficulty_level": "{suggested_intensity}"
   }},
   {{
     "category": "action",
@@ -128,11 +182,15 @@ Output ONLY valid JSON in this exact shape:
     "subtitle": "Action Practice",
     "why_this_helps": "One small start turns pressure into movement.",
     "detail_description": "Momentum returns through one useful movement. Action: Work on one task you have been avoiding.",
-    "duration_minutes": {example_durations["action"]},
+    "duration_minutes": {adaptive_durations["action"]},
     "preferred_time_of_day": "afternoon",
     "supportive_line": "You are starting, not fixing everything at once.",
     "why_chosen": "This turns mental noise into one concrete step.",
-    "easier_version": "Work on the task for five minutes."
+    "easier_version": "Work on the task for five minutes.",
+    "smaller_version": "Work on the task for five minutes.",
+    "success_condition": "You give the task one focused block.",
+    "post_completion_question": "How does your mind feel after this?",
+    "difficulty_level": "{suggested_intensity}"
   }},
   {{
     "category": "meaning",
@@ -140,11 +198,15 @@ Output ONLY valid JSON in this exact shape:
     "subtitle": "Meaning Practice",
     "why_this_helps": "Meaning grows when effort serves a future you care about.",
     "detail_description": "A small helpful act can reconnect effort to purpose. Action: Do one thing that makes tomorrow easier for you or someone else.",
-    "duration_minutes": {example_durations["meaning"]},
+    "duration_minutes": {adaptive_durations["meaning"]},
     "preferred_time_of_day": "evening",
     "supportive_line": "Small service can make the day feel less random.",
     "why_chosen": "This connects today's action to something larger than escape.",
-    "easier_version": "Write one sentence about who this effort helps."
+    "easier_version": "Write one sentence about who this effort helps.",
+    "smaller_version": "Write one sentence about who this effort helps.",
+    "success_condition": "You complete one helpful action or name who it helps.",
+    "post_completion_question": "Was this too easy, right-sized, or too heavy?",
+    "difficulty_level": "{suggested_intensity}"
   }}
 ]
 """.strip()

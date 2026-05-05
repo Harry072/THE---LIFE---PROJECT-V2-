@@ -42,6 +42,13 @@ const normalizeTask = (row = {}) => {
     detail_title: row.detail_title ?? row.title ?? "",
     detail_description: row.detail_description ?? "",
     subtitle: row.subtitle ?? row.category ?? "",
+    task_friction_level: row.task_friction_level ?? null,
+    post_action_mood: row.post_action_mood ?? null,
+    mood_after: row.mood_after ?? null,
+    completion_state: row.completion_state ?? (completedAt ? "done" : "pending"),
+    smaller_version: row.smaller_version ?? row.easier_version ?? "",
+    success_condition: row.success_condition ?? "",
+    post_completion_question: row.post_completion_question ?? "",
   };
 };
 
@@ -254,6 +261,45 @@ export function useLoopTasks() {
     }
   }, [completeTaskInDb, loadStats, loadTasks, tasks, updateTreeStats]);
 
+  const saveTaskFeedback = useCallback(async (taskId, feedback = {}) => {
+    if (!user?.id || !taskId) return null;
+
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+
+    if (sessionError || !accessToken) {
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/loop-tasks/${taskId}/feedback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        user_id: user.id,
+        ...feedback,
+      }),
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.detail || `Server returned ${response.status}`);
+    }
+
+    const updatedTask = payload?.task ? normalizeTask(payload.task) : null;
+    if (updatedTask?.id) {
+      setTasks((prev) => sortTasks(prev.map((task) => (
+        task.id === updatedTask.id
+          ? { ...task, ...updatedTask }
+          : task
+      ))));
+    }
+
+    return updatedTask;
+  }, [user?.id]);
+
   useEffect(() => {
     if (!user?.id) {
       setTasks([]);
@@ -276,6 +322,7 @@ export function useLoopTasks() {
     fetchTasks,
     generateTasks,
     toggleTask,
+    saveTaskFeedback,
     // Provide compatible interface for TheLoopPage
     data: { tasks, insight },
     generating,

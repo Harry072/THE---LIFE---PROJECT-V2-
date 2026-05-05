@@ -8,9 +8,11 @@ export default function BookPrescriptionCard({
   active = false,
   onToggle,
   onBeginRitual,
+  onFindBook,
 }) {
   const openFindUrl = (event) => {
     event.stopPropagation();
+    onFindBook?.();
     window.open(book.findUrl, "_blank", "noopener,noreferrer");
   };
 

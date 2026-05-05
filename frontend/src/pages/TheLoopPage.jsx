@@ -6,6 +6,7 @@ import LoopTaskCard from "../components/loop/LoopTaskCard";
 import LoopDetailPanel from "../components/loop/LoopDetailPanel";
 import LoopIntroVideo from "../components/loop/LoopIntroVideo";
 import LoopNotificationToast from "../components/loop/LoopNotificationToast";
+import PostActionFeedbackModal from "../components/loop/PostActionFeedbackModal";
 
 const LOOP_INTRO_VIDEO_STORAGE_KEY = "lifeProject.loopIntroVideoSeen";
 
@@ -31,7 +32,16 @@ export default function TheLoopPage() {
   // useLoopTasks reads the current user from AppStateContext,
   // including onboarding_answers and user_tree.streak for personalized generation.
   // Destructure correctly: hook returns { tasks: { tasks, insight }, loading, ... }
-  const { data: loopData, loading, error, generating, refresh, toggleTask, clearError } = useLoopTasks();
+  const {
+    data: loopData,
+    loading,
+    error,
+    generating,
+    refresh,
+    toggleTask,
+    saveTaskFeedback,
+    clearError,
+  } = useLoopTasks();
   const { user, user_tree } = useAppState();
   
   const tasks = useMemo(() => loopData?.tasks || [], [loopData?.tasks]);
@@ -40,6 +50,9 @@ export default function TheLoopPage() {
   const [showLoopIntroVideo, setShowLoopIntroVideo] = useState(getInitialIntroVideoVisibility);
   const [isLoopIntroReplay, setIsLoopIntroReplay] = useState(false);
   const [currentToast, setCurrentToast] = useState(null);
+  const [feedbackTask, setFeedbackTask] = useState(null);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackError, setFeedbackError] = useState("");
   const waitingToastShownRef = useRef(false);
   const currentToastRef = useRef(null);
   const toastQueueRef = useRef([]);
@@ -150,10 +163,26 @@ export default function TheLoopPage() {
           enqueueToast(`streak-${newStreak}`, LOOP_TOAST_MESSAGES.streak);
         }
       }
+      setFeedbackTask(result?.task || completionPayload?.task || null);
+      setFeedbackError("");
     }
 
     return result;
   }, [enqueueToast, toggleTask, user_tree?.streak]);
+
+  const handleSubmitFeedback = useCallback(async (feedback) => {
+    if (!feedbackTask?.id) return;
+    setFeedbackSaving(true);
+    setFeedbackError("");
+    try {
+      await saveTaskFeedback(feedbackTask.id, feedback);
+      setFeedbackTask(null);
+    } catch (requestError) {
+      setFeedbackError(requestError?.message || "Could not save this signal yet.");
+    } finally {
+      setFeedbackSaving(false);
+    }
+  }, [feedbackTask?.id, saveTaskFeedback]);
 
   // Sort: uncompleted first, then completed
   const sorted = [...tasks].sort((a, b) => {
@@ -482,6 +511,18 @@ export default function TheLoopPage() {
         message={currentToast?.message}
         onClose={closeCurrentToast}
       />
+      {feedbackTask ? (
+        <PostActionFeedbackModal
+          task={feedbackTask}
+          isSaving={feedbackSaving}
+          error={feedbackError}
+          onSubmit={handleSubmitFeedback}
+          onClose={() => {
+            setFeedbackTask(null);
+            setFeedbackError("");
+          }}
+        />
+      ) : null}
     </div>
   );
 }

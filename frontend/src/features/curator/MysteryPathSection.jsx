@@ -7,6 +7,7 @@ export default function MysteryPathSection({
   isBookActive,
   onToggleBook,
   onBeginRitual,
+  onFindBook,
 }) {
   const startHereBook = books.find((book) => book.id === path.startHereBookId);
   const otherBooks = books.filter((book) => book.id !== path.startHereBookId);
@@ -40,6 +41,7 @@ export default function MysteryPathSection({
             active={isBookActive(startHereBook.id)}
             onToggle={() => onToggleBook(startHereBook.id)}
             onBeginRitual={() => onBeginRitual(startHereBook.id)}
+            onFindBook={() => onFindBook(startHereBook.id)}
           />
         </div>
       )}
@@ -53,6 +55,7 @@ export default function MysteryPathSection({
             active={isBookActive(book.id)}
             onToggle={() => onToggleBook(book.id)}
             onBeginRitual={() => onBeginRitual(book.id)}
+            onFindBook={() => onFindBook(book.id)}
           />
         ))}
       </div>

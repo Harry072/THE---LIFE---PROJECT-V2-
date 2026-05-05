@@ -13,6 +13,7 @@ export default function AudioPlayer({
   session,
   onClose,
   onComplete,
+  onSaveCheckin,
   onReturn,
 }) {
   const audioRef = useRef(null);
@@ -22,6 +23,10 @@ export default function AudioPlayer({
   const [error, setError] = useState("");
   const [showCheckin, setShowCheckin] = useState(false);
   const [selectedFeeling, setSelectedFeeling] = useState("");
+  const [selectedReflectionTag, setSelectedReflectionTag] = useState("");
+  const [isSavingCheckin, setIsSavingCheckin] = useState(false);
+  const [checkinError, setCheckinError] = useState("");
+  const [checkinSaved, setCheckinSaved] = useState(false);
   const isAmbientScript = session.guidanceType === "ambient_script";
   const targetDuration = session.duration * 60;
   const playbackSrc = session.voiceSrc || session.audioSrc || "";
@@ -127,6 +132,25 @@ export default function AudioPlayer({
     }
   };
 
+  const handleSubmitCheckin = async () => {
+    if (!selectedFeeling || !selectedReflectionTag || isSavingCheckin) return;
+    setIsSavingCheckin(true);
+    setCheckinError("");
+    try {
+      await onSaveCheckin?.({
+        session,
+        moodAfter: selectedFeeling,
+        reflectionTag: selectedReflectionTag,
+        durationSeconds: Math.round(progress || targetDuration),
+      });
+      setCheckinSaved(true);
+    } catch (requestError) {
+      setCheckinError(requestError?.message || "Could not save this reset signal yet.");
+    } finally {
+      setIsSavingCheckin(false);
+    }
+  };
+
   const remaining = Math.max(0, duration - progress);
   const percent = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
 
@@ -142,6 +166,12 @@ export default function AudioPlayer({
           <PostSessionCheckin
             selectedFeeling={selectedFeeling}
             onSelectFeeling={setSelectedFeeling}
+            selectedReflectionTag={selectedReflectionTag}
+            onSelectReflectionTag={setSelectedReflectionTag}
+            onSubmit={handleSubmitCheckin}
+            isSaving={isSavingCheckin}
+            isSaved={checkinSaved}
+            saveError={checkinError}
             onReturn={onReturn}
             onClose={onClose}
           />

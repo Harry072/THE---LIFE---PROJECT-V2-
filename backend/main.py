@@ -147,6 +147,35 @@ class CompanionConversationCreateRequest(BaseModel):
     title: str | None = None
 
 
+class LoopTaskFeedbackRequest(BaseModel):
+    user_id: str | None = None
+    completion_state: str = "done"
+    post_action_mood: str | None = None
+    mood_before: str | None = None
+    mood_after: str | None = None
+    task_friction_level: str | None = None
+    skip_reason_label: str | None = None
+
+
+class ResetSessionMetadataRequest(BaseModel):
+    user_id: str | None = None
+    session_id: str | None = None
+    session_type: str | None = None
+    session_category: str | None = None
+    reset_need: str | None = None
+    duration_seconds: int | None = None
+    mood_after: str | None = None
+    reflection_tag: str | None = None
+
+
+class CuratorInteractionRequest(BaseModel):
+    user_id: str | None = None
+    book_id: str | None = None
+    path_slug: str | None = None
+    action_type: str
+    duration_seconds: int | None = None
+
+
 def extract_bearer_token(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header missing")
@@ -309,6 +338,112 @@ def validate_week_range(week_start: str, week_end: str) -> tuple[str, str]:
     return start_date.isoformat(), end_date.isoformat()
 
 
+SAFE_MOOD_LABELS = {
+    "clear",
+    "clearer",
+    "focused",
+    "proud",
+    "soft",
+    "softer",
+    "quiet",
+    "heavy",
+    "still_heavy",
+    "restless",
+    "grateful",
+    "hopeful",
+    "numb",
+    "low",
+    "tired",
+    "anxious",
+    "overwhelmed",
+    "drained",
+}
+TASK_FRICTION_LEVELS = {"too_easy", "right_sized", "too_heavy"}
+COMPLETION_STATES = {"pending", "done", "skipped", "partial"}
+SKIP_REASON_LABELS = {
+    "too_heavy",
+    "no_time",
+    "forgot",
+    "not_relevant",
+    "low_energy",
+    "unclear",
+}
+RESET_REFLECTION_TAGS = {
+    "less_pressure",
+    "less_noise",
+    "less_screen",
+    "less_rushing",
+    "less_self_criticism",
+    "more_rest",
+    "more_clarity",
+}
+CURATOR_ACTION_TYPES = {
+    "path_opened",
+    "book_opened",
+    "book_saved",
+    "book_removed",
+    "find_book_opened",
+}
+
+
+def normalize_metadata_label(
+    value: object,
+    *,
+    allowed: set[str],
+    field_name: str,
+    required: bool = False,
+) -> str | None:
+    if value is None or str(value).strip() == "":
+        if required:
+            raise HTTPException(status_code=400, detail=f"{field_name} is required")
+        return None
+
+    cleaned = (
+        str(value)
+        .strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+    cleaned = "".join(char for char in cleaned if char.isalnum() or char == "_")[:48]
+    if not cleaned:
+        if required:
+            raise HTTPException(status_code=400, detail=f"{field_name} is required")
+        return None
+    if cleaned not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
+    return cleaned
+
+
+def clean_metadata_text(value: object, *, max_chars: int = 80) -> str | None:
+    if value is None or str(value).strip() == "":
+        return None
+    cleaned = " ".join(str(value).strip().split())
+    cleaned = "".join(
+        char
+        for char in cleaned
+        if char.isalnum() or char in {"-", "_", " ", "."}
+    )
+    return cleaned[:max_chars].strip() or None
+
+
+def clamp_duration_seconds(value: int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        duration = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="duration_seconds must be a number") from exc
+    if duration < 0:
+        raise HTTPException(status_code=400, detail="duration_seconds cannot be negative")
+    return min(duration, 24 * 60 * 60)
+
+
+def validate_request_user(token_user_id: str, request_user_id: str | None) -> None:
+    if request_user_id and str(request_user_id) != token_user_id:
+        raise HTTPException(status_code=403, detail="Session user does not match request user")
+
+
 def is_insufficient_weekly_data(context: dict) -> bool:
     data_points = context.get("data_points") or {}
     reflection_count = int(data_points.get("reflections") or 0)
@@ -466,7 +601,7 @@ COMPANION_CONVERSATION_COLUMNS = (
 )
 COMPANION_MESSAGE_COLUMNS = (
     "id,conversation_id,user_id,role,content,mode,suggested_action_json,"
-    "tone,risk_level,created_at"
+    "tone,risk_level,companion_intent,resolved_action_type,created_at"
 )
 DEFAULT_COMPANION_CONVERSATION_TITLE = "New conversation"
 
@@ -593,9 +728,16 @@ def persist_companion_exchange(
     mode: str,
     user_message: str,
     companion_response: dict,
+    companion_intent: str | None = None,
 ) -> dict:
     safety = companion_response.get("safety") or {}
     assistant_reply = companion_response.get("reply") or ""
+    suggested_action = companion_response.get("suggested_action") or {}
+    resolved_action_type = clean_metadata_text(
+        suggested_action.get("type"),
+        max_chars=48,
+    )
+    safe_intent = clean_metadata_text(companion_intent, max_chars=48)
     message_rows = [
         {
             "conversation_id": conversation["id"],
@@ -604,6 +746,7 @@ def persist_companion_exchange(
             "content": user_message,
             "mode": mode,
             "risk_level": "none",
+            "companion_intent": safe_intent,
         },
         {
             "conversation_id": conversation["id"],
@@ -611,9 +754,11 @@ def persist_companion_exchange(
             "role": "assistant",
             "content": assistant_reply,
             "mode": mode,
-            "suggested_action_json": companion_response.get("suggested_action"),
+            "suggested_action_json": suggested_action,
             "tone": companion_response.get("tone"),
             "risk_level": safety.get("risk_level") or "none",
+            "companion_intent": safe_intent,
+            "resolved_action_type": resolved_action_type,
         },
     ]
     (
@@ -770,7 +915,8 @@ def insert_task_rows(
             print(
                 "AI_TASK_GENERATION "
                 f"duplicate_insert_caught=true source={source} "
-                f"error={str(insert_error)}"
+                f"error_type={type(insert_error).__name__} "
+                f"error_code={getattr(insert_error, 'code', 'n/a') or 'n/a'}"
             )
             existing_after_race = fetch_today_core_tasks(user_id, local_date)
             print(
@@ -939,6 +1085,179 @@ async def delete_life_companion_conversation(
         raise HTTPException(status_code=500, detail="Failed to delete conversation") from error
 
 
+@app.post("/api/loop-tasks/{task_id}/feedback")
+async def save_loop_task_feedback(
+    task_id: str,
+    request: LoopTaskFeedbackRequest,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        validate_request_user(token_user_id, request.user_id)
+        normalized_task_id = validate_companion_uuid(task_id, field="task_id")
+
+        completion_state = normalize_metadata_label(
+            request.completion_state,
+            allowed=COMPLETION_STATES,
+            field_name="completion_state",
+            required=True,
+        )
+        friction_level = normalize_metadata_label(
+            request.task_friction_level,
+            allowed=TASK_FRICTION_LEVELS,
+            field_name="task_friction_level",
+        )
+        mood_before = normalize_metadata_label(
+            request.mood_before,
+            allowed=SAFE_MOOD_LABELS,
+            field_name="mood_before",
+        )
+        mood_after = normalize_metadata_label(
+            request.mood_after or request.post_action_mood,
+            allowed=SAFE_MOOD_LABELS,
+            field_name="mood_after",
+        )
+        skip_reason_label = normalize_metadata_label(
+            request.skip_reason_label,
+            allowed=SKIP_REASON_LABELS,
+            field_name="skip_reason_label",
+        )
+
+        task_response = (
+            supabase.table("loop_tasks")
+            .select("id,user_id")
+            .eq("id", normalized_task_id)
+            .eq("user_id", token_user_id)
+            .limit(1)
+            .execute()
+        )
+        if not (task_response.data or []):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        payload = {
+            "completion_state": completion_state,
+            "post_action_mood": mood_after,
+            "mood_after": mood_after,
+            "mood_before": mood_before,
+            "task_friction_level": friction_level,
+            "skip_reason_label": skip_reason_label,
+            "feedback_recorded_at": utc_now_iso(),
+        }
+        payload = {key: value for key, value in payload.items() if value is not None}
+
+        update_response = (
+            supabase.table("loop_tasks")
+            .update(payload)
+            .eq("id", normalized_task_id)
+            .eq("user_id", token_user_id)
+            .execute()
+        )
+        updated_rows = update_response.data or []
+        updated_task = updated_rows[0] if updated_rows else {}
+        return {
+            "status": "success",
+            "task": updated_task,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "SAFE_METADATA "
+            "status=loop_feedback_failed "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to save task feedback") from error
+
+
+@app.post("/api/reset-sessions")
+async def save_reset_session_metadata(
+    request: ResetSessionMetadataRequest,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        validate_request_user(token_user_id, request.user_id)
+
+        mood_after = normalize_metadata_label(
+            request.mood_after,
+            allowed=SAFE_MOOD_LABELS,
+            field_name="mood_after",
+        )
+        reflection_tag = normalize_metadata_label(
+            request.reflection_tag,
+            allowed=RESET_REFLECTION_TAGS,
+            field_name="reflection_tag",
+        )
+        payload = {
+            "user_id": token_user_id,
+            "session_id": clean_metadata_text(request.session_id, max_chars=80),
+            "session_type": clean_metadata_text(request.session_type, max_chars=48),
+            "session_category": clean_metadata_text(request.session_category, max_chars=48),
+            "reset_need": clean_metadata_text(request.reset_need, max_chars=48),
+            "duration_seconds": clamp_duration_seconds(request.duration_seconds),
+            "mood_after": mood_after,
+            "reflection_tag": reflection_tag,
+        }
+        payload = {key: value for key, value in payload.items() if value is not None}
+
+        response = supabase.table("reset_sessions").insert(payload).execute()
+        row = (response.data or [None])[0]
+        return {
+            "status": "success",
+            "reset_session": row,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "SAFE_METADATA "
+            "status=reset_session_failed "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to save reset metadata") from error
+
+
+@app.post("/api/curator/interactions")
+async def save_curator_interaction(
+    request: CuratorInteractionRequest,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        validate_request_user(token_user_id, request.user_id)
+
+        action_type = normalize_metadata_label(
+            request.action_type,
+            allowed=CURATOR_ACTION_TYPES,
+            field_name="action_type",
+            required=True,
+        )
+        payload = {
+            "user_id": token_user_id,
+            "book_id": clean_metadata_text(request.book_id, max_chars=80),
+            "path_slug": clean_metadata_text(request.path_slug, max_chars=80),
+            "action_type": action_type,
+            "duration_seconds": clamp_duration_seconds(request.duration_seconds),
+        }
+        payload = {key: value for key, value in payload.items() if value is not None}
+
+        response = supabase.table("curator_interactions").insert(payload).execute()
+        row = (response.data or [None])[0]
+        return {
+            "status": "success",
+            "curator_interaction": row,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "SAFE_METADATA "
+            "status=curator_interaction_failed "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to save curator metadata") from error
+
+
 @app.post("/api/life-companion/chat")
 async def life_companion_chat(
     request: LifeCompanionRequest,
@@ -1059,6 +1378,7 @@ async def life_companion_chat(
                 mode=mode,
                 user_message=user_message,
                 companion_response=companion_response,
+                companion_intent=detected_intent,
             )
             return build_life_companion_response(
                 "fallback",
@@ -1125,6 +1445,7 @@ async def life_companion_chat(
                 mode=mode,
                 user_message=user_message,
                 companion_response=gateway_result.companion_response,
+                companion_intent=detected_intent,
             )
         return build_life_companion_response(
             gateway_result.status,
@@ -1430,6 +1751,9 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
     except HTTPException:
         raise
     except Exception as e:
-        # 5. NO MORE SILENT FAILS: Print error to terminal and alert frontend
-        print(f"CRITICAL BACKEND ERROR: {str(e)}") 
-        raise HTTPException(status_code=500, detail=f"Failed to generate or save tasks: {str(e)}")
+        print(
+            "AI_TASK_GENERATION "
+            "status=critical_error "
+            f"error_type={type(e).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to generate or save tasks")

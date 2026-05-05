@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import SafeImage from "../common/SafeImage";
 import Icon from "../Icon";
 import { getPreferredUsername } from "../../utils/userDisplayName";
+import { useContextualGreeting } from "../../hooks/useContextualGreeting";
 
 // ── Utility: Time-based greeting ──
 function getGreetingByTime() {
@@ -17,6 +18,7 @@ export default function HeroSection({ user, profile }) {
   const navigate = useNavigate();
   const [greeting, setGreeting] = useState(getGreetingByTime());
   const displayName = getPreferredUsername(user, profile, "Friend");
+  const { whisper } = useContextualGreeting(user?.id, user?.user_tree?.streak ?? 0);
 
   // Update greeting every minute so it stays accurate without page reload
   useEffect(() => {
@@ -69,7 +71,7 @@ export default function HeroSection({ user, profile }) {
           fontFamily: "var(--font-body)",
           maxWidth: 400, lineHeight: 1.6,
         }}>
-          Stay consistent. Trust the process.
+          {whisper}
         </p>
       </div>
 
