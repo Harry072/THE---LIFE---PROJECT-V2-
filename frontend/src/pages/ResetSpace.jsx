@@ -87,13 +87,11 @@ export default function ResetSpace() {
       },
       body: JSON.stringify({
         user_id: user.id,
-        session_id: session?.id,
+        session_title: session?.title,
         session_type: session?.type,
-        session_category: session?.category,
-        reset_need: activeNeed || null,
         duration_seconds: durationSeconds,
-        mood_after: normalizeResetMood(moodAfter),
-        reflection_tag: reflectionTag,
+        mood_after_reset: normalizeResetMood(moodAfter),
+        reset_reflection_tag: reflectionTag,
       }),
     });
 
@@ -103,7 +101,7 @@ export default function ResetSpace() {
     }
 
     return payload;
-  }, [activeNeed, user?.id]);
+  }, [user?.id]);
 
   const selectedNeedLabel =
     RESET_NEEDS.find((need) => need.id === activeNeed)?.label || "All resets";
@@ -126,8 +124,7 @@ export default function ResetSpace() {
           </div>
           <h1>Return to yourself before the day takes over.</h1>
           <p>
-            Choose what your nervous system needs now, then begin with guided audio,
-            sound sanctuary, or a breathing rhythm.
+            Settle your system before forcing action. Choose what you need now.
           </p>
         </header>
 
@@ -196,6 +193,7 @@ export default function ResetSpace() {
           onComplete={handleComplete}
           onSaveCheckin={handleSaveCheckin}
           onReturn={() => navigate("/loop")}
+          onReflect={() => navigate("/reflection")}
         />
       ) : null}
     </main>

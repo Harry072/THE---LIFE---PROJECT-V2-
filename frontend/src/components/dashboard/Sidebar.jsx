@@ -2,30 +2,25 @@ import Icon from "../Icon";
 import GrowthTree from "../GrowthTree";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useUserStore } from "../../store/userStore";
+import { FEATURE_PURPOSE, NAV_GROUPS } from "../../data/lifeNavigation";
 import {
   getPreferredAvatarUrl,
   getPreferredInitial,
   getPreferredUsername,
 } from "../../utils/userDisplayName";
 
-const NAV = [
-  { id: "dashboard", label: "Dashboard",     icon: "dashboard", path: "/dashboard" },
-  { id: "companion", label: "Companion",     icon: "sparkle",   path: "/companion" },
-  { id: "loop",      label: "The Loop",      icon: "loop",      path: "/loop" },
-  { id: "meditate",  label: "Reset Space",   icon: "meditate",  path: "/meditation" },
-  { id: "music",     label: "Music",         icon: "music",     path: "/music" },
-  { id: "books",     label: "The Curator",   icon: "books",     path: "/curator" },
-  { id: "progress",  label: "Progress",      icon: "progress",  path: "/progress" },
-];
-
 function NavItem({ item, active, onClick }) {
   return (
     <button
       onClick={onClick}
+      title={FEATURE_PURPOSE[item.id]}
       style={{
         position: "relative",
-        display: "flex", alignItems: "center", gap: 12,
-        width: "100%", padding: "12px 20px",
+        display: "grid",
+        gridTemplateColumns: "18px minmax(0, 1fr)",
+        alignItems: "center",
+        gap: 12,
+        width: "100%", padding: "10px 14px",
         background: active ? "rgba(46,204,113,0.08)" : "transparent",
         border: "none", borderRadius: "var(--r-sm)",
         color: active ? "var(--text)" : "var(--text-dim)",
@@ -56,7 +51,12 @@ function NavItem({ item, active, onClick }) {
         size={18}
         color={active ? "var(--green-bright)" : "currentColor"}
       />
-      <span>{item.label}</span>
+      <span style={{
+        minWidth: 0,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}>{item.label}</span>
     </button>
   );
 }
@@ -72,6 +72,7 @@ export default function Sidebar() {
   const avatarUrl = getPreferredAvatarUrl(user);
 
   return (
+    <>
     <aside style={{
       position: "fixed", top: 0, left: 0, bottom: 0,
       width: 240,
@@ -97,7 +98,7 @@ export default function Sidebar() {
           <path d="M12 12c-3-1-5-3-5-6 0-2 2-4 5-4s5 2 5 4c0 3-2 5-5 6z" />
           <path d="M12 12c-2-.5-4-2-5-4M12 12c2-.5 4-2 5-4" />
         </svg>
-        <div style={{ fontFamily: "var(--font-display)", fontSize: 18 }}>
+        <div className="sidebar-logo-text" style={{ fontFamily: "var(--font-display)", fontSize: 18 }}>
           <span style={{ color: "var(--text)" }}>The </span>
           <span style={{ color: "var(--green-bright)",
             fontStyle: "italic" }}>Life</span>
@@ -107,21 +108,47 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav style={{ display: "flex", flexDirection: "column",
-        gap: 4, flex: 1 }}>
-        {NAV.map(item => (
-          <NavItem
-            key={item.id}
-            item={item}
-            active={activePath === item.path
-              || (item.path !== "/dashboard"
-                && activePath.startsWith(item.path))}
-            onClick={() => navigate(item.path)}
-          />
+        gap: 14, flex: 1, overflowY: "auto", paddingRight: 2 }}>
+        {NAV_GROUPS.map(group => (
+          <div key={group.label} style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}>
+            <p className="sidebar-group-label" style={{
+              margin: "0 0 2px",
+              padding: "0 14px",
+              color: "var(--text-faint)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 1.8,
+              textTransform: "uppercase",
+              fontFamily: "var(--font-body)",
+            }}>
+              {group.label}
+            </p>
+            {group.items.map(item => {
+              const active = item.activeHash
+                ? activePath === "/dashboard" && location.hash === item.activeHash
+                : activePath === item.path && !location.hash
+                  || (item.path !== "/dashboard" && activePath.startsWith(item.path));
+
+              return (
+                <NavItem
+                  key={item.id}
+                  item={item}
+                  active={active}
+                  onClick={() => navigate(item.path)}
+                />
+              );
+            })}
+          </div>
         ))}
       </nav>
 
       {/* Growing Widget — compact tree */}
       <div
+        data-widget
         onClick={() => navigate("/progress")}
         style={{
           margin: "16px 0",
@@ -184,7 +211,7 @@ export default function Sidebar() {
               />
             )}
           </div>
-          <div>
+          <div data-profile-text>
             <p style={{ margin: 0, fontSize: 13,
               color: "var(--text)", fontWeight: 500 }}>
               {displayName}
@@ -197,5 +224,24 @@ export default function Sidebar() {
         </button>
       </div>
     </aside>
+    <style>{`
+      @media (max-width: 1023px) {
+        aside nav button {
+          grid-template-columns: 18px !important;
+          justify-content: center !important;
+          gap: 0 !important;
+          padding: 10px 0 !important;
+        }
+
+        .sidebar-group-label {
+          display: none !important;
+        }
+
+        .sidebar-logo-text {
+          display: none !important;
+        }
+      }
+    `}</style>
+    </>
   );
 }

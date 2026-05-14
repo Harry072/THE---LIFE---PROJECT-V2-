@@ -12,6 +12,8 @@ import MysteryPathSection from "./MysteryPathSection";
 import ActiveReadingShelf from "./ActiveReadingShelf";
 import FirstPageRitualModal from "./FirstPageRitualModal";
 import HiddenShelfGate from "./HiddenShelfGate";
+import CuratorIntelligencePanel from "./CuratorIntelligencePanel";
+import useCuratorIntelligence from "./useCuratorIntelligence";
 import { supabase } from "../../lib/supabase";
 import { useAppState } from "../../contexts/AppStateContext";
 import "./CuratorPage.css";
@@ -33,6 +35,7 @@ export default function CuratorPage() {
     () => shelf.activeBookIds.map(getBookById).filter(Boolean),
     [shelf.activeBookIds]
   );
+  const curatorIntelligence = useCuratorIntelligence(user, shelf.activeBookIds);
 
   useEffect(() => {
     if (!queryBookId) return;
@@ -165,7 +168,7 @@ export default function CuratorPage() {
       <main className="curator-shell">
         <section className="curator-hero">
           <div>
-            <p className="curator-eyebrow">A quiet library for the mysteries of your life</p>
+            <p className="curator-eyebrow">Books and ideas matched to your current direction.</p>
             <h1>The Curator</h1>
             <p className="curator-subtitle">
               Every field of life carries a mystery. Choose the one you are ready
@@ -181,6 +184,19 @@ export default function CuratorPage() {
             </p>
           </div>
         </section>
+
+        <CuratorIntelligencePanel
+          lanes={curatorIntelligence.lanes}
+          readingPathBook={curatorIntelligence.readingPathBook}
+          topRecommendation={curatorIntelligence.topRecommendation}
+          hasPersonalSignals={curatorIntelligence.hasPersonalSignals}
+          loading={curatorIntelligence.loading}
+          expandedBookId={expandedBookId}
+          isBookActive={shelf.isActive}
+          onToggleBook={handleToggleBook}
+          onBeginRitual={handleBeginRitual}
+          onFindBook={handleFindBook}
+        />
 
         <MysteryPathGrid paths={CURATOR_PATHS} onSelectPath={handlePathSelect} />
 

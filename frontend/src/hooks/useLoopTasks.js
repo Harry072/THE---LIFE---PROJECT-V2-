@@ -5,8 +5,58 @@ import { useAppState } from "../contexts/AppStateContext";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const AUTO_GENERATION_ERROR =
   "We couldn't prepare today's plan yet. Open The Loop to try again.";
+const AI_RETRYABLE_ERROR =
+  "We couldn't prepare today's AI tasks yet. Try once more and we'll either use Gemini or create a small safe plan for today.";
+const TASK_GENERATION_ERROR =
+  "We couldn't prepare today's plan yet. Try again in a moment.";
 
 const getLocalDate = () => new Date().toLocaleDateString("en-CA");
+
+const isPlainObject = (value) => (
+  Boolean(value) &&
+  Object.prototype.toString.call(value) === "[object Object]" &&
+  (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+);
+
+const cleanStringArray = (value) => {
+  if (!Array.isArray(value)) return null;
+  return value
+    .filter((item) => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const cleanOptionalString = (value) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
+const normalizeGenerateOptions = (options) => {
+  const source = isPlainObject(options) ? options : {};
+
+  return {
+    regenerate: Boolean(source.regenerate || source.force),
+    auto: Boolean(source.auto),
+    contextStruggles: cleanStringArray(source.contextStruggles ?? source.struggles),
+    recalibrateTag: cleanOptionalString(source.recalibrate_tag ?? source.recalibrateTag),
+    allowSafeFallback: Boolean(source.allowSafeFallback || source.allow_safe_fallback),
+  };
+};
+
+const getGenerationErrorMessage = (err, auto = false) => {
+  if (auto) return AUTO_GENERATION_ERROR;
+
+  const message = String(err?.message || "");
+  if (
+    /circular structure|json\.stringify|converting circular/i.test(message) ||
+    /failed to generate or save tasks|server returned 500|internal server error/i.test(message)
+  ) {
+    return TASK_GENERATION_ERROR;
+  }
+
+  return message || TASK_GENERATION_ERROR;
+};
 
 const toSortNumber = (value) => {
   const numericValue = Number(value);
@@ -59,6 +109,7 @@ export function useLoopTasks() {
   const [generating, setGenerating] = useState(false);
   const [hasFetched, setHasFetched] = useState(false);
   const [error, setError] = useState(null);
+  const [retryWithSafeFallback, setRetryWithSafeFallback] = useState(false);
   const insight = "";
 
   const fetchTasks = useCallback(async () => {
@@ -86,6 +137,9 @@ export function useLoopTasks() {
 
       const normalizedTasks = sortTasks((data ?? []).map(normalizeTask));
       setTasks(normalizedTasks);
+      if (normalizedTasks.length > 0) {
+        setRetryWithSafeFallback(false);
+      }
       return normalizedTasks;
     } catch (err) {
       console.error("Error fetching tasks:", err);
@@ -97,12 +151,16 @@ export function useLoopTasks() {
     }
   }, [user?.id]);
 
-  const generateTasks = useCallback(async ({
-    regenerate = false,
-    auto = false,
-    contextStruggles = null,
-  } = {}) => {
+  const generateTasks = useCallback(async (options = {}) => {
     if (!user?.id) return [];
+
+    const {
+      regenerate,
+      auto,
+      contextStruggles,
+      recalibrateTag,
+      allowSafeFallback,
+    } = normalizeGenerateOptions(options);
 
     setGenerating(true);
     setError(null);
@@ -118,20 +176,26 @@ export function useLoopTasks() {
         return [];
       }
 
-      const struggles = contextStruggles || (Array.isArray(user?.onboarding_answers)
-        ? user.onboarding_answers.filter((value) => typeof value === "string" && value.trim())
-        : []);
+      const struggles = contextStruggles ?? (() => {
+        const meta = user?.user_metadata ?? {};
+        const tags = meta.struggle_tags ?? meta.struggles ?? meta.onboarding_answers ?? [];
+        return cleanStringArray(tags) ?? [];
+      })();
       const currentStreak = Number.isFinite(Number(user?.user_tree?.streak))
         ? Number(user.user_tree.streak)
         : 0;
 
       const payload = {
-        user_id: user.id,
+        user_id: String(user.id),
         local_date: getLocalDate(),
         struggles,
         current_streak: currentStreak,
-        regenerate,
+        regenerate: Boolean(regenerate),
+        recalibrate_tag: recalibrateTag,
+        allow_safe_fallback: Boolean(allowSafeFallback || retryWithSafeFallback),
       };
+
+      const requestBody = JSON.stringify(payload);
 
       const response = await fetch(`${API_BASE_URL}/api/generate-loop-tasks`, {
         method: "POST",
@@ -139,7 +203,7 @@ export function useLoopTasks() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${accessToken}`,
         },
-        body: JSON.stringify(payload),
+        body: requestBody,
       });
 
       if (!response.ok) {
@@ -149,7 +213,15 @@ export function useLoopTasks() {
         );
       }
 
-      await response.json().catch(() => null);
+      const responsePayload = await response.json().catch(() => null);
+      if (responsePayload?.status === "retryable_ai_failure") {
+        setRetryWithSafeFallback(true);
+        setTasks([]);
+        setError(auto ? AUTO_GENERATION_ERROR : responsePayload?.meta?.message || AI_RETRYABLE_ERROR);
+        return [];
+      }
+
+      setRetryWithSafeFallback(false);
       const nextTasks = await fetchTasks();
       await Promise.allSettled([
         loadTasks?.(),
@@ -158,9 +230,7 @@ export function useLoopTasks() {
       return nextTasks;
     } catch (err) {
       console.error("Error generating tasks:", err);
-      setError(auto
-        ? AUTO_GENERATION_ERROR
-        : err.message || "AI failed to generate tasks. Please try again.");
+      setError(getGenerationErrorMessage(err, auto));
       return [];
     } finally {
       setGenerating(false);
@@ -169,8 +239,10 @@ export function useLoopTasks() {
     fetchTasks,
     loadStats,
     loadTasks,
+    retryWithSafeFallback,
     user?.id,
     user?.onboarding_answers,
+    user?.user_metadata,
     user?.user_tree?.streak,
   ]);
 
@@ -304,6 +376,7 @@ export function useLoopTasks() {
     if (!user?.id) {
       setTasks([]);
       setError(null);
+      setRetryWithSafeFallback(false);
       setHasFetched(false);
       return;
     }
@@ -326,6 +399,7 @@ export function useLoopTasks() {
     // Provide compatible interface for TheLoopPage
     data: { tasks, insight },
     generating,
+    retryWithSafeFallback,
     refresh,
     clearError
   };

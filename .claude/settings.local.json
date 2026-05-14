@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\harry\\\\OneDrive\\\\Desktop\\\\phase 1\\(test\\)\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(node node_modules/vite/bin/vite.js build)",
+      "Bash(python -m py_compile \"c:/Users/harry/OneDrive/Desktop/phase 1\\(test\\)/backend/ai/fallbacks.py\")",
+      "Bash(python -m py_compile \"c:/Users/harry/OneDrive/Desktop/phase 1\\(test\\)/backend/ai/prompts.py\")"
+    ]
+  }
+}

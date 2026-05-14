@@ -70,73 +70,25 @@ const getAuthFailureReason = (error: any): AuthFailureReason => {
   return 'unknown';
 };
 
-const isMissingProfilesTableError = (error: any) => {
-  const code = String(error?.code || '').toLowerCase();
-  const message = String(error?.message || error || '').toLowerCase();
-  return code === '42p01'
-    || code === 'pgrst205'
-    || message.includes('relation "public.profiles" does not exist')
-    || message.includes('relation "profiles" does not exist')
-    || message.includes("could not find the table 'public.profiles'")
-    || message.includes("could not find the table 'profiles'")
-    || (message.includes('profiles') && message.includes('schema cache'));
-};
-
-const fetchProfile = async (userId: string) => {
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (error) {
-      if (isMissingProfilesTableError(error)) {
-        console.warn('Profiles table missing; continuing with Supabase Auth metadata.');
-      } else {
-        console.warn('Profiles table inaccessible; continuing with Supabase Auth metadata:', error.message);
-      }
-      return null;
-    }
-
-    return data;
-  } catch (error) {
-    if (isMissingProfilesTableError(error)) {
-      console.warn('Profiles table missing; continuing with Supabase Auth metadata.');
-    } else {
-      console.warn('Profiles table inaccessible; continuing with Supabase Auth metadata:', error);
-    }
-    return null;
-  }
-};
-
-const updateProfile = async (userId: string, updates: Record<string, any>) => {
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', userId)
-      .select('*')
-      .maybeSingle();
-
-    if (error) {
-      if (isMissingProfilesTableError(error)) {
-        console.warn('Profiles table missing; skipped optional profile update.');
-      } else {
-        console.warn('Could not update optional profile data:', error.message);
-      }
-      return null;
-    }
-
-    return data;
-  } catch (error) {
-    if (isMissingProfilesTableError(error)) {
-      console.warn('Profiles table missing; skipped optional profile update.');
-    } else {
-      console.warn('Could not update optional profile data:', error);
-    }
-    return null;
-  }
+// Build a profile-shaped object from Supabase Auth user_metadata.
+// No DB query — zero network requests, zero 404s.
+// Normalises struggle_tags across all legacy key names written at signup.
+const buildProfileFromMetadata = (user: any) => {
+  if (!user) return null;
+  const meta = user?.user_metadata ?? {};
+  const tags: string[] = Array.isArray(meta.struggle_tags)
+    ? meta.struggle_tags
+    : Array.isArray(meta.struggles)
+    ? meta.struggles
+    : Array.isArray(meta.onboarding_answers)
+    ? meta.onboarding_answers
+    : [];
+  return {
+    id: user.id,
+    struggle_tags: tags,
+    username: meta.username ?? meta.full_name ?? null,
+    onboarding_completed: meta.onboarding_completed ?? false,
+  };
 };
 
 export const useUserStore = create<UserState>((set, get) => ({
@@ -169,14 +121,14 @@ export const useUserStore = create<UserState>((set, get) => ({
         return false;
       }
 
-      const profile = await fetchProfile(authUser.id);
+      const profile = buildProfileFromMetadata(authUser);
 
-      set({ 
+      set({
         user: authUser,
         session,
         profile: { ...(profile || {}), growth_tree: null },
         isVerified: true,
-        loading: false 
+        loading: false
       });
       return true;
     } catch (e) {
@@ -243,9 +195,14 @@ export const useUserStore = create<UserState>((set, get) => ({
         return { ok: false, reason: 'email_unverified' };
       }
 
-      await updateProfile(data.user.id, {
-        struggle_tags: struggles,
-        onboarding_completed: true
+      // Persist struggle_tags in Auth user_metadata so every session can
+      // read them without a DB query. Non-critical — failure doesn't block signup.
+      await supabase.auth.updateUser({
+        data: { struggle_tags: struggles, onboarding_completed: true },
+      }).catch(() => {
+        if (import.meta.env.DEV) {
+          console.warn('[userStore] Could not persist struggle_tags to user_metadata');
+        }
       });
 
       const isValid = await get().fetchUser();

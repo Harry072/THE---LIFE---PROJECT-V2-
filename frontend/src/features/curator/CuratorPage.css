@@ -166,6 +166,141 @@
   line-height: 1.7;
 }
 
+.curator-intelligence {
+  margin: 0 0 34px;
+  padding: 26px;
+  border: 1px solid rgba(46, 204, 113, 0.16);
+  border-radius: var(--r-lg);
+  background:
+    linear-gradient(135deg, rgba(12, 28, 20, 0.78), rgba(5, 10, 8, 0.64)),
+    rgba(16, 26, 20, 0.46);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(24px);
+}
+
+.curator-compass-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 22px;
+  align-items: start;
+  margin-bottom: 22px;
+}
+
+.curator-compass-header h2 {
+  margin: 5px 0 8px;
+  font-family: var(--font-display);
+  font-size: clamp(30px, 4vw, 44px);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.curator-compass-header p {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.curator-compass-signal {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.curator-compass-signal span {
+  display: block;
+  color: var(--green-bright);
+  font-family: var(--font-display);
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.curator-compass-signal p {
+  margin-top: 9px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.curator-reading-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 26px;
+  padding: 18px;
+  border: 1px solid rgba(240, 165, 0, 0.18);
+  border-radius: var(--r-md);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(240, 165, 0, 0.08), transparent 34%),
+    rgba(255, 255, 255, 0.028);
+}
+
+.curator-reading-path-copy h3 {
+  margin: 5px 0 6px;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 500;
+}
+
+.curator-reading-path-copy p:not(.curator-section-label) {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.65;
+}
+
+.curator-reading-path-steps {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.curator-reading-path-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.curator-lane-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.curator-recommendation-lane {
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.curator-lane-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+
+.curator-lane-heading h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 500;
+}
+
+.curator-lane-heading span {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.curator-lane-books {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .curator-path-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -691,6 +826,17 @@
   margin-top: 12px;
 }
 
+.curator-recommendation-reason {
+  margin: 12px 0 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(46, 204, 113, 0.14);
+  border-radius: var(--r-sm);
+  color: rgba(232, 232, 227, 0.72);
+  background: rgba(46, 204, 113, 0.045);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .curator-book-status {
   width: 30px;
   height: 30px;
@@ -919,6 +1065,10 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .curator-lane-books {
+    grid-template-columns: 1fr;
+  }
+
   .curator-hero {
     grid-template-columns: 1fr;
     min-height: 0;
@@ -961,7 +1111,9 @@
   .curator-shelf-list,
   .curator-start-here,
   .curator-detail-grid,
-  .curator-hidden-shelf {
+  .curator-hidden-shelf,
+  .curator-compass-header,
+  .curator-reading-path {
     grid-template-columns: 1fr;
   }
 
@@ -975,6 +1127,7 @@
 
   .curator-path-section,
   .curator-active-shelf,
+  .curator-intelligence,
   .curator-hidden-shelf,
   .curator-ritual-modal {
     padding: 20px;
@@ -990,5 +1143,9 @@
   .curator-link-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .curator-reading-path-actions {
+    width: 100%;
   }
 }

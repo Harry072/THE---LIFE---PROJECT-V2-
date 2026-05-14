@@ -82,6 +82,7 @@ export function useEnsureTodayLoopTasks({
       !user?.id ||
       !hasFetched ||
       loading ||
+      generating ||
       error ||
       existingCoreTasks ||
       typeof generateTasks !== "function"
@@ -90,6 +91,7 @@ export function useEnsureTodayLoopTasks({
         noUserId: !user?.id,
         notFetched: !hasFetched,
         loading,
+        generating,
         error,
         existingCoreTasks,
         missingFn: typeof generateTasks !== "function"
@@ -136,16 +138,20 @@ export function useEnsureTodayLoopTasks({
 
       try {
         console.debug("[AutoLoopDebug] Calling generateTasks({ auto: true, contextStruggles })");
-        const generatedTasks = await generateTasks({ 
+        const generatedTasks = await generateTasks({
           auto: true,
           contextStruggles
         });
         console.debug("[AutoLoopDebug] generation complete. Tasks count:", generatedTasks?.length);
         if (isMounted.current && !hasTodayCoreTasks(generatedTasks)) {
+          // Clear guard so the next page refresh can retry — backend may have been temporarily unavailable.
+          storage?.removeItem(guardKey);
           setAutoGenerationError(AUTO_GENERATION_ERROR);
         }
       } catch (generationError) {
         console.warn("[AutoLoopDebug] Automatic Loop task preparation failed:", generationError);
+        // Clear guard so the next page refresh can retry — backend may have been temporarily unavailable.
+        storage?.removeItem(guardKey);
         if (isMounted.current) {
           setAutoGenerationError(AUTO_GENERATION_ERROR);
         }

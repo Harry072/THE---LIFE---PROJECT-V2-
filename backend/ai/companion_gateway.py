@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import os
 from time import perf_counter
 
+from ai.companion_knowledge import detect_companion_intent
 from ai.fallbacks import generate_life_companion_fallback
 from ai.groq_companion_gateway import (
     GroqCompanionProviderError,
@@ -205,14 +206,14 @@ def _call_openai(prompt: str, timeout_seconds: int) -> str:
             model=model,
             input=prompt,
             text={"format": {"type": "json_object"}},
-            max_output_tokens=450,
+            max_output_tokens=600,
             store=False,
         )
     except (TypeError, BadRequestError):
         response = client.responses.create(
             model=model,
             input=prompt,
-            max_output_tokens=450,
+            max_output_tokens=600,
             store=False,
         )
     text = extract_openai_output_text(response)
@@ -296,6 +297,8 @@ def attempt_provider(
     *,
     prompt: str,
     prompt_version: str,
+    expected_intent: str | None = None,
+    user_message: str | None = None,
 ) -> tuple[dict | None, CompanionProviderAttempt]:
     attempt = CompanionProviderAttempt(provider=provider)
     try:
@@ -324,9 +327,15 @@ def attempt_provider(
         attempt.output_present = bool(provider_response.text.strip())
         validation_started = perf_counter()
         try:
-            companion_response = validate_life_companion_response(provider_response.text)
+            companion_response = validate_life_companion_response(
+                provider_response.text,
+                expected_intent=expected_intent,
+                user_message=user_message,
+            )
         finally:
             attempt.validation_ms = int((perf_counter() - validation_started) * 1000)
+        if expected_intent:
+            companion_response.setdefault("intent", expected_intent)
         attempt.validation_pass = True
         return companion_response, attempt
     except LifeCompanionValidationError as error:
@@ -394,10 +403,12 @@ def generate_life_companion_response(
     mode: str,
     context: dict | None,
     user_message: str,
+    knowledge_chunks: list[dict] | None = None,
 ) -> CompanionGatewayResult:
     started = perf_counter()
     provider_order = get_companion_provider_order()
     attempts: list[CompanionProviderAttempt] = []
+    expected_intent = detect_companion_intent(user_message, mode)
 
     for provider in provider_order:
         if provider == PROVIDER_GROQ and attempts:
@@ -411,6 +422,8 @@ def generate_life_companion_response(
             provider,
             prompt=prompt,
             prompt_version=prompt_version,
+            expected_intent=expected_intent,
+            user_message=user_message,
         )
         attempts.append(attempt)
         if companion_response:
@@ -440,7 +453,10 @@ def generate_life_companion_response(
         mode,
         context,
         user_message=user_message,
+        knowledge_chunks=knowledge_chunks,
     )
+    if expected_intent:
+        fallback_response.setdefault("intent", expected_intent)
     latency_ms = int((perf_counter() - started) * 1000)
     validation_failed = any(attempt.validation_failure_reason for attempt in attempts)
     first_failure = next((attempt.failure_class for attempt in attempts if attempt.failure_class), None)

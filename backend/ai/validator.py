@@ -42,6 +42,51 @@ COMPANION_ACTION_ROUTES = {
     "none": None,
 }
 
+COMPANION_REPLY_FORMATS = {
+    "conversation",
+    "structured_plan",
+    "grounding",
+    "moral_reflection",
+    "quote",
+    "physical_action",
+    "app_guidance",
+    "book_recommendation",
+    "safety",
+}
+
+BOOK_RECOMMENDATION_INTENTS = {
+    "philosophy_novel_recommendation",
+    "novel_recommendation",
+    "self_growth_book_request",
+    "book_recommendation",
+    "reading_request",
+    "curator_request",
+    "reading_or_learning",
+}
+
+_DEDUP_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "your", "you", "one", "this", "is", "it", "be", "do",
+    "that", "by", "as", "from",
+}
+
+
+def _significant_words(text: str) -> set[str]:
+    return {
+        w for w in re.findall(r"[a-z]{3,}", str(text or "").lower())
+        if w not in _DEDUP_STOP_WORDS
+    }
+
+
+def _word_overlap_ratio(a: str, b: str) -> float:
+    wa, wb = _significant_words(a), _significant_words(b)
+    if len(wa) < 3 or len(wb) < 3:
+        return 0.0
+    inter = wa & wb
+    union = wa | wb
+    return len(inter) / len(union) if union else 0.0
+
+
 UNSAFE_PATTERNS = [
     r"\bdiagnos(e|is|ed|ing)\b",
     r"\bcure\b",
@@ -158,6 +203,8 @@ COMPANION_UNSAFE_PATTERNS = [
     r"\bservice role\b",
     r"\bbackend logic\b",
     r"\bprivate data\b",
+    r"\bguarantee(s|d)?\b",
+    r"\bwill change your life\b",
 ]
 
 CRISIS_PATTERNS = [
@@ -391,7 +438,173 @@ def validate_life_companion_action(action: object) -> dict:
     }
 
 
-def validate_life_companion_response(raw_text: str) -> dict:
+def user_rejects_reflection(message: str | None) -> bool:
+    cleaned = str(message or "").lower().replace("’", "'")
+    return has_pattern(
+        cleaned,
+        [
+            r"\bno reflection\b",
+            r"\bno journaling?\b",
+            r"\bdo not (send|route) me (to )?reflection\b",
+            r"\bdon't (send|route) me (to )?reflection\b",
+            r"\bdont (send|route) me (to )?reflection\b",
+            r"\bdo not need reflection\b",
+            r"\bdon't need reflection\b",
+            r"\bdont need reflection\b",
+        ],
+    )
+
+
+def validate_companion_sections(sections: object) -> list[dict]:
+    if sections is None:
+        return []
+    if not isinstance(sections, list):
+        raise LifeCompanionValidationError("sections_not_array")
+    if len(sections) > 5:
+        raise LifeCompanionValidationError("too_many_sections")
+    validated = []
+    for i, section in enumerate(sections):
+        if not isinstance(section, dict):
+            raise LifeCompanionValidationError(f"section_{i}_not_object")
+        result: dict = {}
+        raw_title = section.get("title")
+        if raw_title is not None:
+            if not isinstance(raw_title, str):
+                raise LifeCompanionValidationError(f"section_{i}_title_not_string")
+            title = " ".join(raw_title.strip().split())
+            if len(title) > 60:
+                raise LifeCompanionValidationError(f"section_{i}_title_too_long")
+            if has_pattern(title, COMPANION_UNSAFE_PATTERNS):
+                raise LifeCompanionValidationError(f"section_{i}_unsafe_title")
+            result["title"] = title
+        raw_items = section.get("items")
+        raw_body = section.get("body")
+        if raw_items is not None:
+            if not isinstance(raw_items, list):
+                raise LifeCompanionValidationError(f"section_{i}_items_not_array")
+            if len(raw_items) > 8:
+                raise LifeCompanionValidationError(f"section_{i}_too_many_items")
+            clean_items = []
+            for j, item in enumerate(raw_items):
+                if not isinstance(item, str):
+                    raise LifeCompanionValidationError(f"section_{i}_item_{j}_not_string")
+                cleaned = " ".join(item.strip().split())
+                if len(cleaned) > 120:
+                    raise LifeCompanionValidationError(f"section_{i}_item_{j}_too_long")
+                if has_pattern(cleaned, COMPANION_UNSAFE_PATTERNS):
+                    raise LifeCompanionValidationError(f"section_{i}_item_{j}_unsafe")
+                clean_items.append(cleaned)
+            result["items"] = clean_items
+        elif raw_body is not None:
+            if not isinstance(raw_body, str):
+                raise LifeCompanionValidationError(f"section_{i}_body_not_string")
+            body = " ".join(raw_body.strip().split())
+            if len(body) > 400:
+                raise LifeCompanionValidationError(f"section_{i}_body_too_long")
+            if has_pattern(body, COMPANION_UNSAFE_PATTERNS):
+                raise LifeCompanionValidationError(f"section_{i}_unsafe_body")
+            result["body"] = body
+        validated.append(result)
+    return validated
+
+
+def _sections_contain(sections: list[dict], keyword: str) -> bool:
+    kw = keyword.lower()
+    for section in sections:
+        title = str(section.get("title") or "").lower()
+        body = str(section.get("body") or "").lower()
+        items = section.get("items") or []
+        if kw in title or kw in body:
+            return True
+        if any(kw in str(item).lower() for item in items):
+            return True
+    return False
+
+
+def validate_direct_output_contract(result: dict, expected_intent: str | None = None) -> None:
+    intent = str(expected_intent or result.get("intent") or "").strip().lower()
+    sections = result.get("sections") or []
+
+    if intent == "study_gym_routine":
+        has_study = _sections_contain(sections, "study") or "study" in str(result.get("reply", "")).lower()
+        has_gym = _sections_contain(sections, "gym") or "gym" in str(result.get("reply", "")).lower()
+        if not has_study:
+            raise LifeCompanionValidationError("study_gym_routine_missing_study_content")
+        if not has_gym:
+            raise LifeCompanionValidationError("study_gym_routine_missing_gym_content")
+
+    if intent == "quote_request":
+        reply = str(result.get("reply") or "")
+        has_quote = (
+            '"' in reply
+            or "“" in reply
+            or "‘" in reply
+            or _sections_contain(sections, "“")
+            or any('"' in str(s.get("body") or "") for s in sections)
+        )
+        if not has_quote:
+            raise LifeCompanionValidationError("quote_request_missing_quote")
+
+    if intent == "physical_action":
+        reply = str(result.get("reply") or "").lower()
+        action_words = ["stand", "walk", "drink", "breathe", "stretch", "put", "move", "sit", "close", "open", "write"]
+        has_action = any(word in reply for word in action_words) or any(
+            any(word in str(item).lower() for word in action_words)
+            for section in sections
+            for item in (section.get("items") or [])
+        )
+        if not has_action:
+            raise LifeCompanionValidationError("physical_action_missing_action")
+
+
+def validate_book_recommendation_contract(result: dict, expected_intent: str | None = None) -> None:
+    suggested_action = result.get("suggested_action") or {}
+    action_type = suggested_action.get("type")
+    if action_type == "loop":
+        raise LifeCompanionValidationError("book_intent_loop_action")
+    if action_type not in {"curator", "none"}:
+        raise LifeCompanionValidationError("book_intent_invalid_action")
+
+    if result.get("reply_format") != "book_recommendation":
+        raise LifeCompanionValidationError("book_recommendation_invalid_format")
+
+    sections = result.get("sections") or []
+    if not sections:
+        raise LifeCompanionValidationError("book_recommendation_missing_sections")
+
+    section_titles = {
+        str(section.get("title") or "").strip().lower()
+        for section in sections
+        if section.get("title")
+    }
+    required_titles = {"start here", "if you want deeper", "best first pick"}
+    missing_titles = required_titles - section_titles
+    if missing_titles:
+        raise LifeCompanionValidationError("book_recommendation_missing_required_sections")
+
+    item_count = 0
+    item_section_count = 0
+    for section in sections:
+        items = section.get("items")
+        if isinstance(items, list) and items:
+            item_section_count += 1
+            item_count += len(items)
+
+    if item_section_count == 0:
+        raise LifeCompanionValidationError("book_recommendation_missing_items")
+    if item_count > 10:
+        raise LifeCompanionValidationError("book_recommendation_too_many_items")
+
+    response_intent = result.get("intent")
+    if expected_intent and response_intent and response_intent != expected_intent:
+        raise LifeCompanionValidationError("book_recommendation_intent_mismatch")
+
+
+def validate_life_companion_response(
+    raw_text: str,
+    expected_intent: str | None = None,
+    user_message: str | None = None,
+) -> dict:
     payload = parse_life_companion_json(raw_text)
     if isinstance(payload.get("companion_response"), dict):
         payload = payload["companion_response"]
@@ -405,6 +618,8 @@ def validate_life_companion_response(raw_text: str) -> dict:
         raise LifeCompanionValidationError("too_many_sentences_reply")
 
     suggested_action = validate_life_companion_action(payload.get("suggested_action"))
+    if suggested_action.get("type") == "reflection" and user_rejects_reflection(user_message):
+        raise LifeCompanionValidationError("reflection_rejected_by_user")
     tone = str(payload.get("tone") or "").strip().lower()
     if tone not in COMPANION_TONES:
         raise LifeCompanionValidationError("invalid_tone")
@@ -425,7 +640,7 @@ def validate_life_companion_response(raw_text: str) -> dict:
             max_chars=260,
         )
 
-    return {
+    result = {
         "reply": ensure_terminal_punctuation(reply),
         "suggested_action": suggested_action,
         "tone": tone,
@@ -434,6 +649,34 @@ def validate_life_companion_response(raw_text: str) -> dict:
             "message": safety_message,
         },
     }
+
+    raw_reply_format = payload.get("reply_format")
+    if raw_reply_format is not None:
+        fmt = str(raw_reply_format or "").strip().lower()
+        if fmt in COMPANION_REPLY_FORMATS:
+            result["reply_format"] = fmt
+        else:
+            raise LifeCompanionValidationError("invalid_reply_format")
+
+    raw_sections = payload.get("sections")
+    if raw_sections is not None:
+        result["sections"] = validate_companion_sections(raw_sections)
+
+    raw_intent = payload.get("intent")
+    if raw_intent is not None:
+        result["intent"] = str(raw_intent or "").strip().lower()[:64]
+    elif expected_intent:
+        result["intent"] = expected_intent
+
+    normalized_expected_intent = str(expected_intent or "").strip().lower()
+    if normalized_expected_intent in BOOK_RECOMMENDATION_INTENTS or result.get("reply_format") == "book_recommendation":
+        validate_book_recommendation_contract(result, normalized_expected_intent or None)
+
+    _direct_output_intents = {"study_gym_routine", "quote_request", "physical_action"}
+    if normalized_expected_intent in _direct_output_intents:
+        validate_direct_output_contract(result, normalized_expected_intent)
+
+    return result
 
 
 def normalize_title(value: str) -> str:
@@ -501,6 +744,11 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
         if normalize_title(title)
     }
 
+    recent_fingerprints = list((context or {}).get("recent_task_fingerprints") or [])
+    recent_title_strings = [
+        str(fp.get("title") or "") for fp in recent_fingerprints if fp.get("title")
+    ]
+
     selected: dict[str, dict] = {}
     for item in payload:
         if not isinstance(item, dict):
@@ -525,6 +773,10 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
             raise TaskValidationError("missing_title")
         if normalize_title(title) in recent_titles_to_avoid:
             raise TaskValidationError("repeated_recent_title")
+        _OVERLAP_THRESHOLD = 0.70
+        for _recent_t in recent_title_strings:
+            if _word_overlap_ratio(title, _recent_t) >= _OVERLAP_THRESHOLD:
+                raise TaskValidationError("similar_recent_title")
 
         action_source = item.get("action_step") or item.get("easier_version") or ""
         if isinstance(item.get("action_steps"), list):
@@ -546,6 +798,10 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
         )
 
         duration_minutes = parse_duration(item, context)
+        if not str(item.get("personalization_reason") or "").strip():
+            print(
+                f"AI_TASK_GENERATION missing_personalization_reason=true category={category}"
+            )
         selected[category] = {
             **item,
             "category": category,
@@ -662,6 +918,10 @@ def normalize_task_for_insert(
     local_date: str,
     index: int,
     ai_generated: bool,
+    generation_provider: str | None = None,
+    generation_model: str | None = None,
+    generation_prompt_version: str | None = None,
+    generation_failure_reason: str | None = None,
 ) -> dict:
     category = normalize_category(task.get("category"))
     title = str(task.get("title") or f"Meaningful Task {index + 1}").strip()
@@ -700,6 +960,10 @@ def normalize_task_for_insert(
         14,
     )
 
+    _valid_frameworks = {"ikigai", "morita", "logotherapy", "flow", "symbol"}
+    _raw_framework = str(task.get("framework_key") or "").strip().lower()
+    framework_key = _raw_framework if _raw_framework in _valid_frameworks else None
+
     return {
         "user_id": user_id,
         "for_date": local_date,
@@ -714,6 +978,10 @@ def normalize_task_for_insert(
         "inline_quote": supportive_line or None,
         "sort_order": index + 1,
         "ai_generated": ai_generated,
+        "generation_provider": generation_provider,
+        "generation_model": generation_model,
+        "generation_prompt_version": generation_prompt_version,
+        "generation_failure_reason": generation_failure_reason,
         "is_optional": False,
         "done": False,
         "completion_state": "pending",
@@ -721,4 +989,5 @@ def normalize_task_for_insert(
         "success_condition": success_condition or None,
         "smaller_version": smaller_version or None,
         "post_completion_question": post_completion_question or None,
+        "framework_key": framework_key,
     }

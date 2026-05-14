@@ -43,6 +43,32 @@ export default function ProgressPage() {
           margin: "0 auto",
           padding: "8px 32px 48px",
         }}>
+          <header style={{
+            marginBottom: 22,
+            animation: "fadeUp 0.6s ease 0.1s both",
+          }}>
+            <p style={{
+              margin: "0 0 8px",
+              color: "var(--text-faint)",
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: 2.4,
+              textTransform: "uppercase",
+            }}>
+              Growth Tree
+            </p>
+            <h1 style={{
+              margin: 0,
+              color: "var(--text)",
+              fontFamily: "var(--font-display)",
+              fontSize: "clamp(34px, 6vw, 52px)",
+              fontWeight: 500,
+              lineHeight: 1.05,
+            }}>
+              Your consistency made visible.
+            </h1>
+          </header>
+
           {/* Full-size tree */}
           <div style={{
             animation: "fadeUp 0.6s ease 0.15s both",

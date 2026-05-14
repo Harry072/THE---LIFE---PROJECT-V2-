@@ -142,6 +142,7 @@ export default function LifeCompanionPage() {
           <div>
             <p>Life Companion</p>
             <h1>A quiet place to speak, then move.</h1>
+            <span className="companion-purpose">Talk, plan, reset, or choose the next step.</span>
           </div>
         </header>
 
@@ -277,6 +278,15 @@ export default function LifeCompanionPage() {
           line-height: 1.02;
           letter-spacing: 0;
           max-width: 680px;
+        }
+
+        .companion-purpose {
+          display: block;
+          margin-top: 12px;
+          max-width: 520px;
+          color: rgba(232, 232, 227, 0.58);
+          font-size: 14px;
+          line-height: 1.5;
         }
 
         .companion-back,
@@ -594,20 +604,20 @@ export default function LifeCompanionPage() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 14px;
+          gap: 12px;
           margin-top: 14px;
-          padding: 14px;
-          border: 1px solid rgba(240, 165, 0, 0.24);
-          border-radius: 14px;
-          background: rgba(240, 165, 0, 0.08);
+          padding: 10px 12px;
+          border: 1px solid rgba(240, 165, 0, 0.18);
+          border-radius: 12px;
+          background: rgba(240, 165, 0, 0.06);
         }
 
         .companion-action-card h3 {
           margin: 0;
           font-family: var(--font-display);
-          font-size: 22px;
+          font-size: 16px;
           font-weight: 500;
-          line-height: 1.1;
+          line-height: 1.2;
         }
 
         .companion-action-card button,

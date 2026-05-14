@@ -66,6 +66,17 @@ export default function HeroSection({ user, profile }) {
           </span>
         </h1>
         <p style={{
+          margin: "16px 0 4px",
+          fontSize: 10,
+          fontWeight: 500,
+          letterSpacing: 2.5,
+          textTransform: "uppercase",
+          color: "var(--text-faint)",
+          fontFamily: "var(--font-body)",
+        }}>
+          Today&apos;s direction
+        </p>
+        <p style={{
           margin: 0, fontSize: 15,
           color: "var(--text-dim)",
           fontFamily: "var(--font-body)",

@@ -307,7 +307,7 @@ export default function ReflectionPage() {
           <p style={styles.dateLabel}>{formatDate(today)}</p>
           <h1 style={styles.title}>Night Reflection</h1>
           <p style={styles.subtitle}>
-            You do not need perfect words. Begin with what stayed.
+            Name what is happening without turning it into a verdict.
           </p>
         </header>
 

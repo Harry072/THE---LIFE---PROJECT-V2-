@@ -142,7 +142,7 @@ def create_groq_chat_completion(client, *, model: str, prompt: str, json_mode: b
     kwargs = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 450,
+        "max_tokens": 600,
         "temperature": 0.7,
     }
     if json_mode:

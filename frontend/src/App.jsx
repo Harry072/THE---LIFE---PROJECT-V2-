@@ -13,6 +13,7 @@ import ProfilePage from './pages/ProfilePage';
 import TheLoopPage from './pages/TheLoopPage';
 import CuratorPage from './features/curator/CuratorPage';
 import LifeCompanionPage from './pages/LifeCompanionPage';
+import MobileBottomNav from './components/MobileBottomNav';
 
 const ProtectedRoute = ({ children }) => {
   const user = useUserStore(state => state.user);
@@ -77,6 +78,7 @@ function AppRoutes() {
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      {isAuthenticated && <MobileBottomNav />}
     </>
   );
 }

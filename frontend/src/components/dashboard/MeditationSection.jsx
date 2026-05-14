@@ -103,16 +103,27 @@ export default function MeditationSection() {
       <div style={{
         display: "flex",
         justifyContent: "space-between",
+        alignItems: "flex-start",
+        gap: 16,
         marginBottom: 14,
       }}>
-        <h3 style={{
-          margin: 0, fontSize: 11, fontWeight: 500,
-          letterSpacing: 2.5,
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}>
-          Meditation &amp; Music
-        </h3>
+        <div>
+          <h3 style={{
+            margin: 0, fontSize: 11, fontWeight: 500,
+            letterSpacing: 2.5,
+            textTransform: "uppercase",
+            color: "var(--text-faint)",
+          }}>
+            Reset Space &amp; Music
+          </h3>
+          <p style={{
+            margin: "6px 0 0",
+            color: "var(--text-dim)",
+            fontSize: 13,
+          }}>
+            Use sound to return to yourself.
+          </p>
+        </div>
         <button
           onClick={() => navigate("/meditation")}
           style={{

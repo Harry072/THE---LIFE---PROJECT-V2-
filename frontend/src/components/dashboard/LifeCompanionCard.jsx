@@ -11,7 +11,7 @@ export default function LifeCompanionCard() {
         <div>
           <p>Life Companion</p>
           <h3>Speak, understand, then take one useful step.</h3>
-          <span>Bounded guidance from your Loop, Mirror, Reflection, and Reset Space.</span>
+          <span>Talk, plan, reset, or choose the next step.</span>
         </div>
         <button type="button" onClick={() => navigate("/companion")}>
           <Icon name="sparkle" size={16} />

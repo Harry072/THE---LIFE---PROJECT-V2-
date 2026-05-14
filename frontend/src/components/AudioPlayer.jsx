@@ -15,8 +15,10 @@ export default function AudioPlayer({
   onComplete,
   onSaveCheckin,
   onReturn,
+  onReflect,
 }) {
   const audioRef = useRef(null);
+  const completedDurationRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(() => session.duration * 60);
   const [progress, setProgress] = useState(0);
@@ -45,6 +47,7 @@ export default function AudioPlayer({
     audio.loop = isAmbientScript;
     audio.src = playbackSrc;
     audio.load();
+    completedDurationRef.current = null;
 
     const handleLoaded = () => {
       setDuration(
@@ -65,6 +68,7 @@ export default function AudioPlayer({
     };
     const handleEnded = () => {
       if (isAmbientScript) return;
+      completedDurationRef.current = Math.round(audio.duration || targetDuration);
       setIsPlaying(false);
       setProgress(audio.duration || targetDuration);
       setShowCheckin(true);
@@ -96,6 +100,7 @@ export default function AudioPlayer({
           if (audio) {
             audio.pause();
           }
+          completedDurationRef.current = Math.round(targetDuration);
           setIsPlaying(false);
           setShowCheckin(true);
           onComplete(session);
@@ -132,6 +137,34 @@ export default function AudioPlayer({
     }
   };
 
+  const handleEndEarly = () => {
+    const audio = audioRef.current;
+    const elapsedSeconds = isAmbientScript
+      ? progress
+      : audio?.currentTime || progress;
+    completedDurationRef.current = Math.round(Math.max(0, elapsedSeconds));
+    if (audio) audio.pause();
+    setIsPlaying(false);
+    setShowCheckin(true);
+    onComplete(session);
+  };
+
+  const handleRequestClose = () => {
+    const audio = audioRef.current;
+    const elapsedSeconds = isAmbientScript
+      ? progress
+      : audio?.currentTime || progress;
+    if (!showCheckin && !checkinSaved && elapsedSeconds > 0) {
+      completedDurationRef.current = Math.round(Math.max(0, elapsedSeconds));
+      if (audio) audio.pause();
+      setIsPlaying(false);
+      setShowCheckin(true);
+      onComplete(session);
+      return;
+    }
+    onClose();
+  };
+
   const handleSubmitCheckin = async () => {
     if (!selectedFeeling || !selectedReflectionTag || isSavingCheckin) return;
     setIsSavingCheckin(true);
@@ -141,11 +174,11 @@ export default function AudioPlayer({
         session,
         moodAfter: selectedFeeling,
         reflectionTag: selectedReflectionTag,
-        durationSeconds: Math.round(progress || targetDuration),
+        durationSeconds: completedDurationRef.current ?? Math.round(progress || targetDuration),
       });
       setCheckinSaved(true);
-    } catch (requestError) {
-      setCheckinError(requestError?.message || "Could not save this reset signal yet.");
+    } catch {
+      setCheckinError("Couldn’t save this signal, but the reset still counts.");
     } finally {
       setIsSavingCheckin(false);
     }
@@ -156,9 +189,9 @@ export default function AudioPlayer({
 
   return (
     <div className="reset-player-overlay" role="dialog" aria-modal="true">
-      <div className="reset-player-backdrop" onClick={onClose} />
+      <div className="reset-player-backdrop" onClick={handleRequestClose} />
       <section className="reset-player-panel">
-        <button type="button" className="reset-player-close" onClick={onClose} aria-label="Close player">
+        <button type="button" className="reset-player-close" onClick={handleRequestClose} aria-label="Close player">
           <X size={18} aria-hidden="true" />
         </button>
 
@@ -173,6 +206,7 @@ export default function AudioPlayer({
             isSaved={checkinSaved}
             saveError={checkinError}
             onReturn={onReturn}
+            onReflect={onReflect}
             onClose={onClose}
           />
         ) : (
@@ -196,27 +230,39 @@ export default function AudioPlayer({
             {error ? (
               <p className="reset-audio-error">{error}</p>
             ) : (
-              <div className="reset-player-controls">
-                <button type="button" className="reset-play-button" onClick={togglePlayback}>
-                  {isPlaying ? <Pause size={24} aria-hidden="true" /> : <Play size={24} aria-hidden="true" />}
-                </button>
-                <div className="reset-progress-wrap">
-                  <div className="reset-time-row">
-                    <span>{formatTime(progress)}</span>
-                    <span>-{formatTime(remaining)}</span>
-                  </div>
-                  <div className="reset-range-wrap" style={{ "--progress": `${percent}%` }}>
-                    <input
-                      type="range"
-                      min="0"
-                      max={duration || 0}
-                      value={Math.min(progress, duration || 0)}
-                      onChange={handleSeek}
-                      aria-label="Session progress"
-                    />
+              <>
+                <div className="reset-player-controls">
+                  <button type="button" className="reset-play-button" onClick={togglePlayback}>
+                    {isPlaying ? <Pause size={24} aria-hidden="true" /> : <Play size={24} aria-hidden="true" />}
+                  </button>
+                  <div className="reset-progress-wrap">
+                    <div className="reset-time-row">
+                      <span>{formatTime(progress)}</span>
+                      <span>-{formatTime(remaining)}</span>
+                    </div>
+                    <div className="reset-range-wrap" style={{ "--progress": `${percent}%` }}>
+                      <input
+                        type="range"
+                        min="0"
+                        max={duration || 0}
+                        value={Math.min(progress, duration || 0)}
+                        onChange={handleSeek}
+                        aria-label="Session progress"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+                {progress > 0 ? (
+                  <button
+                    type="button"
+                    className="reset-quiet-action reset-end-early"
+                    onClick={handleEndEarly}
+                    style={{ marginTop: "0.75rem", display: "flex", width: "100%", justifyContent: "center" }}
+                  >
+                    I'm done with this session
+                  </button>
+                ) : null}
+              </>
             )}
 
             <audio ref={audioRef} preload="metadata" />

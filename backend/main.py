@@ -1,3 +1,5 @@
+import json as _json
+import re as _re
 from pathlib import Path
 from datetime import datetime
 from time import perf_counter
@@ -9,7 +11,8 @@ from pydantic import BaseModel, Field
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
-import google.generativeai as genai
+import google.generativeai as legacy_genai
+from google import genai as google_genai
 
 from ai.context import (
     ALLOWED_LOOP_CATEGORIES,
@@ -21,6 +24,7 @@ from ai.context import (
 )
 from ai.companion_knowledge import (
     detect_companion_intent,
+    extract_request_slots,
     retrieve_companion_knowledge,
 )
 from ai.fallbacks import (
@@ -29,18 +33,30 @@ from ai.fallbacks import (
     generate_insufficient_weekly_mirror,
     generate_life_companion_crisis_response,
     generate_life_companion_fallback,
+    get_execution_engine_fallback,
 )
 from ai.companion_gateway import (
     generate_life_companion_response,
 )
-from ai.gateway import AIGenerationError, generate_with_gemini
+from ai.gateway import (
+    AIGenerationError,
+    build_gemini_diagnosis,
+    generate_loop_tasks_with_gemini,
+    generate_with_gemini,
+)
 from ai.prompts import (
     LOOP_TASKS_PROMPT_VERSION,
     LIFE_COMPANION_PROMPT_VERSION,
     WEEKLY_MIRROR_PROMPT_VERSION,
+    EXECUTION_ENGINE_PROMPT_VERSION,
     build_life_companion_prompt,
     build_loop_tasks_prompt,
     build_weekly_mirror_prompt,
+    build_execution_engine_prompt,
+)
+from ai.groq_companion_gateway import (
+    GroqCompanionProviderError,
+    generate_life_companion_with_groq,
 )
 from ai.validator import (
     LifeCompanionValidationError,
@@ -109,11 +125,19 @@ supabase: Client = create_client(supabase_url, supabase_key)
 # Initialize Gemini
 gemini_model_name = get_env_value("GEMINI_MODEL") or "gemini-2.5-flash"
 gemini_api_key = get_env_value("GEMINI_API_KEY")
+google_api_key = get_env_value("GOOGLE_API_KEY")
+effective_gemini_api_key = google_api_key or gemini_api_key
+effective_gemini_key_source = (
+    "GOOGLE_API_KEY"
+    if google_api_key
+    else ("GEMINI_API_KEY" if gemini_api_key else "none")
+)
 gemini_model = None
+loop_gemini_client = None
 
 if gemini_api_key:
-    genai.configure(api_key=gemini_api_key)
-    gemini_model = genai.GenerativeModel(gemini_model_name)
+    legacy_genai.configure(api_key=gemini_api_key)
+    gemini_model = legacy_genai.GenerativeModel(gemini_model_name)
 else:
     print(
         "AI_TASK_GENERATION "
@@ -121,13 +145,98 @@ else:
         "reason=missing_gemini_api_key"
     )
 
+if effective_gemini_api_key:
+    loop_gemini_client = google_genai.Client(api_key=effective_gemini_api_key)
+    if google_api_key and gemini_api_key:
+        print(
+            "AI_TASK_GENERATION "
+            "key_precedence=GOOGLE_API_KEY "
+            "gemini_api_key_present=true google_api_key_present=true"
+        )
+else:
+    print(
+        "AI_TASK_GENERATION "
+        "provider_unavailable=true provider=google_genai "
+        "reason=missing_gemini_or_google_api_key"
+    )
+
 # 2. SCHEMA FIX: Receive the exact identity and date from React
+RECALIBRATE_TAG_OVERRIDES: dict[str, dict] = {
+    "deep_work": {
+        "context_note": (
+            "User wants deep, focused cognitive work today. "
+            "Prioritize the action category with a 25–45 min high-focus task requiring full presence. "
+            "Avoid light or gentle tasks. All three tasks should demand intentional effort."
+        ),
+        "adaptation_mode": "stretch_slightly",
+        "suggested_intensity": "deeper",
+    },
+    "mental_reset": {
+        "context_note": (
+            "User needs lighter, restorative tasks that lower mental volume without adding pressure. "
+            "Prioritize gentle awareness. Avoid heavy reading, complex planning, or demanding effort. "
+            "Tasks should feel like relief, not obligation."
+        ),
+        "adaptation_mode": "simplify",
+        "suggested_intensity": "gentle",
+    },
+    "physical_action": {
+        "context_note": (
+            "User wants to move their body and take real-world physical action. "
+            "Prioritize movement: walks, stretches, environment changes, hands-on work. "
+            "Reduce screen-based suggestions. At least two tasks should involve the body or physical space."
+        ),
+        "adaptation_mode": "steady",
+        "suggested_intensity": "normal",
+    },
+}
+
+
 class TaskRequest(BaseModel):
     user_id: str
     local_date: str
     struggles: list[str] = Field(default_factory=list)
     current_streak: int = 0
     regenerate: bool = False
+    recalibrate_tag: str | None = None
+    allow_safe_fallback: bool = False
+
+
+ALLOWED_PAIN_POINTS: set[str] = {
+    "I can't stop scrolling",
+    "I feel lost",
+    "I overthink everything",
+    "I have no motivation",
+    "I can't sleep",
+    "I feel empty inside",
+    "I keep starting and quitting",
+    "I don't know who I am",
+    "I feel completely alone",
+}
+
+LOOP_TASK_OPTIONAL_INSERT_COLUMNS: set[str] = {
+    "detail_title",
+    "detail_description",
+    "inline_quote",
+    "generation_provider",
+    "generation_model",
+    "generation_prompt_version",
+    "generation_failure_reason",
+    "completion_state",
+    "difficulty_level",
+    "success_condition",
+    "smaller_version",
+    "post_completion_question",
+    "framework_key",
+}
+_loop_task_missing_optional_insert_columns: set[str] | None = None
+
+
+class ExecutionEngineRequest(BaseModel):
+    user_id: str
+    pain_point: str
+    completed_tasks_count: int = Field(default=0, ge=0)
+    recent_tasks: list[str] = Field(default_factory=list)
 
 
 class WeeklySynthesisRequest(BaseModel):
@@ -160,12 +269,15 @@ class LoopTaskFeedbackRequest(BaseModel):
 class ResetSessionMetadataRequest(BaseModel):
     user_id: str | None = None
     session_id: str | None = None
+    session_title: str | None = None
     session_type: str | None = None
     session_category: str | None = None
     reset_need: str | None = None
     duration_seconds: int | None = None
     mood_after: str | None = None
+    mood_after_reset: str | None = None
     reflection_tag: str | None = None
+    reset_reflection_tag: str | None = None
 
 
 class CuratorInteractionRequest(BaseModel):
@@ -273,6 +385,7 @@ def log_generation_event(
     latency_ms: int | None = None,
     validation_failure_reason: str | None = None,
     error_reason: str | None = None,
+    diagnosis: dict | None = None,
     context: dict | None = None,
 ) -> None:
     context_used = ",".join((context or {}).get("context_used") or []) or "none"
@@ -280,6 +393,10 @@ def log_generation_event(
     completion_pattern = (context or {}).get("completion_pattern") or "n/a"
     suggested_intensity = (context or {}).get("suggested_intensity") or "n/a"
     latest_mood_present = bool((context or {}).get("latest_mood"))
+    diagnosis_reason = (diagnosis or {}).get("reason") or "none"
+    effective_key_source = (diagnosis or {}).get("effective_key_source") or effective_gemini_key_source
+    gemini_key_present = (diagnosis or {}).get("gemini_api_key_present")
+    google_key_present = (diagnosis or {}).get("google_api_key_present")
     print(
         "AI_TASK_GENERATION "
         f"status={status} "
@@ -292,16 +409,28 @@ def log_generation_event(
         f"latest_mood_present={latest_mood_present} "
         f"latency_ms={latency_ms if latency_ms is not None else 'n/a'} "
         f"validation_failure_reason={validation_failure_reason or 'none'} "
-        f"error_reason={error_reason or 'none'}"
+        f"error_reason={error_reason or 'none'} "
+        f"diagnosis_reason={diagnosis_reason} "
+        f"effective_key_source={effective_key_source} "
+        f"gemini_api_key_present={gemini_key_present if gemini_key_present is not None else bool(gemini_api_key)} "
+        f"google_api_key_present={google_key_present if google_key_present is not None else bool(google_api_key)}"
     )
 
 
-def build_response_meta(context: dict | None = None, *, cached: bool = False) -> dict:
-    return {
+def build_response_meta(
+    context: dict | None = None,
+    *,
+    cached: bool = False,
+    extra: dict | None = None,
+) -> dict:
+    meta = {
         "prompt_version": LOOP_TASKS_PROMPT_VERSION,
         "personalization_level": "lite",
         "context_used": ["cache"] if cached else (context or {}).get("context_used", []),
     }
+    if extra:
+        meta.update(extra)
+    return meta
 
 
 def build_task_response(
@@ -310,12 +439,45 @@ def build_task_response(
     context: dict | None = None,
     *,
     cached: bool = False,
+    meta_extra: dict | None = None,
 ) -> dict:
     return {
         "status": status,
         "data": rows,
-        "meta": build_response_meta(context, cached=cached),
+        "meta": build_response_meta(context, cached=cached, extra=meta_extra),
     }
+
+
+def build_retryable_task_failure_response(
+    *,
+    context: dict,
+    reason: str,
+    diagnosis: dict | None = None,
+    latency_ms: int | None = None,
+) -> dict:
+    safe_diagnosis = dict(diagnosis or {})
+    safe_diagnosis.setdefault("reason", reason)
+    safe_diagnosis.setdefault("effective_key_source", effective_gemini_key_source)
+    safe_diagnosis.setdefault("gemini_api_key_present", bool(gemini_api_key))
+    safe_diagnosis.setdefault("google_api_key_present", bool(google_api_key))
+    return build_task_response(
+        "retryable_ai_failure",
+        [],
+        context,
+        meta_extra={
+            "retryable": True,
+            "fallback_allowed_on_retry": True,
+            "provider": "gemini",
+            "model": gemini_model_name,
+            "error_reason": reason,
+            "diagnosis": safe_diagnosis,
+            "latency_ms": latency_ms,
+            "message": (
+                "We could not prepare today's AI tasks yet. Try once more; "
+                "if Gemini still cannot respond, we will create a small safe plan for today."
+            ),
+        },
+    )
 
 
 def parse_iso_date_strict(value: str, field_name: str):
@@ -357,6 +519,9 @@ SAFE_MOOD_LABELS = {
     "anxious",
     "overwhelmed",
     "drained",
+    # Phase 6C reset ritual moods
+    "calmer",
+    "sleepy",
 }
 TASK_FRICTION_LEVELS = {"too_easy", "right_sized", "too_heavy"}
 COMPLETION_STATES = {"pending", "done", "skipped", "partial"}
@@ -376,7 +541,15 @@ RESET_REFLECTION_TAGS = {
     "less_self_criticism",
     "more_rest",
     "more_clarity",
+    # Phase 6C ritual tags
+    "noise",
+    "pressure",
+    "overthinking",
+    "scrolling",
+    "loneliness",
+    "nothing_clear",
 }
+NEXT_STEP_TYPES = {"loop", "reset", "rest", "reflection", "none"}
 CURATOR_ACTION_TYPES = {
     "path_opened",
     "book_opened",
@@ -493,6 +666,12 @@ def build_life_companion_response(
             "message": None,
         },
     }
+    if companion_response.get("reply_format"):
+        response["reply_format"] = companion_response["reply_format"]
+    if companion_response.get("sections") is not None:
+        response["sections"] = companion_response["sections"]
+    if companion_response.get("intent"):
+        response["intent"] = companion_response["intent"]
     if meta:
         response["meta"] = meta
     if conversation_id is not None:
@@ -900,6 +1079,92 @@ def is_duplicate_insert_error(error: Exception) -> bool:
     )
 
 
+def is_missing_column_error(error: Exception) -> bool:
+    error_code = str(getattr(error, "code", "") or "")
+    error_message = str(error).lower()
+    return error_code == "42703" or "does not exist" in error_message
+
+
+def compact_error_message(error: Exception, max_chars: int = 240) -> str:
+    message = " ".join(str(error).split())
+    if len(message) > max_chars:
+        return f"{message[:max_chars]}..."
+    return message
+
+
+def get_missing_loop_task_optional_insert_columns() -> set[str]:
+    """Probe optional columns once so task generation survives partial DB migrations."""
+    global _loop_task_missing_optional_insert_columns
+    if _loop_task_missing_optional_insert_columns is not None:
+        return _loop_task_missing_optional_insert_columns
+
+    missing: set[str] = set()
+    for column in sorted(LOOP_TASK_OPTIONAL_INSERT_COLUMNS):
+        try:
+            supabase.table("loop_tasks").select(column).limit(0).execute()
+        except Exception as error:
+            if is_missing_column_error(error):
+                missing.add(column)
+            else:
+                print(
+                    "AI_TASK_GENERATION "
+                    "status=schema_probe_warning "
+                    f"column={column} "
+                    f"error_type={type(error).__name__} "
+                    f"error_code={getattr(error, 'code', 'n/a') or 'n/a'}"
+                )
+
+    _loop_task_missing_optional_insert_columns = missing
+    if missing:
+        print(
+            "AI_TASK_GENERATION "
+            "status=optional_columns_omitted "
+            f"columns={','.join(sorted(missing))}"
+        )
+    return missing
+
+
+def sanitize_loop_task_insert_rows(rows: list[dict]) -> list[dict]:
+    missing_columns = get_missing_loop_task_optional_insert_columns()
+    if not missing_columns:
+        return rows
+    return [
+        {key: value for key, value in row.items() if key not in missing_columns}
+        for row in rows
+    ]
+
+
+def insert_repair_rows(
+    user_id: str,
+    local_date: str,
+    rows: list[dict],
+    missing_categories: list[str],
+) -> tuple[str, list[dict]]:
+    """Insert only rows whose category is in missing_categories; ignore duplicates silently."""
+    cats = set(missing_categories)
+    rows_to_insert = [
+        r for r in rows
+        if normalize_category(r.get("category", "")) in cats
+    ]
+    if not rows_to_insert:
+        return "existing", fetch_today_core_tasks(user_id, local_date)
+    rows_to_insert = sanitize_loop_task_insert_rows(rows_to_insert)
+    for row in rows_to_insert:
+        try:
+            supabase.table("loop_tasks").insert(row).execute()
+        except Exception as err:
+            if is_duplicate_insert_error(err):
+                print(
+                    "AI_TASK_GENERATION "
+                    f"repair_duplicate_skipped=true "
+                    f"category={normalize_category(row.get('category', ''))} "
+                    f"error_code={getattr(err, 'code', 'n/a') or 'n/a'}"
+                )
+            else:
+                raise
+    return "repaired", fetch_today_core_tasks(user_id, local_date)
+
+
 def insert_task_rows(
     user_id: str,
     local_date: str,
@@ -907,8 +1172,9 @@ def insert_task_rows(
     *,
     source: str,
 ) -> tuple[str, list[dict]]:
+    rows_to_insert = sanitize_loop_task_insert_rows(rows)
     try:
-        db_response = supabase.table("loop_tasks").insert(rows).execute()
+        db_response = supabase.table("loop_tasks").insert(rows_to_insert).execute()
         return "inserted", sort_task_rows(db_response.data or [])
     except Exception as insert_error:
         if is_duplicate_insert_error(insert_error):
@@ -925,7 +1191,7 @@ def insert_task_rows(
                 f"existing_count={len(existing_after_race)}"
             )
             if existing_after_race:
-                if source == "fallback":
+                if source in {"fallback", "safe_fallback"}:
                     return "fallback_existing", existing_after_race
                 return "existing", existing_after_race
         raise
@@ -936,6 +1202,11 @@ def build_insert_rows(
     user_id: str,
     local_date: str,
     ai_generated: bool,
+    *,
+    generation_provider: str | None = None,
+    generation_model: str | None = None,
+    generation_prompt_version: str | None = None,
+    generation_failure_reason: str | None = None,
 ) -> list[dict]:
     return [
         normalize_task_for_insert(
@@ -944,16 +1215,36 @@ def build_insert_rows(
             local_date=local_date,
             index=index,
             ai_generated=ai_generated,
+            generation_provider=generation_provider,
+            generation_model=generation_model,
+            generation_prompt_version=generation_prompt_version,
+            generation_failure_reason=generation_failure_reason,
         )
         for index, task in enumerate(tasks)
     ]
 
 
-def save_fallback_tasks(context: dict, user_id: str, local_date: str) -> tuple[str, list[dict]]:
+def save_fallback_tasks(
+    context: dict,
+    user_id: str,
+    local_date: str,
+    missing_categories: list[str] | None = None,
+    *,
+    generation_provider: str = "safe_fallback",
+    generation_failure_reason: str | None = None,
+    force_insert_all: bool = False,
+) -> tuple[str, list[dict]]:
     # Another request may have inserted tasks while the AI call was failing.
-    existing_after_failure = fetch_today_core_tasks(user_id, local_date)
-    if existing_after_failure:
-        return "existing", existing_after_failure
+    if not force_insert_all:
+        existing_after_failure = fetch_today_core_tasks(user_id, local_date)
+        if existing_after_failure:
+            # In repair mode, only short-circuit if the set is now complete
+            if missing_categories:
+                existing_cats = {normalize_category(t.get("category", "")) for t in existing_after_failure}
+                if not [c for c in CORE_CATEGORY_ORDER if c not in existing_cats]:
+                    return "existing", existing_after_failure
+            else:
+                return "existing", existing_after_failure
 
     fallback_tasks = generate_fallback_tasks(context)
     fallback_rows = build_insert_rows(
@@ -961,14 +1252,23 @@ def save_fallback_tasks(context: dict, user_id: str, local_date: str) -> tuple[s
         user_id=user_id,
         local_date=local_date,
         ai_generated=False,
+        generation_provider=generation_provider,
+        generation_model=None,
+        generation_prompt_version=LOOP_TASKS_PROMPT_VERSION,
+        generation_failure_reason=generation_failure_reason,
     )
-    insert_status, rows = insert_task_rows(
-        user_id,
-        local_date,
-        fallback_rows,
-        source="fallback",
-    )
-    if insert_status in {"existing", "fallback_existing"}:
+    if missing_categories:
+        insert_status, rows = insert_repair_rows(
+            user_id, local_date, fallback_rows, missing_categories
+        )
+    else:
+        insert_status, rows = insert_task_rows(
+            user_id,
+            local_date,
+            fallback_rows,
+            source=generation_provider,
+        )
+    if insert_status in {"existing", "fallback_existing", "repaired"}:
         return insert_status, rows
     return "fallback", rows
 
@@ -1143,6 +1443,10 @@ async def save_loop_task_feedback(
             "skip_reason_label": skip_reason_label,
             "feedback_recorded_at": utc_now_iso(),
         }
+        # When completion_state is "skipped", mark the task skipped boolean so
+        # the adaptation engine (context.py) can count it correctly.
+        if completion_state == "skipped":
+            payload["skipped"] = True
         payload = {key: value for key, value in payload.items() if value is not None}
 
         update_response = (
@@ -1169,6 +1473,23 @@ async def save_loop_task_feedback(
         raise HTTPException(status_code=500, detail="Failed to save task feedback") from error
 
 
+def compute_reset_next_step_type(mood_after: str | None, reflection_tag: str | None) -> str:
+    """Return the recommended next step label based on safe mood/tag signals."""
+    mood = str(mood_after or "").strip().lower()
+    tag = str(reflection_tag or "").strip().lower()
+    if mood == "grateful":
+        return "reflection"
+    if mood in {"calmer", "clearer", "clear", "focused", "proud", "hopeful"}:
+        return "loop"
+    if mood == "sleepy":
+        return "rest"
+    if mood in {"still_heavy", "heavy", "restless", "anxious", "overwhelmed", "drained"}:
+        return "reset"
+    if tag == "overthinking":
+        return "reset"
+    return "none"
+
+
 @app.post("/api/reset-sessions")
 async def save_reset_session_metadata(
     request: ResetSessionMetadataRequest,
@@ -1179,24 +1500,25 @@ async def save_reset_session_metadata(
         validate_request_user(token_user_id, request.user_id)
 
         mood_after = normalize_metadata_label(
-            request.mood_after,
+            request.mood_after_reset or request.mood_after,
             allowed=SAFE_MOOD_LABELS,
             field_name="mood_after",
         )
         reflection_tag = normalize_metadata_label(
-            request.reflection_tag,
+            request.reset_reflection_tag or request.reflection_tag,
             allowed=RESET_REFLECTION_TAGS,
             field_name="reflection_tag",
         )
+        next_step_type = compute_reset_next_step_type(mood_after, reflection_tag)
+
         payload = {
             "user_id": token_user_id,
-            "session_id": clean_metadata_text(request.session_id, max_chars=80),
+            "session_title": clean_metadata_text(request.session_title, max_chars=120),
             "session_type": clean_metadata_text(request.session_type, max_chars=48),
-            "session_category": clean_metadata_text(request.session_category, max_chars=48),
-            "reset_need": clean_metadata_text(request.reset_need, max_chars=48),
             "duration_seconds": clamp_duration_seconds(request.duration_seconds),
             "mood_after": mood_after,
             "reflection_tag": reflection_tag,
+            "next_step_type": next_step_type,
         }
         payload = {key: value for key, value in payload.items() if value is not None}
 
@@ -1205,6 +1527,7 @@ async def save_reset_session_metadata(
         return {
             "status": "success",
             "reset_session": row,
+            "next_step_type": next_step_type,
         }
     except HTTPException:
         raise
@@ -1288,6 +1611,7 @@ async def life_companion_chat(
             )
 
         detected_intent = detect_companion_intent(user_message, mode)
+        request_slots = extract_request_slots(user_message, detected_intent)
         safety_signal = detect_life_companion_safety(user_message)
         if safety_signal.get("crisis"):
             companion_response = generate_life_companion_crisis_response()
@@ -1330,6 +1654,7 @@ async def life_companion_chat(
 
         context_started = perf_counter()
         context = build_life_companion_context(supabase, token_user_id, mode)
+        context["latest_request_slots"] = request_slots
         context_build_ms = int((perf_counter() - context_started) * 1000)
 
         retrieval_started = perf_counter()
@@ -1352,6 +1677,7 @@ async def life_companion_chat(
                 context,
                 prompt_injection=True,
                 user_message=user_message,
+                knowledge_chunks=knowledge_chunks,
             )
             log_life_companion_event(
                 status="fallback",
@@ -1415,6 +1741,7 @@ async def life_companion_chat(
             mode=mode,
             context=context,
             user_message=user_message,
+            knowledge_chunks=knowledge_chunks,
         )
         log_life_companion_event(
             status=gateway_result.status,
@@ -1658,19 +1985,51 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
         if token_user_id != request.user_id:
             raise HTTPException(status_code=403, detail="Session user does not match request user")
 
-        existing_tasks = fetch_today_core_tasks(request.user_id, request.local_date)
+        # Three-tier struggle fallback:
+        # Tier 1: request.struggles (from frontend / onboarding session)
+        # Tier 2: Supabase Auth user_metadata (JWT, no extra network call needed)
+        # Tier 3: user_behavior.core_struggles DB query (inside build_generation_context, already optional)
+        resolved_struggles = [s for s in (request.struggles or []) if isinstance(s, str) and s.strip()]
+        if not resolved_struggles:
+            try:
+                token = extract_bearer_token(authorization)
+                auth_resp = supabase.auth.get_user(token)
+                auth_user = getattr(auth_resp, "user", None)
+                if auth_user:
+                    raw_meta = getattr(auth_user, "user_metadata", None) or {}
+                    meta_struggles = raw_meta.get("struggles") or raw_meta.get("struggle_tags") or []
+                    if isinstance(meta_struggles, list):
+                        resolved_struggles = [str(s) for s in meta_struggles if s]
+            except Exception:
+                pass  # Safe: tier 3 handles this inside build_generation_context
 
-        if existing_tasks and not request.regenerate:
+        existing_tasks = fetch_today_core_tasks(request.user_id, request.local_date)
+        existing_categories = {normalize_category(t.get("category", "")) for t in existing_tasks}
+        missing_categories = [c for c in CORE_CATEGORY_ORDER if c not in existing_categories]
+        repair_mode = bool(existing_tasks and missing_categories and not request.regenerate)
+
+        # Full set present — return immediately
+        if existing_tasks and not missing_categories and not request.regenerate:
             return build_task_response("existing", existing_tasks, cached=True)
 
+        # Partial set — log and fall through to generate missing categories only
+        if repair_mode:
+            print(
+                "AI_TASK_GENERATION "
+                f"repair_mode=true existing_count={len(existing_tasks)} "
+                f"missing_categories={','.join(missing_categories)}"
+            )
+
+        # Regenerate: block if any task completed, else wipe uncompleted
         if request.regenerate and existing_tasks:
             if any(is_completed_task(task) for task in existing_tasks):
                 return build_task_response("locked", existing_tasks, cached=True)
-
             delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
+            repair_mode = False
+            missing_categories = list(CORE_CATEGORY_ORDER)
 
         context = build_generation_context(
-            request.struggles,
+            resolved_struggles,
             request.current_streak,
             supabase=supabase,
             user_id=request.user_id,
@@ -1678,27 +2037,74 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
             existing_tasks=existing_tasks,
         )
         context["auth_user_id"] = token_user_id
-        prompt = build_loop_tasks_prompt(context)
 
-        if gemini_model is None:
+        tag = request.recalibrate_tag
+        if tag and tag in RECALIBRATE_TAG_OVERRIDES and request.regenerate:
+            context.update(RECALIBRATE_TAG_OVERRIDES[tag])
+            print(f"AI_TASK_GENERATION recalibrate_tag={tag} overrides_applied=true")
+
+        prompt = build_loop_tasks_prompt(context)
+        gemini_diagnosis_context = {
+            "key_source": effective_gemini_key_source,
+            "gemini_api_key_present": bool(gemini_api_key),
+            "google_api_key_present": bool(google_api_key),
+            "model_name": gemini_model_name,
+        }
+
+        if loop_gemini_client is None:
+            diagnosis = build_gemini_diagnosis(
+                "provider_unavailable",
+                **gemini_diagnosis_context,
+            )
+            if not request.allow_safe_fallback:
+                log_generation_event(
+                    status="retryable_ai_failure",
+                    provider="gemini",
+                    error_reason="provider_unavailable",
+                    diagnosis=diagnosis,
+                    context=context,
+                )
+                return build_retryable_task_failure_response(
+                    context=context,
+                    reason="provider_unavailable",
+                    diagnosis=diagnosis,
+                )
+
+            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
             fallback_status, fallback_rows = save_fallback_tasks(
                 context,
                 request.user_id,
                 request.local_date,
+                generation_provider="safe_fallback",
+                generation_failure_reason="provider_unavailable",
+                force_insert_all=True,
             )
             log_generation_event(
                 status=fallback_status,
-                provider="fallback",
+                provider="safe_fallback",
                 error_reason="provider_unavailable",
+                diagnosis=diagnosis,
                 context=context,
             )
-            return build_task_response(fallback_status, fallback_rows, context)
+            return build_task_response(
+                fallback_status,
+                fallback_rows,
+                context,
+                meta_extra={
+                    "provider": "safe_fallback",
+                    "fallback_used": True,
+                    "fallback_reason": "provider_unavailable",
+                    "diagnosis": diagnosis,
+                },
+            )
 
         try:
-            provider_response = generate_with_gemini(
-                gemini_model,
+            provider_response = generate_loop_tasks_with_gemini(
+                loop_gemini_client,
+                gemini_model_name,
                 prompt,
                 prompt_version=LOOP_TASKS_PROMPT_VERSION,
+                diagnosis_context=gemini_diagnosis_context,
             )
             category_tasks = validate_ai_tasks(provider_response.text, context)
             formatted_tasks = build_insert_rows(
@@ -1706,14 +2112,25 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
                 user_id=request.user_id,
                 local_date=request.local_date,
                 ai_generated=True,
+                generation_provider="gemini",
+                generation_model=gemini_model_name,
+                generation_prompt_version=provider_response.prompt_version,
             )
-            insert_status, rows = insert_task_rows(
-                request.user_id,
-                request.local_date,
-                formatted_tasks,
-                source="ai_success",
-            )
-            status = "existing" if insert_status == "existing" else "success"
+            if repair_mode:
+                insert_status, rows = insert_repair_rows(
+                    request.user_id,
+                    request.local_date,
+                    formatted_tasks,
+                    missing_categories,
+                )
+            else:
+                insert_status, rows = insert_task_rows(
+                    request.user_id,
+                    request.local_date,
+                    formatted_tasks,
+                    source="ai_success",
+                )
+            status = "existing" if insert_status == "existing" else (insert_status or "success")
             log_generation_event(
                 status=status,
                 provider=provider_response.provider,
@@ -1723,30 +2140,98 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
             )
             return build_task_response(status, rows, context)
         except TaskValidationError as validation_error:
+            diagnosis = build_gemini_diagnosis(
+                f"validation_failed:{validation_error.reason}",
+                **gemini_diagnosis_context,
+            )
+            if not request.allow_safe_fallback:
+                log_generation_event(
+                    status="retryable_ai_failure",
+                    validation_failure_reason=validation_error.reason,
+                    diagnosis=diagnosis,
+                    context=context,
+                )
+                return build_retryable_task_failure_response(
+                    context=context,
+                    reason=f"validation_failed:{validation_error.reason}",
+                    diagnosis=diagnosis,
+                )
+
+            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
             fallback_status, fallback_rows = save_fallback_tasks(
                 context,
                 request.user_id,
                 request.local_date,
+                generation_provider="safe_fallback",
+                generation_failure_reason=f"validation_failed:{validation_error.reason}",
+                force_insert_all=True,
             )
             log_generation_event(
                 status=fallback_status,
+                provider="safe_fallback",
                 validation_failure_reason=validation_error.reason,
+                diagnosis=diagnosis,
                 context=context,
             )
-            return build_task_response(fallback_status, fallback_rows, context)
+            return build_task_response(
+                fallback_status,
+                fallback_rows,
+                context,
+                meta_extra={
+                    "provider": "safe_fallback",
+                    "fallback_used": True,
+                    "fallback_reason": f"validation_failed:{validation_error.reason}",
+                    "diagnosis": diagnosis,
+                },
+            )
         except AIGenerationError as ai_error:
+            diagnosis = ai_error.diagnosis or build_gemini_diagnosis(
+                ai_error.reason,
+                **gemini_diagnosis_context,
+            )
+            if not request.allow_safe_fallback:
+                log_generation_event(
+                    status="retryable_ai_failure",
+                    latency_ms=ai_error.latency_ms,
+                    error_reason=ai_error.reason,
+                    diagnosis=diagnosis,
+                    context=context,
+                )
+                return build_retryable_task_failure_response(
+                    context=context,
+                    reason=ai_error.reason,
+                    diagnosis=diagnosis,
+                    latency_ms=ai_error.latency_ms,
+                )
+
+            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
             fallback_status, fallback_rows = save_fallback_tasks(
                 context,
                 request.user_id,
                 request.local_date,
+                generation_provider="safe_fallback",
+                generation_failure_reason=ai_error.reason,
+                force_insert_all=True,
             )
             log_generation_event(
                 status=fallback_status,
+                provider="safe_fallback",
                 latency_ms=ai_error.latency_ms,
                 error_reason=ai_error.reason,
+                diagnosis=diagnosis,
                 context=context,
             )
-            return build_task_response(fallback_status, fallback_rows, context)
+            return build_task_response(
+                fallback_status,
+                fallback_rows,
+                context,
+                meta_extra={
+                    "provider": "safe_fallback",
+                    "fallback_used": True,
+                    "fallback_reason": ai_error.reason,
+                    "diagnosis": diagnosis,
+                },
+            )
         
     except HTTPException:
         raise
@@ -1754,6 +2239,125 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
         print(
             "AI_TASK_GENERATION "
             "status=critical_error "
-            f"error_type={type(e).__name__}"
+            f"error_type={type(e).__name__} "
+            f"error_code={getattr(e, 'code', 'n/a') or 'n/a'} "
+            f"error_message={compact_error_message(e)}"
         )
         raise HTTPException(status_code=500, detail="Failed to generate or save tasks")
+
+
+
+@app.post("/api/execution-engine")
+async def execution_engine(
+    request: ExecutionEngineRequest,
+    authorization: str | None = Header(default=None),
+):
+    request_started = perf_counter()
+    try:
+        token_user_id = validate_supabase_access_token(authorization)
+        if token_user_id != request.user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Session user does not match request user",
+            )
+
+        raw_pain_point = str(request.pain_point or "").strip()
+        if raw_pain_point not in ALLOWED_PAIN_POINTS:
+            raise HTTPException(status_code=400, detail="Invalid pain_point value")
+
+        # Sanitise progression inputs — cap count at 999, strip each recent title
+        completed_tasks_count = max(0, min(999, int(request.completed_tasks_count or 0)))
+        recent_tasks = [
+            str(t).strip()[:120]
+            for t in (request.recent_tasks or [])[:5]
+            if str(t).strip()
+        ]
+
+        # Derive phase label for logging (mirrors _get_phase logic)
+        if completed_tasks_count <= 7:
+            phase_label = "phase_1_triage"
+        elif completed_tasks_count <= 14:
+            phase_label = "phase_2_awareness"
+        elif completed_tasks_count <= 21:
+            phase_label = "phase_3_restructure"
+        else:
+            phase_label = "phase_4_sovereignty"
+
+        prompt = build_execution_engine_prompt(
+            pain_point=raw_pain_point,
+            completed_tasks_count=completed_tasks_count,
+            recent_tasks=recent_tasks,
+        )
+        fallback_reason = None
+
+        try:
+            groq_response = generate_life_companion_with_groq(
+                prompt=prompt,
+                prompt_version=EXECUTION_ENGINE_PROMPT_VERSION,
+                timeout_seconds=8,
+            )
+            raw_text = groq_response.text.strip()
+            if raw_text.startswith("```"):
+                raw_text = _re.sub(r"^```[a-z]*\n?", "", raw_text).rstrip("`").strip()
+
+            parsed = _json.loads(raw_text)
+            task_title = str(parsed.get("taskTitle") or "").strip()
+            duration_label = str(parsed.get("durationLabel") or "").strip()
+            context_note = str(parsed.get("contextNote") or "").strip()
+
+            if not task_title or not duration_label or not context_note:
+                raise ValueError("incomplete_fields")
+
+            latency_ms = int((perf_counter() - request_started) * 1000)
+            print(
+                f"EXECUTION_ENGINE status=success provider=groq "
+                f"prompt_version={EXECUTION_ENGINE_PROMPT_VERSION} "
+                f"phase={phase_label} completed_count={completed_tasks_count} "
+                f"recent_tasks_count={len(recent_tasks)} latency_ms={latency_ms}"
+            )
+            return {
+                "status": "success",
+                "taskTitle": task_title,
+                "durationLabel": duration_label,
+                "contextNote": context_note,
+                "meta": {
+                    "provider": "groq",
+                    "prompt_version": EXECUTION_ENGINE_PROMPT_VERSION,
+                    "phase": phase_label,
+                    "fallback_used": False,
+                },
+            }
+
+        except (GroqCompanionProviderError, Exception) as ai_error:
+            fallback_reason = getattr(ai_error, "reason", None) or type(ai_error).__name__
+            print(
+                f"EXECUTION_ENGINE status=fallback provider=static "
+                f"fallback_reason={fallback_reason} "
+                f"prompt_version={EXECUTION_ENGINE_PROMPT_VERSION}"
+            )
+
+        fallback = get_execution_engine_fallback(raw_pain_point)
+        latency_ms = int((perf_counter() - request_started) * 1000)
+        return {
+            "status": "fallback",
+            "taskTitle": fallback["taskTitle"],
+            "durationLabel": fallback["durationLabel"],
+            "contextNote": fallback["contextNote"],
+            "meta": {
+                "provider": "static",
+                "prompt_version": EXECUTION_ENGINE_PROMPT_VERSION,
+                "fallback_used": True,
+                "fallback_reason": fallback_reason,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            f"EXECUTION_ENGINE status=critical_error error_type={type(error).__name__}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate execution engine action",
+        ) from error

@@ -21,14 +21,14 @@ export async function buildUserContext(userId) {
     };
   }
 
-  // Last 3 reflections
+  // Last 3 reflections, safe metadata only. Do not select or return raw answers.
   let reflections = [];
   try {
     const { data } = await supabase
       .from("reflections")
-      .select("reflection_date, answers, pattern_tags")
+      .select("for_date, mood, pattern_tags")
       .eq("user_id", userId)
-      .order("reflection_date", { ascending: false })
+      .order("for_date", { ascending: false })
       .limit(3);
     reflections = data || [];
   } catch (e) {
@@ -78,22 +78,12 @@ export async function buildUserContext(userId) {
   // Fetch explicit struggles (Bypassing missing profiles table)
   const struggle_profile = []; 
 
-  // Onboarding data
-  let onboardingProfile = null;
-  try {
-    const { data } = await supabase
-      .from("user_context")
-      .select("onboarding, skipped_categories")
-      .eq("user_id", userId)
-      .maybeSingle();
-    onboardingProfile = data;
-  } catch (e) {
-    console.warn("User_context table missing or inaccessible:", e);
-  }
+  // user_context table was never created — use empty defaults.
+  const onboardingProfile = null;
 
-  // Mood trend from pattern_tags or answers
+  // Mood trend from safe mood labels or pattern_tags.
   const moods = (reflections || [])
-    .map(r => r.pattern_tags?.[0])
+    .map(r => r.mood || r.pattern_tags?.[0])
     .filter(Boolean);
 
   // Recent titles (for no-repeat check)
@@ -113,7 +103,8 @@ export async function buildUserContext(userId) {
     struggle_profile: struggle_profile || [],
     reflections: (reflections || []).map(r => ({
       date: r.for_date,
-      answers: r.questions || [],
+      mood: r.mood || null,
+      pattern_tags: Array.isArray(r.pattern_tags) ? r.pattern_tags : [],
     })),
     yesterdayTasks: (yesterdayTasks || []).map(t => ({
       title: t.title,

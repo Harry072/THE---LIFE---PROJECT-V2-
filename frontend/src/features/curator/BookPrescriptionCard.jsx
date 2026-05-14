@@ -6,6 +6,7 @@ export default function BookPrescriptionCard({
   featured = false,
   expanded = false,
   active = false,
+  recommendationReason = "",
   onToggle,
   onBeginRitual,
   onFindBook,
@@ -45,6 +46,9 @@ export default function BookPrescriptionCard({
           <h3>{book.title}</h3>
           <p className="curator-book-author">{book.author}</p>
           <p className="curator-book-hook">{book.hook}</p>
+          {recommendationReason ? (
+            <p className="curator-recommendation-reason">{recommendationReason}</p>
+          ) : null}
         </div>
         <div className="curator-book-status" aria-hidden="true">
           {active ? <Icon name="check" size={15} /> : <Icon name="arrow" size={15} />}
@@ -57,6 +61,12 @@ export default function BookPrescriptionCard({
             <h4>Why this book belongs here</h4>
             <p>{book.whyPath}</p>
           </div>
+          {recommendationReason ? (
+            <div className="curator-detail-block">
+              <h4>Why Curator surfaced it now</h4>
+              <p>{recommendationReason}</p>
+            </div>
+          ) : null}
           <div className="curator-detail-block">
             <h4>What mystery it helps you understand</h4>
             <p>{book.mystery}</p>

@@ -2,11 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLoopTasks } from "../hooks/useLoopTasks";
 import { useAppState } from "../contexts/AppStateContext";
+import { useGrowthTree } from "../hooks/useGrowthTree";
 import LoopTaskCard from "../components/loop/LoopTaskCard";
 import LoopDetailPanel from "../components/loop/LoopDetailPanel";
 import LoopIntroVideo from "../components/loop/LoopIntroVideo";
 import LoopNotificationToast from "../components/loop/LoopNotificationToast";
 import PostActionFeedbackModal from "../components/loop/PostActionFeedbackModal";
+import RecalibrateBar from "../components/loop/RecalibrateBar";
+import ExecutionEngineCard from "../components/loop/ExecutionEngineCard";
+import { useExecutionEngine } from "../hooks/useExecutionEngine";
+import { useContextualGreeting } from "../hooks/useContextualGreeting";
 
 const LOOP_INTRO_VIDEO_STORAGE_KEY = "lifeProject.loopIntroVideoSeen";
 
@@ -27,6 +32,28 @@ const getInitialIntroVideoVisibility = () => {
   return window.localStorage.getItem(LOOP_INTRO_VIDEO_STORAGE_KEY) !== "true";
 };
 
+const isPlainObject = (value) => (
+  Boolean(value) &&
+  Object.prototype.toString.call(value) === "[object Object]" &&
+  (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+);
+
+const normalizeRefreshOptions = (value) => {
+  if (typeof value === "string" && value.trim()) {
+    return { recalibrateTag: value.trim(), allowSafeFallback: false };
+  }
+
+  if (!isPlainObject(value)) {
+    return { recalibrateTag: null, allowSafeFallback: false };
+  }
+
+  const rawTag = value.recalibrate_tag ?? value.recalibrateTag ?? value.tag;
+  return {
+    recalibrateTag: typeof rawTag === "string" && rawTag.trim() ? rawTag.trim() : null,
+    allowSafeFallback: Boolean(value.allowSafeFallback || value.allow_safe_fallback),
+  };
+};
+
 export default function TheLoopPage() {
   const navigate = useNavigate();
   // useLoopTasks reads the current user from AppStateContext,
@@ -37,22 +64,56 @@ export default function TheLoopPage() {
     loading,
     error,
     generating,
-    refresh,
+    generateTasks,
+    hasFetched,
+    retryWithSafeFallback,
     toggleTask,
     saveTaskFeedback,
     clearError,
   } = useLoopTasks();
   const { user, user_tree } = useAppState();
-  
+  const { stageUp, dismissStageUp } = useGrowthTree();
+  const { whisper } = useContextualGreeting(user?.id, user_tree?.streak ?? 0);
+
   const tasks = useMemo(() => loopData?.tasks || [], [loopData?.tasks]);
-  const dailyInsight = loopData?.insight || "Your path is unfolding as it should.";
+  const sorted = [...tasks].sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return 0;
+  });
+
+  // Approximate total tasks ever completed: 10 base pts awarded per core task.
+  // Used to place the user in their 30-day progression phase.
+  const completedTasksCount = Math.floor((user_tree?.cumulative_score ?? 0) / 10);
+  // Last 5 completed titles from today's loop — fed to the anti-repetition shield.
+  const recentCompletedTitles = sorted
+    .filter((t) => t.done && t.title)
+    .slice(-5)
+    .map((t) => t.title);
+
+  const {
+    action: executionAction,
+    loading: executionLoading,
+    error: executionError,
+    dismissed: executionDismissed,
+    celebrated: executionCelebrated,
+    primaryPainPoint: executionPainPoint,
+    handleDismiss: executionHandleDismiss,
+  } = useExecutionEngine({
+    enabled: !loading && !generating && hasFetched && sorted.length === 0,
+    completedTasksCount,
+    recentTasks: recentCompletedTitles,
+  });
+
+  const dailyInsight = whisper;
   const [activeId, setActiveId] = useState(null);
   const [showLoopIntroVideo, setShowLoopIntroVideo] = useState(getInitialIntroVideoVisibility);
   const [isLoopIntroReplay, setIsLoopIntroReplay] = useState(false);
   const [currentToast, setCurrentToast] = useState(null);
   const [feedbackTask, setFeedbackTask] = useState(null);
+  const [feedbackIsSkip, setFeedbackIsSkip] = useState(false);
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
+  const [feedbackMetrics, setFeedbackMetrics] = useState(null);
   const waitingToastShownRef = useRef(false);
   const currentToastRef = useRef(null);
   const toastQueueRef = useRef([]);
@@ -117,6 +178,13 @@ export default function TheLoopPage() {
     return () => window.clearTimeout(timer);
   }, [enqueueToast, generating, loading, showLoopIntroVideo, tasks]);
 
+  useEffect(() => {
+    if (stageUp) {
+      enqueueToast("stageUp", `Your tree just grew — you reached ${stageUp.to?.name ?? "a new stage"}`);
+      dismissStageUp();
+    }
+  }, [stageUp, dismissStageUp, enqueueToast]);
+
   const closeCurrentToast = useCallback(() => {
     currentToastRef.current = null;
     setCurrentToast(null);
@@ -164,6 +232,7 @@ export default function TheLoopPage() {
         }
       }
       setFeedbackTask(result?.task || completionPayload?.task || null);
+      setFeedbackMetrics(metrics ?? null);
       setFeedbackError("");
     }
 
@@ -177,6 +246,8 @@ export default function TheLoopPage() {
     try {
       await saveTaskFeedback(feedbackTask.id, feedback);
       setFeedbackTask(null);
+      setFeedbackIsSkip(false);
+      setFeedbackMetrics(null);
     } catch (requestError) {
       setFeedbackError(requestError?.message || "Could not save this signal yet.");
     } finally {
@@ -184,23 +255,42 @@ export default function TheLoopPage() {
     }
   }, [feedbackTask?.id, saveTaskFeedback]);
 
-  // Sort: uncompleted first, then completed
-  const sorted = [...tasks].sort((a, b) => {
-    if (a.done !== b.done) return a.done ? 1 : -1;
-    return 0; // maintain original order
-  });
+  const handleSkipTask = useCallback((taskId) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.done || task.skipped) return;
+    setFeedbackIsSkip(true);
+    setFeedbackTask(task);
+    setFeedbackError("");
+  }, [tasks]);
+
+  const CORE_CATS = ["awareness", "action", "meaning"];
+  const coreSorted = sorted.filter(t => CORE_CATS.includes(t.category));
+  const hasAllCoreCategories = CORE_CATS.every(cat => coreSorted.some(t => t.category === cat));
+  const allDone = coreSorted.length > 0
+    && hasAllCoreCategories
+    && sorted.every(t => t.done || t.skipped);
 
   const activeTask = tasks.find(t => t.id === activeId) || sorted[0] || null;
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async (options = {}) => {
     if (!user?.id) return;
+    if (sorted.some(t => t.done)) {
+      enqueueToast("locked", "Completed tasks lock today's Loop. Come back tomorrow for a fresh set.");
+      return;
+    }
+
+    const { recalibrateTag, allowSafeFallback } = normalizeRefreshOptions(options);
 
     try {
-      await refresh();
+      await generateTasks({
+        regenerate: true,
+        recalibrate_tag: recalibrateTag ?? undefined,
+        allowSafeFallback,
+      });
     } catch {
       // Error managed by hook
     }
-  };
+  }, [enqueueToast, generateTasks, sorted, user?.id]);
 
   return (
     <div className="the-loop-page" style={{
@@ -254,11 +344,21 @@ export default function TheLoopPage() {
             </button>
           </div>
 
+          <p style={{
+            margin: "4px 0 14px",
+            fontSize: 14,
+            color: "var(--text-faint)",
+            fontFamily: "var(--font-body)",
+            letterSpacing: 0.2,
+          }}>
+            Your next honest action. Built from your recent signals.
+          </p>
+
           <button
             type="button"
             onClick={replayLoopIntroVideo}
             style={{
-              margin: "-10px 0 18px",
+              margin: "0 0 18px",
               padding: 0,
               border: "none",
               background: "transparent",
@@ -347,7 +447,27 @@ export default function TheLoopPage() {
             alignItems: "center"
           }}>
             <span>{error}</span>
-            <button onClick={clearError} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 5 }}>✕</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {retryWithSafeFallback && (
+                <button
+                  type="button"
+                  onClick={() => handleRefresh({ allow_safe_fallback: true })}
+                  style={{
+                    background: "rgba(231, 76, 60, 0.08)",
+                    border: "1px solid rgba(231, 76, 60, 0.25)",
+                    color: "inherit",
+                    cursor: "pointer",
+                    borderRadius: 8,
+                    padding: "6px 10px",
+                    fontSize: 12,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Try Again
+                </button>
+              )}
+              <button onClick={clearError} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 5 }}>✕</button>
+            </div>
           </div>
         )}
 
@@ -369,7 +489,13 @@ export default function TheLoopPage() {
             gap: 20,
             scrollbarWidth: "none" // Hide scrollbar for cleaner cinematic look
           }}>
-            {generating || loading ? (
+            <RecalibrateBar
+              generating={generating}
+              onSelect={(tag) => handleRefresh({ recalibrate_tag: tag })}
+              onRegenerate={() => handleRefresh()}
+            />
+
+          {generating || loading ? (
               <div style={{
                 height: 400,
                 display: "flex",
@@ -391,7 +517,7 @@ export default function TheLoopPage() {
                   animation: "spin 1s linear infinite",
                   marginBottom: 20
                 }}></div>
-                <p style={{ fontSize: 18, fontFamily: "var(--font-display)" }}>Curating your daily path...</p>
+                <p style={{ fontSize: 18, fontFamily: "var(--font-display)" }}>Finding the next honest action.</p>
               </div>
             ) : sorted.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -402,67 +528,69 @@ export default function TheLoopPage() {
                     isActive={activeId === task.id || (!activeId && task.id === sorted[0]?.id)}
                     onHover={() => setActiveId(task.id)}
                     onToggle={handleTaskToggle}
+                    onSkip={handleSkipTask}
                   />
                 ))}
               </div>
+            ) : (executionLoading || executionAction) && !executionDismissed ? (
+              <ExecutionEngineCard
+                action={executionAction}
+                loading={executionLoading}
+                error={executionError}
+                dismissed={executionDismissed}
+                celebrated={executionCelebrated}
+                painPoint={executionPainPoint}
+                onDismiss={executionHandleDismiss}
+                onGenerateLoop={() => handleRefresh()}
+              />
             ) : (
-              <div style={{ 
-                textAlign: 'center', 
-                padding: 80, 
-                color: 'var(--text-faint)',
+              <div style={{
+                textAlign: "center",
+                padding: 80,
+                color: "var(--text-faint)",
                 background: "rgba(255,255,255,0.01)",
                 borderRadius: 28,
-                border: "1px dashed rgba(255,255,255,0.05)"
+                boxShadow: "0 0 0 1px rgba(255,255,255,0.04)",
               }}>
-                <p style={{ fontSize: 16, marginBottom: 24 }}>No tasks found for today.</p>
-                <button 
-                  onClick={handleRefresh} 
-                  style={{ 
-                    padding: "12px 32px", 
-                    borderRadius: 12, 
-                    background: "var(--green-bright)", 
-                    border: "none", 
-                    color: "black", 
-                    fontWeight: 600, 
-                    cursor: "pointer" 
+                <p style={{ fontSize: 16, marginBottom: 24 }}>
+                  No tasks yet for today. Take a breath — your next step is being prepared.
+                </p>
+                <button
+                  onClick={() => handleRefresh()}
+                  style={{
+                    padding: "12px 32px",
+                    borderRadius: 12,
+                    background: "var(--green-bright)",
+                    border: "none",
+                    color: "black",
+                    fontWeight: 600,
+                    cursor: "pointer",
                   }}
                 >
-                  Generate Loop
+                  Prepare Today&apos;s Plan
                 </button>
               </div>
             )}
 
-            {/* Regeneration Action Area */}
-            <div style={{
-              marginTop: 20,
-              padding: "32px",
-              borderRadius: 24,
-              border: "1px dashed var(--border, rgba(255,255,255,0.1))",
-              textAlign: "center",
-              background: "rgba(0,0,0,0.1)"
-            }}>
-              <p style={{ margin: "0 0 20px", color: "var(--text-dim)", fontSize: 14 }}>
-                Not feeling these? You can recalibrate your daily tasks.
-              </p>
-              <button
-                onClick={handleRefresh}
-                disabled={generating}
-                style={{
-                  padding: "12px 28px",
-                  borderRadius: 14,
-                  background: "var(--bg-card, rgba(255,255,255,0.05))",
-                  border: "1px solid var(--border)",
-                  color: "var(--text)",
-                  fontSize: 14,
-                  cursor: generating ? "not-allowed" : "pointer",
-                  fontWeight: 600,
-                  transition: "all 0.2s",
-                  opacity: generating ? 0.6 : 1
-                }}
-              >
-                {generating ? "Calibrating..." : "Regenerate Daily Tasks"}
-              </button>
-            </div>
+            {/* All-done celebration */}
+            {allDone && (
+              <div style={{
+                padding: "40px 32px",
+                borderRadius: 24,
+                background: "linear-gradient(135deg, rgba(46,204,113,0.06), rgba(46,204,113,0.02))",
+                border: "1px solid rgba(46,204,113,0.18)",
+                textAlign: "center",
+                animation: "fadeInUp 0.5s ease both",
+              }}>
+                <p style={{ margin: "0 0 8px", fontSize: 28, fontFamily: "var(--font-display)", color: "var(--green-bright)" }}>
+                  Today&apos;s loop is complete.
+                </p>
+                <p style={{ margin: 0, fontSize: 15, color: "var(--text-dim)", lineHeight: 1.6 }}>
+                  Small actions become identity. Come back tomorrow.
+                </p>
+              </div>
+            )}
+
           </div>
 
           {/* Right Column: Detail Panel */}
@@ -476,7 +604,11 @@ export default function TheLoopPage() {
             border: "1px solid rgba(255,255,255,0.05)",
             boxShadow: "0 20px 40px rgba(0,0,0,0.3)"
           }}>
-            <LoopDetailPanel task={activeTask} />
+            <LoopDetailPanel
+              task={activeTask}
+              onToggle={handleTaskToggle}
+              onSkip={handleSkipTask}
+            />
           </div>
         </div>
       </div>
@@ -514,12 +646,17 @@ export default function TheLoopPage() {
       {feedbackTask ? (
         <PostActionFeedbackModal
           task={feedbackTask}
+          isSkip={feedbackIsSkip}
           isSaving={feedbackSaving}
           error={feedbackError}
+          awardedPoints={toFiniteNumber(feedbackMetrics?.awardedPoints)}
+          newStreak={toFiniteNumber(feedbackMetrics?.streak)}
           onSubmit={handleSubmitFeedback}
           onClose={() => {
             setFeedbackTask(null);
+            setFeedbackIsSkip(false);
             setFeedbackError("");
+            setFeedbackMetrics(null);
           }}
         />
       ) : null}

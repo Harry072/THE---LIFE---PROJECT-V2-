@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { getCinematicImage } from "../../utils/imageMapping";
 import LoopDetailContent from "./LoopDetailContent";
 
-export default function LoopDetailPanel({ task }) {
+export default function LoopDetailPanel({ task, onToggle, onSkip }) {
   const [visible, setVisible] = useState(false);
   const [prevTask, setPrevTask] = useState(task);
   const [transitioning, setTransitioning] = useState(false);
@@ -93,6 +93,8 @@ export default function LoopDetailPanel({ task }) {
         <LoopDetailContent
           key={displayTask.id || displayTask.title}
           task={displayTask}
+          onToggle={onToggle}
+          onSkip={onSkip}
         />
       </div>
 

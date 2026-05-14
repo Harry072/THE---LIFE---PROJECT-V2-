@@ -246,7 +246,10 @@ export function AppStateProvider({ children }) {
       .maybeSingle();
 
     if (treeError) {
-      throw treeError;
+      if (import.meta.env.DEV) {
+        console.warn("[AppStateContext] user_tree unavailable:", treeError.code, treeError.message);
+      }
+      return undefined;
     }
 
     const nextTree = treeData

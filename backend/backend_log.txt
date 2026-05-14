@@ -1,0 +1,28 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\harry\\OneDrive\\Desktop\\phase 1(test)\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [24096] using StatReload
+C:\Users\harry\OneDrive\Desktop\phase 1(test)\backend\venv310\lib\site-packages\google\api_core\_python_version_support.py:273: FutureWarning: You are using a Python version (3.10.11) which Google will stop supporting in new releases of google.api_core once it reaches its end of life (2026-10-04). Please upgrade to the latest Python version, or at least Python 3.11, to continue receiving updates for google.api_core past that date.
+  warnings.warn(message, FutureWarning)
+C:\Users\harry\OneDrive\Desktop\phase 1(test)\backend\main.py:12: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [28352]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:55349 - "OPTIONS /api/generate-loop-tasks HTTP/1.1" 200 OK
+AI_TASK_GENERATION status=fallback provider=gemini prompt_version=loop_tasks_v2 context_used=streak,struggles,user_tree streak_band=new completion_pattern=mixed suggested_intensity=gentle latest_mood_present=False latency_ms=1754 validation_failure_reason=none error_reason=provider_error_PermissionDenied_HTTPStatus.FORBI
+INFO:     127.0.0.1:55349 - "POST /api/generate-loop-tasks HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'ai\context.py'. Reloading...
+ INFO:     127.0.0.1:55077 - "OPTIONS /api/loop-tasks/abbcb392-85af-405c-a21a-616ad05f6875/feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55077 - "POST /api/loop-tasks/abbcb392-85af-405c-a21a-616ad05f6875/feedback HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55241 - "OPTIONS /api/generate-loop-tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55241 - "POST /api/generate-loop-tasks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63044 - "OPTIONS /api/generate-loop-tasks HTTP/1.1" 200 OK
+AI_TASK_GENERATION status=fallback provider=gemini prompt_version=loop_tasks_v2 context_used=prompt_labels,streak,struggles,task_feedback,task_history,user_tree streak_band=new completion_pattern=mixed suggested_intensity=gentle latest_mood_present=False latency_ms=1401 validation_failure_reason=none error_reason=provider_error_PermissionDenied_HTTPStatus.FORBI
+INFO:     127.0.0.1:63044 - "POST /api/generate-loop-tasks HTTP/1.1" 200 OK

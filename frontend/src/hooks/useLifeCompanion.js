@@ -150,6 +150,9 @@ export function useLifeCompanion() {
         tone: payload?.tone || "grounded",
         suggested_action: payload?.suggested_action || EMPTY_ACTION,
         safety: payload?.safety || EMPTY_SAFETY,
+        sections: payload?.sections || null,
+        reply_format: payload?.reply_format || null,
+        intent: payload?.intent || null,
         created_at: new Date().toISOString(),
       },
     ]));
@@ -305,6 +308,9 @@ export function useLifeCompanion() {
         tone: payload.tone || "grounded",
         suggested_action: payload.suggested_action || EMPTY_ACTION,
         safety: payload.safety || EMPTY_SAFETY,
+        sections: payload.sections || null,
+        reply_format: payload.reply_format || null,
+        intent: payload.intent || null,
         created_at: new Date().toISOString(),
       };
 

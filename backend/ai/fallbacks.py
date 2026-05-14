@@ -1,3 +1,5 @@
+import re as _fb_re
+
 from .companion_knowledge import detect_companion_intent
 from .context import CORE_CATEGORY_ORDER
 
@@ -19,16 +21,43 @@ ALTERNATE_TITLES = {
         "Notice the Main Thought",
         "Name What Is Pulling You",
         "Write One Honest Line",
+        "Sit With One Pattern",
+        "Trace the Mood to Its Source",
+        "Catch the Automatic Thought",
+        "Name What Today Actually Feels Like",
+        "Write the Sentence You Keep Avoiding",
+        "Find the Pattern Behind the Pattern",
+        "Watch One Habit Without Changing It",
+        "Name the Gap Between Intention and Action",
+        "Write One True Thing About Right Now",
     ],
     "action": [
         "Finish One Small Step",
         "Move One Task Forward",
         "Clear One Useful Thing",
+        "Begin the Avoided Task",
+        "Do One Thing Right Now",
+        "Remove One Small Obstacle",
+        "Spend Five Minutes on the Hardest Item",
+        "Take the Next Visible Step",
+        "Complete One Thing on the List",
+        "Make One Decision You Have Been Postponing",
+        "Start the Task With Just Two Minutes",
+        "Do the Smallest Useful Thing",
     ],
     "meaning": [
         "Make Tomorrow Easier",
         "Choose One Helpful Act",
         "Support Your Future Self",
+        "Do One Thing That Matters",
+        "Name Who This Effort Helps",
+        "Leave Something Better Than You Found It",
+        "Do One Act That Aligns With Your Values",
+        "Create One Good Thing Today",
+        "Make One Small Contribution",
+        "Do Something Future-You Will Thank You For",
+        "Invest Five Minutes in Something That Lasts",
+        "Connect One Action to a Larger Purpose",
     ],
 }
 
@@ -79,21 +108,58 @@ MIRROR_RECOMMENDATION_TO_COMPANION_ACTION = {
     "real_world_action": "real_world_action",
 }
 
+BOOK_RECOMMENDATION_INTENTS = {
+    "philosophy_novel_recommendation",
+    "novel_recommendation",
+    "self_growth_book_request",
+    "book_recommendation",
+    "reading_request",
+    "curator_request",
+    "reading_or_learning",
+}
+
+
+_FB_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "one", "your", "you", "this",
+}
+
+
+def _fb_significant_words(text: str) -> set[str]:
+    return {
+        w for w in _fb_re.findall(r"[a-z]{3,}", str(text or "").lower())
+        if w not in _FB_STOP_WORDS
+    }
+
+
+def _fb_overlap_ratio(a: str, b: str) -> float:
+    wa, wb = _fb_significant_words(a), _fb_significant_words(b)
+    if len(wa) < 2 or len(wb) < 2:
+        return 0.0
+    inter = wa & wb
+    union = wa | wb
+    return len(inter) / len(union) if union else 0.0
+
 
 def normalize_title(value: str) -> str:
     return " ".join(str(value or "").lower().split())
 
 
 def avoid_recent_title(category: str, preferred_title: str, recent_titles: list[str]) -> str:
-    avoided_titles = {normalize_title(title) for title in recent_titles if normalize_title(title)}
-    if normalize_title(preferred_title) not in avoided_titles:
+    avoided_normalized = {normalize_title(t) for t in recent_titles if normalize_title(t)}
+
+    def _too_similar(candidate: str) -> bool:
+        if normalize_title(candidate) in avoided_normalized:
+            return True
+        return any(_fb_overlap_ratio(candidate, t) >= 0.65 for t in recent_titles)
+
+    if not _too_similar(preferred_title):
         return preferred_title
 
     for title in ALTERNATE_TITLES[category]:
-        if normalize_title(title) not in avoided_titles:
+        if not _too_similar(title):
             return title
 
-    return f"{preferred_title} Today"
+    return f"{preferred_title} — One Step"
 
 
 def get_duration(context: dict, category: str) -> int:
@@ -541,8 +607,11 @@ def build_life_companion_response(
     tone: str = "grounded",
     risk_level: str = "none",
     safety_message: str | None = None,
+    reply_format: str | None = None,
+    sections: list[dict] | None = None,
+    intent: str | None = None,
 ) -> dict:
-    return {
+    result = {
         "reply": reply,
         "suggested_action": companion_action(action_type, label),
         "tone": tone,
@@ -551,6 +620,13 @@ def build_life_companion_response(
             "message": safety_message,
         },
     }
+    if reply_format is not None:
+        result["reply_format"] = reply_format
+    if sections is not None:
+        result["sections"] = sections
+    if intent is not None:
+        result["intent"] = intent
+    return result
 
 
 def generate_life_companion_crisis_response() -> dict:
@@ -579,12 +655,217 @@ def choose_companion_action_from_weekly_mirror(context: dict) -> dict | None:
     )
 
 
+def _wants_novels(message: str, intent: str) -> bool:
+    lowered = str(message or "").lower()
+    return intent in {"philosophy_novel_recommendation", "novel_recommendation"} or has_any(
+        lowered,
+        ["novel", "novels", "fiction"],
+    )
+
+
+def _wants_philosophy_novels(message: str, intent: str) -> bool:
+    lowered = str(message or "").lower()
+    return intent == "philosophy_novel_recommendation" or (
+        has_any(lowered, ["philosophy", "philosophical"])
+        and has_any(lowered, ["novel", "novels", "fiction"])
+    )
+
+
+def _wants_discipline_books(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return has_any(
+        lowered,
+        [
+            "discipline",
+            "habit",
+            "habits",
+            "focus",
+            "self-growth",
+            "self growth",
+            "self improvement",
+            "productivity",
+            "deep work",
+        ],
+    )
+
+
+def _book_action_type(flags: dict) -> tuple[str, str | None]:
+    if flags.get("no_app_action"):
+        return "none", None
+    return "curator", "Open Curator"
+
+
+def build_book_recommendation_fallback(
+    *,
+    intent: str,
+    user_message: str,
+    flags: dict,
+    safe_memory: dict | None = None,
+    knowledge_chunks: list[dict] | None = None,
+) -> dict:
+    action_type, label = _book_action_type(flags)
+    _chunk_ids = [str(chunk.get("id") or "") for chunk in (knowledge_chunks or []) if isinstance(chunk, dict)]
+    wants_philosophy = _wants_philosophy_novels(user_message, intent) or "philosophy_novels" in _chunk_ids
+    wants_novels = _wants_novels(user_message, intent)
+    wants_discipline = intent == "self_growth_book_request" or _wants_discipline_books(user_message)
+    support_style = str((safe_memory or {}).get("support_style") or "").lower()
+
+    if wants_philosophy:
+        reply = "You want a philosophy novel that soothes your mind, not another task. Start with these."
+        if "gentle" in support_style:
+            reply += " Keep the first pick light and reflective."
+        return build_life_companion_response(
+            reply=reply,
+            action_type=action_type,
+            label=label,
+            tone="grounded",
+            reply_format="book_recommendation",
+            intent="philosophy_novel_recommendation",
+            sections=[
+                {
+                    "title": "Start here",
+                    "items": [
+                        "Siddhartha - calm, spiritual, and about inner discovery.",
+                        "The Alchemist - simple, reflective, and good when you feel directionless.",
+                        "The Little Prince - short, poetic, and gentle for the mind.",
+                    ],
+                },
+                {
+                    "title": "If you want deeper",
+                    "items": [
+                        "The Stranger - philosophical, but colder and heavier.",
+                        "The Unbearable Lightness of Being - reflective, mature, and emotionally complex.",
+                    ],
+                },
+                {
+                    "title": "Best first pick",
+                    "body": "Start with Siddhartha if you want calm philosophy and inner reflection.",
+                },
+            ],
+        )
+
+    if wants_novels:
+        return build_life_companion_response(
+            reply=(
+                "You do not want another routine right now. Here are novels that can give your mind a different space. "
+                "These are suggestions, not prescriptions."
+            ),
+            action_type=action_type,
+            label=label,
+            tone="grounded",
+            reply_format="book_recommendation",
+            intent="novel_recommendation",
+            sections=[
+                {
+                    "title": "Start here",
+                    "items": [
+                        "The Alchemist - simple, reflective, good when you feel lost.",
+                        "Siddhartha - calm, spiritual, about inner discovery.",
+                        "The Little Prince - short, poetic, emotionally gentle.",
+                    ],
+                },
+                {
+                    "title": "If you want deeper",
+                    "items": [
+                        "The Midnight Library - regret, choices, and meaning.",
+                        "Norwegian Wood - reflective and emotional, but heavier.",
+                    ],
+                },
+                {
+                    "title": "Best first pick",
+                    "body": "Start with The Alchemist if you want something light and meaningful.",
+                },
+            ],
+        )
+
+    if wants_discipline:
+        return build_life_companion_response(
+            reply=(
+                "For discipline, start with non-fiction before novels. These are suggestions, not prescriptions."
+            ),
+            action_type=action_type,
+            label=label,
+            tone="grounded",
+            reply_format="book_recommendation",
+            intent="self_growth_book_request",
+            sections=[
+                {
+                    "title": "Start here",
+                    "items": [
+                        "Atomic Habits - practical systems for making discipline easier.",
+                        "Deep Work - focus, attention, and protecting serious work.",
+                        "Man's Search for Meaning - responsibility and meaning under pressure.",
+                    ],
+                },
+                {
+                    "title": "If you want deeper",
+                    "items": [
+                        "The Courage to Be Disliked - agency, boundaries, and courage.",
+                        "Think Like a Monk - reflective discipline and values.",
+                    ],
+                },
+                {
+                    "title": "Best first pick",
+                    "body": "Start with Atomic Habits if you want a practical first step.",
+                },
+            ],
+        )
+
+    return build_life_companion_response(
+        reply=(
+            "Here are a few reading options, split between novels and self-growth books. "
+            "These are suggestions, not prescriptions."
+        ),
+        action_type=action_type,
+        label=label,
+        tone="grounded",
+        reply_format="book_recommendation",
+        intent="book_recommendation",
+        sections=[
+            {
+                "title": "Start here",
+                "items": [
+                    "The Alchemist - simple and reflective when you feel lost.",
+                    "Siddhartha - calm, spiritual, and centered on inner discovery.",
+                    "The Little Prince - short, poetic, and emotionally gentle.",
+                ],
+            },
+            {
+                "title": "Novels",
+                "items": [
+                    "The Midnight Library - choices, regret, and meaning.",
+                    "Sophie's World - beginner-friendly philosophy through story.",
+                ],
+            },
+            {
+                "title": "Self-growth books",
+                "items": [
+                    "Atomic Habits - practical systems for discipline.",
+                    "Man's Search for Meaning - meaning and responsibility.",
+                ],
+            },
+            {
+                "title": "If you want deeper",
+                "items": [
+                    "The Courage to Be Disliked - agency and self-respect.",
+                    "The Stranger - philosophical, but colder and heavier.",
+                ],
+            },
+            {
+                "title": "Best first pick",
+                "body": "Start with The Alchemist for fiction, or Atomic Habits for practical self-growth.",
+            },
+        ],
+    )
+
+
 def generate_life_companion_fallback(
     mode: str,
     context: dict | None = None,
     *,
     prompt_injection: bool = False,
     user_message: str = "",
+    knowledge_chunks: list[dict] | None = None,
 ) -> dict:
     safe_context = context or {}
     task_summary = safe_context.get("task_summary") or {}
@@ -594,6 +875,7 @@ def generate_life_companion_fallback(
     first_weak_category = weak_categories[0] if weak_categories else "action"
     flags = detect_companion_fallback_intent(user_message)
     deterministic_intent = detect_companion_intent(user_message, mode)
+    safe_memory = safe_context.get("safe_memory_summary") or {}
 
     if prompt_injection or deterministic_intent == "prompt_injection":
         return build_life_companion_response(
@@ -606,6 +888,15 @@ def generate_life_companion_fallback(
             safety_message="The request tried to move outside the companion boundaries.",
         )
 
+    if deterministic_intent in BOOK_RECOMMENDATION_INTENTS:
+        return build_book_recommendation_fallback(
+            intent=deterministic_intent,
+            user_message=user_message,
+            flags=flags,
+            safe_memory=safe_memory,
+            knowledge_chunks=knowledge_chunks,
+        )
+
     if deterministic_intent == "quote_request":
         return build_life_companion_response(
             reply=(
@@ -613,6 +904,11 @@ def generate_life_companion_fallback(
             ),
             action_type="none",
             tone="grounded",
+            reply_format="quote",
+            sections=[
+                {"title": "The idea", "body": "\"Do not wait to feel fearless. Carry your preparation calmly, and let one honest sentence begin the day.\""},
+                {"title": "Apply this", "body": "Before your next difficult moment, choose one sentence that is steady, not perfect."},
+            ],
         )
 
     if deterministic_intent == "seminar_public_speaking":
@@ -633,6 +929,12 @@ def generate_life_companion_fallback(
             ),
             action_type="none",
             tone="grounded",
+            reply_format="moral_reflection",
+            sections=[
+                {"title": "The direct answer", "body": "Yes, you can become a good person, not by feeling perfect, but by choosing honestly again and again."},
+                {"title": "A deeper view", "body": "Character is built through repeated repairs, not flawless performance."},
+                {"title": "One question", "body": "What made you ask this today: did you hurt someone, disappoint yourself, or feel afraid of who you are becoming?"},
+            ],
         )
 
     if deterministic_intent == "identity_question":
@@ -654,6 +956,11 @@ def generate_life_companion_fallback(
             action_type="none",
             tone="serious",
             risk_level="low" if deterministic_intent == "serious_talk" else "none",
+            reply_format="conversation",
+            sections=[
+                {"title": "I hear this", "body": "We do not need to turn this into a task right now."},
+                {"title": "One question", "body": "Tell me the main thing: did something happen, or is this a feeling that has been building?"},
+            ],
         )
 
     if deterministic_intent == "physical_action":
@@ -664,10 +971,115 @@ def generate_life_companion_fallback(
             ),
             action_type="real_world_action",
             label="Do one physical reset",
+            reply_format="physical_action",
+            sections=[
+                {"title": "Do this now", "items": ["Stand up", "Drink water", "Put your phone across the room"]},
+                {"title": "Then", "body": "Do one visible task for two minutes. No reflection needed right now, just movement."},
+            ],
         )
 
     concrete_action_type = "none" if flags["no_task"] or flags["no_app_action"] else "loop"
     concrete_label = "Open The Loop" if concrete_action_type == "loop" else None
+
+    if deterministic_intent == "study_gym_routine":
+        return build_life_companion_response(
+            reply=(
+                "You want both study and gym in your day. Here is a structure that protects both without one destroying the other."
+            ),
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="study_gym_routine",
+            sections=[
+                {"title": "What I understand", "body": "You want to fit both academic work and gym into your daily life. This is achievable with two protected anchors — everything else adjusts around them."},
+                {"title": "Daily anchors", "items": [
+                    "Morning: 60–90 minutes of focused study before distractions start.",
+                    "Afternoon: 20–30 minutes of active revision or review from the morning's work.",
+                    "Evening: gym session, 60–75 minutes.",
+                    "After gym: meal, recovery, wind down — no heavy screen time.",
+                    "Night: 10 minutes to prepare tomorrow's first task.",
+                ]},
+                {"title": "Keep it realistic", "body": "Protect only two things first: one study block and one gym time. Once those hold for a week, add more structure around them."},
+                {"title": "Start today", "body": "Choose your gym time and one study block. Write them down. Those are your only obligations for the first three days."},
+            ],
+        )
+
+    if deterministic_intent == "gym_routine":
+        return build_life_companion_response(
+            reply=(
+                "Here is a simple gym-centered daily structure you can actually keep."
+            ),
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="gym_routine",
+            sections=[
+                {"title": "Simple daily structure", "items": [
+                    "Morning: light prep — water, stretch, or a short walk if gym is in the evening.",
+                    "Work or study block: one focused session before your workout.",
+                    "Gym: one consistent session. Time of day matters less than showing up.",
+                    "Recovery: meal, sleep on time, avoid heavy screens before bed.",
+                ]},
+                {"title": "The rule", "body": "Consistency beats intensity. A workout that happens every day beats a perfect workout that happens twice a week."},
+                {"title": "Start today", "body": "Choose one fixed gym time. Protect it for seven days. Then adjust based on what you learn."},
+            ],
+        )
+
+    if deterministic_intent == "study_routine":
+        return build_life_companion_response(
+            reply="Here is a daily study structure you can repeat without burning out.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="study_routine",
+            sections=[
+                {"title": "Daily study structure", "items": [
+                    "Morning: 60–90 minutes of deep focused study — no phone, one subject.",
+                    "Afternoon: 20–30 minutes of active revision from today's material.",
+                    "Evening: lighter study or reading, 30–45 minutes if energy allows.",
+                    "Night: write tomorrow's first study task before bed.",
+                ]},
+                {"title": "The revision rule", "body": "Review the day's work the same evening — not a week later. 20 minutes of active recall cements more than 2 hours of re-reading."},
+                {"title": "Start today", "body": "Open your notes from today and spend 15 minutes writing what you remember without looking. That is your first revision block."},
+            ],
+        )
+
+    if deterministic_intent == "exam_study_plan":
+        return build_life_companion_response(
+            reply="Here is a focused plan for studying toward your exam.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="exam_study_plan",
+            sections=[
+                {"title": "Daily exam preparation", "items": [
+                    "Morning: 60–90 minutes on the hardest or most unfamiliar topic.",
+                    "Afternoon: 20–30 minutes of active recall — write from memory, no notes.",
+                    "Evening: review any gaps and prepare tomorrow's first topic.",
+                    "Night: one sentence about what you covered today.",
+                ]},
+                {"title": "The rule", "body": "One deep session per day is more effective than scattered hours. Consistent daily study beats a last-minute cram."},
+                {"title": "Start today", "body": "Choose the one subject you have been avoiding. Study it for 25 minutes using only notes and memory, no scrolling. That is your first honest session."},
+            ],
+        )
+
+    if deterministic_intent in {"daily_schedule", "weekly_schedule", "time_management_plan"}:
+        return build_life_companion_response(
+            reply="Here is a simple structure built around two or three protected anchors.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent=deterministic_intent,
+            sections=[
+                {"title": "Your daily anchors", "items": [
+                    "First anchor: one focused work or study block in the morning.",
+                    "Second anchor: gym, exercise, or one physical reset in the evening.",
+                    "Third anchor: a consistent sleep time — your recovery foundation.",
+                ]},
+                {"title": "How to use this", "body": "Protect only these three anchors for the first week. Everything else fits around them. A schedule that breaks by noon is not a schedule."},
+                {"title": "Start today", "body": "Write down your three anchor times. Protect them tomorrow. Adjust after seven days based on what you learn."},
+            ],
+        )
 
     if deterministic_intent in {"routine_request", "time_management"}:
         return build_life_companion_response(
@@ -683,6 +1095,17 @@ def generate_life_companion_fallback(
             action_type=concrete_action_type,
             label=concrete_label,
             tone="grounded",
+            reply_format="structured_plan",
+            sections=[
+                {"title": "Your routine", "items": [
+                    "Start with one anchor: wake, water, bed.",
+                    "Do one 25-minute focus block before checking your phone.",
+                    "Take a five-minute reset break.",
+                    "Do one 45-minute main task block.",
+                    "End the day by writing tomorrow's first task.",
+                ]},
+                {"title": "The rule", "body": "Keep it small enough to repeat. Your goal is consistency, not perfection."},
+            ],
         )
 
     if deterministic_intent == "study_plan":
@@ -699,6 +1122,17 @@ def generate_life_companion_fallback(
             action_type=concrete_action_type,
             label=concrete_label,
             tone="grounded",
+            reply_format="structured_plan",
+            sections=[
+                {"title": "Study routine", "items": [
+                    "First 10 minutes: list the exact chapters or topics.",
+                    "Block one: 40 minutes on the easiest important topic.",
+                    "Break: five minutes away from the phone.",
+                    "Block two: 45 minutes on the hardest topic.",
+                    "Close: 15 minutes of recall without looking at notes.",
+                ]},
+                {"title": "Note", "body": "Repeat once more only if your energy stays steady."},
+            ],
         )
 
     if deterministic_intent == "schedule_request":
@@ -715,6 +1149,17 @@ def generate_life_companion_fallback(
             action_type=concrete_action_type,
             label=concrete_label,
             tone="grounded",
+            reply_format="structured_plan",
+            sections=[
+                {"title": "Simple timetable", "items": [
+                    "Morning: 25 minutes on the easiest important task.",
+                    "Late morning: 45 minutes on your main task.",
+                    "Afternoon: one small admin or cleanup task.",
+                    "Evening: 30 minutes of review, practice, or preparation.",
+                    "Night: write tomorrow's first move before sleep.",
+                ]},
+                {"title": "Remember", "body": "Keep the blocks flexible; the anchor matters more than the exact clock."},
+            ],
         )
 
     if deterministic_intent == "checklist_request":
@@ -730,6 +1175,16 @@ def generate_life_companion_fallback(
             action_type=concrete_action_type,
             label=concrete_label,
             tone="grounded",
+            reply_format="structured_plan",
+            sections=[
+                {"title": "Your checklist", "items": [
+                    "Choose one priority for today.",
+                    "Remove one obvious distraction.",
+                    "Work for 25 minutes on the first step.",
+                    "Take a five-minute reset break.",
+                    "Finish by writing the next step, even if today was imperfect.",
+                ]},
+            ],
         )
 
     if deterministic_intent in {"plan_request", "direct_help_request"}:
@@ -746,6 +1201,17 @@ def generate_life_companion_fallback(
             action_type=concrete_action_type,
             label=concrete_label,
             tone="grounded",
+            reply_format="structured_plan",
+            sections=[
+                {"title": "Simple plan", "items": [
+                    "Name the problem in one line.",
+                    "Pick the smallest action that proves movement.",
+                    "Do it for 25 minutes before checking your phone.",
+                    "Take a short reset instead of quitting completely.",
+                    "End by choosing tomorrow's first task.",
+                ]},
+                {"title": "The rule", "body": "Do not build a perfect system. Build one repeatable move."},
+            ],
         )
 
     if deterministic_intent == "next_action_request":
@@ -784,6 +1250,11 @@ def generate_life_companion_fallback(
             action_type="reset",
             label="Open Reset Space",
             tone="grounded",
+            reply_format="grounding",
+            sections=[
+                {"title": "Lower the pressure", "body": "Put both feet on the floor, unclench your jaw, and take one slow breath."},
+                {"title": "One question", "body": "What is the single thought looping the loudest right now?"},
+            ],
         )
 
     if deterministic_intent == "loneliness":
@@ -794,6 +1265,11 @@ def generate_life_companion_fallback(
             ),
             action_type="none",
             tone="grounded",
+            reply_format="conversation",
+            sections=[
+                {"title": "I hear this", "body": "That sounds lonely, and it does not need a productivity answer."},
+                {"title": "One question", "body": "What kind of connection are you missing most right now: being understood, being included, or having someone stay?"},
+            ],
         )
 
     if deterministic_intent == "scrolling_distraction":
@@ -817,6 +1293,19 @@ def generate_life_companion_fallback(
         )
 
     if deterministic_intent == "reset_need":
+        if has_any(str(user_message or "").lower(), ["what should i use in this app", "which app feature", "what app feature"]):
+            return build_life_companion_response(
+                reply=(
+                    "Use Reset Space first. If you are restless, the useful move is to lower the mental volume before choosing a task."
+                ),
+                action_type="reset",
+                label="Open Reset Space",
+                reply_format="app_guidance",
+                sections=[
+                    {"title": "Use this", "body": "Open Reset Space for a short grounding or breathing reset."},
+                    {"title": "Then", "body": "After your mind settles, choose one small next step instead of planning the whole day."},
+                ],
+            )
         return build_life_companion_response(
             reply=(
                 "When everything feels loud, the next move is not to solve everything. Lower the volume first: "
@@ -824,6 +1313,11 @@ def generate_life_companion_fallback(
             ),
             action_type="reset",
             label="Open Reset Space",
+            reply_format="grounding",
+            sections=[
+                {"title": "First move", "body": "Unclench your jaw, breathe once, and choose only the next visible step."},
+                {"title": "The principle", "body": "When everything feels loud, the next move is not to solve everything. Lower the volume first."},
+            ],
         )
 
     if deterministic_intent == "purpose_question":
@@ -833,16 +1327,6 @@ def generate_life_companion_fallback(
                 "Start with this: what responsibility, person, or skill still feels worth becoming stronger for?"
             ),
             action_type="none",
-        )
-
-    if deterministic_intent == "reading_or_learning":
-        return build_life_companion_response(
-            reply=(
-                "A good idea can become a handrail when life feels vague. Choose one book or idea that makes you more honest, "
-                "then test one sentence from it in your day."
-            ),
-            action_type="curator",
-            label="Open Curator",
         )
 
     if deterministic_intent == "weekly_pattern":
@@ -994,3 +1478,174 @@ def generate_fallback_weekly_mirror(context: dict) -> dict:
         "next_focus": "Begin smaller, but begin honestly.",
         "recommended_next_step": choose_weekly_recommendation(context),
     }
+
+
+import time as _ee_time
+
+_EXECUTION_ENGINE_FALLBACKS: dict[str, list[dict]] = {
+    "I can't stop scrolling": [
+        {
+            "taskTitle": "Put your phone face-down in another room for 10 minutes",
+            "durationLabel": "10 minutes",
+            "contextNote": "Physical distance from the device interrupts the dopamine loop before it restarts.",
+        },
+        {
+            "taskTitle": "Put your phone in a drawer and close it",
+            "durationLabel": "5 minutes",
+            "contextNote": "Removing the device from sight removes the trigger that keeps the scroll going.",
+        },
+        {
+            "taskTitle": "Walk to a different room and leave your phone behind",
+            "durationLabel": "5 minutes",
+            "contextNote": "Changing your physical location breaks the automatic reach-and-scroll pattern.",
+        },
+    ],
+    "I feel lost": [
+        {
+            "taskTitle": "Touch 3 physical objects near you and name each one aloud",
+            "durationLabel": "2 minutes",
+            "contextNote": "Naming what is physically present grounds you in the concrete world rather than abstract worry.",
+        },
+        {
+            "taskTitle": "Put both feet flat on the floor and press down for 30 seconds",
+            "durationLabel": "30 seconds",
+            "contextNote": "Physical pressure on the soles activates the body's orienting response and reduces drift.",
+        },
+        {
+            "taskTitle": "Walk to a window and name 3 things you can see outside",
+            "durationLabel": "2 minutes",
+            "contextNote": "Visual anchoring in the physical environment replaces the feeling of floating.",
+        },
+    ],
+    "I overthink everything": [
+        {
+            "taskTitle": "Write 1 sentence naming the thought you keep returning to",
+            "durationLabel": "3 minutes",
+            "contextNote": "Externalizing the thought onto paper removes it from the loop it runs in your head.",
+        },
+        {
+            "taskTitle": "Write the 1 decision you are avoiding on a piece of paper",
+            "durationLabel": "3 minutes",
+            "contextNote": "Written words make the abstract concrete and stop the mind from repeating the same loop.",
+        },
+        {
+            "taskTitle": "Write 3 words that describe what you are feeling right now",
+            "durationLabel": "2 minutes",
+            "contextNote": "Labeling feelings with words reduces the brain's threat response and slows overthinking.",
+        },
+    ],
+    "I have no motivation": [
+        {
+            "taskTitle": "Drink 1 glass of water right now standing up",
+            "durationLabel": "1 minute",
+            "contextNote": "Standing and hydrating interrupts the inertia state and gives the body a signal to move.",
+        },
+        {
+            "taskTitle": "Stand up and stretch your arms above your head for 30 seconds",
+            "durationLabel": "30 seconds",
+            "contextNote": "Physical movement changes blood flow and breaks the physiological stillness that blocks motivation.",
+        },
+        {
+            "taskTitle": "Walk to your front door and back 3 times",
+            "durationLabel": "2 minutes",
+            "contextNote": "Minimal movement restarts momentum without requiring any decision about what to do next.",
+        },
+    ],
+    "I can't sleep": [
+        {
+            "taskTitle": "Put your phone face-down 30 minutes before your target sleep time",
+            "durationLabel": "1 minute",
+            "contextNote": "Blue light suppresses melatonin; removing the screen begins the biological wind-down process.",
+        },
+        {
+            "taskTitle": "Stand and stretch your neck and shoulders for 60 seconds",
+            "durationLabel": "60 seconds",
+            "contextNote": "Releasing held tension in the upper body signals the nervous system to downshift toward rest.",
+        },
+        {
+            "taskTitle": "Splash cold water on your face and wrists once",
+            "durationLabel": "1 minute",
+            "contextNote": "Cold water on pulse points activates the dive reflex and lowers the heart rate quickly.",
+        },
+    ],
+    "I feel empty inside": [
+        {
+            "taskTitle": "Touch 3 objects near you and name each texture aloud",
+            "durationLabel": "2 minutes",
+            "contextNote": "Sensory naming reconnects the brain to physical reality when emotional numbness disconnects it.",
+        },
+        {
+            "taskTitle": "Hold something warm like a mug or your own hands for 1 minute",
+            "durationLabel": "1 minute",
+            "contextNote": "Warmth and physical contact activate comfort receptors that counter the flatness of emptiness.",
+        },
+        {
+            "taskTitle": "Wash your hands with warm water and focus on the temperature",
+            "durationLabel": "1 minute",
+            "contextNote": "Directed sensory attention breaks the dissociation that emptiness creates.",
+        },
+    ],
+    "I keep starting and quitting": [
+        {
+            "taskTitle": "Write the first physical step of 1 task on a piece of paper",
+            "durationLabel": "3 minutes",
+            "contextNote": "Writing the first step creates a commitment artifact that makes starting again concrete.",
+        },
+        {
+            "taskTitle": "Write the name of 1 unfinished task and draw a box next to it",
+            "durationLabel": "2 minutes",
+            "contextNote": "A visible checkbox externalizes intention and reduces the mental weight of the unfinished thing.",
+        },
+        {
+            "taskTitle": "Write 1 sentence finishing this: The smallest possible first step is",
+            "durationLabel": "3 minutes",
+            "contextNote": "Naming the smallest possible step removes the barrier that causes quitting at the start.",
+        },
+    ],
+    "I don't know who I am": [
+        {
+            "taskTitle": "Write 1 answer to: what made you smile or feel okay this week",
+            "durationLabel": "5 minutes",
+            "contextNote": "Noticing small positive moments reveals values and preferences that define who you already are.",
+        },
+        {
+            "taskTitle": "Write the name of 1 person you genuinely respect and 1 word why",
+            "durationLabel": "3 minutes",
+            "contextNote": "What you admire in others reflects what you value in yourself.",
+        },
+        {
+            "taskTitle": "Write 1 thing you did in the last week that felt right to you",
+            "durationLabel": "3 minutes",
+            "contextNote": "Actions that feel right are anchors to values that exist even when identity feels unclear.",
+        },
+    ],
+    "I feel completely alone": [
+        {
+            "taskTitle": "Text 1 person you have not spoken to this week",
+            "durationLabel": "3 minutes",
+            "contextNote": "Initiating one real contact breaks the isolation loop even before any reply comes.",
+        },
+        {
+            "taskTitle": "Write the name of 1 person who would notice if you were gone",
+            "durationLabel": "2 minutes",
+            "contextNote": "Naming a real connection makes it concrete rather than a feeling that seems invisible.",
+        },
+        {
+            "taskTitle": "Send a voice note to 1 contact saying one honest sentence",
+            "durationLabel": "3 minutes",
+            "contextNote": "Voice connection carries more warmth than text and reduces the sense of being unheard.",
+        },
+    ],
+}
+
+
+def get_execution_engine_fallback(pain_point: str) -> dict:
+    variants = _EXECUTION_ENGINE_FALLBACKS.get(pain_point)
+    if not variants:
+        return {
+            "taskTitle": "Drink 1 glass of water and stand up for 30 seconds",
+            "durationLabel": "1 minute",
+            "contextNote": "A small physical act interrupts inertia and gives the body a signal to begin.",
+        }
+    index = int(_ee_time.time() / 60) % len(variants)
+    return dict(variants[index])

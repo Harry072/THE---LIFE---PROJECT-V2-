@@ -1,12 +1,56 @@
-import { CheckCircle2, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 
-const FEELINGS = ["Clearer", "Softer", "Still heavy", "Focused"];
-const REFLECTION_TAGS = [
-  { value: "less_pressure", label: "Less pressure" },
-  { value: "less_noise", label: "Less noise" },
-  { value: "less_screen", label: "Less screen" },
-  { value: "more_rest", label: "More rest" },
+const MOOD_OPTIONS = [
+  { value: "calmer",      label: "Calmer" },
+  { value: "clearer",     label: "Clearer" },
+  { value: "still_heavy", label: "Still heavy" },
+  { value: "restless",    label: "Restless" },
+  { value: "sleepy",      label: "Sleepy" },
+  { value: "grateful",    label: "Grateful" },
 ];
+
+const REFLECTION_TAGS = [
+  { value: "noise",         label: "Noise" },
+  { value: "pressure",      label: "Pressure" },
+  { value: "overthinking",  label: "Overthinking" },
+  { value: "scrolling",     label: "Scrolling" },
+  { value: "loneliness",    label: "Loneliness" },
+  { value: "nothing_clear", label: "Nothing clear yet" },
+];
+
+function getNextStepHint(mood) {
+  switch (mood) {
+    case "calmer":
+    case "clearer":
+      return "You have a moment of stillness. One small action can anchor it.";
+    case "grateful":
+      return "Hold this feeling privately for a moment, or let it become a gentle reflection.";
+    case "still_heavy":
+    case "restless":
+      return "Heavy is okay. Stay here a little longer, or choose the tiniest possible step.";
+    case "sleepy":
+      return "Rest is a practice too. Return when you're ready — there is no rush.";
+    default:
+      return null;
+  }
+}
+
+function getNextStepType(mood) {
+  switch (mood) {
+    case "calmer":
+    case "clearer":
+      return "loop";
+    case "still_heavy":
+    case "restless":
+      return "reset";
+    case "sleepy":
+      return "rest";
+    case "grateful":
+      return "reflection";
+    default:
+      return "none";
+  }
+}
 
 export default function PostSessionCheckin({
   selectedFeeling,
@@ -18,33 +62,39 @@ export default function PostSessionCheckin({
   isSaved = false,
   saveError = "",
   onReturn,
+  onReflect,
   onClose,
 }) {
   const canSubmit = Boolean(selectedFeeling && selectedReflectionTag && !isSaving);
+  const nextStepHint = isSaved ? getNextStepHint(selectedFeeling) : null;
+  const nextStepType = getNextStepType(selectedFeeling);
 
   return (
     <div className="reset-checkin">
-      <div className="reset-checkin-icon">
-        <CheckCircle2 size={24} aria-hidden="true" />
+      <div className="reset-checkin-ritual">
+        <p className="reset-checkin-ritual-text">You returned for a moment.</p>
+        <p className="reset-checkin-ritual-sub">One quiet signal before you move on.</p>
       </div>
-      <h2>How do you feel now?</h2>
-      <div className="reset-feeling-grid">
-        {FEELINGS.map((feeling) => (
+
+      <h2>How does your mind feel now?</h2>
+      <div className="reset-feeling-grid reset-feeling-grid--3col">
+        {MOOD_OPTIONS.map((option) => (
           <button
-            key={feeling}
+            key={option.value}
             type="button"
-            className={selectedFeeling === feeling ? "is-selected" : ""}
-            onClick={() => onSelectFeeling(feeling)}
+            className={selectedFeeling === option.value ? "is-selected" : ""}
+            onClick={() => onSelectFeeling(option.value)}
+            disabled={isSaved}
           >
-            {feeling}
+            {option.label}
           </button>
         ))}
       </div>
 
-      {selectedFeeling ? (
+      {!isSaved ? (
         <>
-          <h2 style={{ marginTop: 18 }}>What did your mind need less of?</h2>
-          <div className="reset-feeling-grid">
+          <h2 style={{ marginTop: 22 }}>What did your mind need less of?</h2>
+          <div className="reset-feeling-grid reset-feeling-grid--3col">
             {REFLECTION_TAGS.map((tag) => (
               <button
                 key={tag.value}
@@ -56,42 +106,78 @@ export default function PostSessionCheckin({
               </button>
             ))}
           </div>
+          <p className="reset-checkin-microcopy">
+            Honest is always right. No wrong answer here.
+          </p>
         </>
       ) : null}
 
       {isSaved ? (
-        <p style={{ color: "var(--green-bright)", fontSize: 13 }}>
-          Saved. Let the next action stay small.
-        </p>
+        <div className="reset-checkin-saved">
+          <p className="reset-checkin-saved-label">Signal saved. The reset counts.</p>
+          {nextStepHint ? (
+            <p className="reset-checkin-next-step">{nextStepHint}</p>
+          ) : null}
+          <div className="reset-checkin-saved-actions">
+            {nextStepType === "loop" ? (
+              <button type="button" className="reset-primary-action" onClick={onReturn}>
+                Open The Loop
+              </button>
+            ) : null}
+            {nextStepType === "reset" ? (
+              <>
+                <button type="button" className="reset-primary-action" onClick={onClose}>
+                  Stay in Reset Space
+                </button>
+                <button type="button" className="reset-quiet-action" onClick={onReturn}>
+                  Open The Loop
+                </button>
+              </>
+            ) : null}
+            {nextStepType === "rest" ? (
+              <button type="button" className="reset-primary-action" onClick={onClose}>
+                Close gently
+              </button>
+            ) : null}
+            {nextStepType === "reflection" ? (
+              <>
+                <button type="button" className="reset-primary-action" onClick={onReflect}>
+                  Open Reflection
+                </button>
+                <button type="button" className="reset-quiet-action" onClick={onClose}>
+                  Stay here
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
       ) : null}
 
       {saveError ? (
-        <p className="reset-audio-error">{saveError}</p>
+        <p className="reset-audio-error" style={{ marginTop: "1rem" }}>
+          {saveError || "Couldn’t save this signal, but the reset still counts."}
+        </p>
       ) : null}
 
-      {selectedFeeling ? (
+      {!isSaved ? (
         <div className="reset-next-action">
-          <p>Save the signal, then return to one useful action.</p>
           <button
             type="button"
             className="reset-primary-action"
             onClick={onSubmit}
-            disabled={!canSubmit || isSaved}
+            disabled={!canSubmit}
           >
-            {isSaved ? "Signal Saved" : isSaving ? "Saving..." : "Save Reset Signal"}
+            {isSaving ? "Saving…" : "Save Reset Signal"}
           </button>
-          {isSaved ? (
-            <button type="button" className="reset-quiet-action" onClick={onReturn}>
-              Open The Loop
-            </button>
-          ) : null}
         </div>
       ) : null}
 
-      <button type="button" className="reset-quiet-action" onClick={onClose}>
-        <RotateCcw size={15} aria-hidden="true" />
-        Back to Reset Space
-      </button>
+      {!isSaved ? (
+        <button type="button" className="reset-quiet-action reset-checkin-skip" onClick={onClose}>
+          <RotateCcw size={14} aria-hidden="true" />
+          Skip for now
+        </button>
+      ) : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useUserStore } from "../store/userStore";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
 import HeroSection from "../components/dashboard/HeroSection";
+import TodaysPath from "../components/dashboard/TodaysPath";
 import TodaysPlan from "../components/dashboard/TodaysPlan";
 import FocusTimer from "../components/dashboard/FocusTimer";
 import StatCards from "../components/dashboard/StatCards";
@@ -53,6 +54,7 @@ export default function Dashboard() {
           padding: "8px 32px 48px",
         }}>
           <HeroSection user={user} profile={profile} />
+          <TodaysPath />
  
           {/* Row 2: Plan + Focus */}
           <section style={{
@@ -73,7 +75,9 @@ export default function Dashboard() {
             <StatCards />
           </div>
 
-          <WeeklyMirrorCard />
+          <div id="weekly-mirror">
+            <WeeklyMirrorCard />
+          </div>
           <LifeCompanionCard />
  
           {/* Row 4: Meditation */}
@@ -121,6 +125,9 @@ export default function Dashboard() {
         @media (max-width: 767px) {
           aside { display: none; }
           main { margin-left: 0 !important; }
+          main > div {
+            padding-bottom: 96px !important;
+          }
           section[style*="grid-template-columns"] {
             grid-template-columns: 1fr !important;
           }

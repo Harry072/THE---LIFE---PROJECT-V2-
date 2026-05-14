@@ -55,7 +55,7 @@ export default function NightReflection() {
           margin: "0 0 18px", fontSize: 13,
           color: "var(--text-dim)",
         }}>
-          Take 2 minutes to reflect and grow.
+          Name what is happening without turning it into a verdict.
         </p>
         <button
           onClick={(e) => {
