@@ -17,12 +17,7 @@ from ai.validator import (
 PROMPT = "life companion prompt"
 PROMPT_VERSION = "life_companion_v4"
 BOOK_INTENTS = {
-    "philosophy_novel_recommendation",
-    "novel_recommendation",
-    "self_growth_book_request",
     "book_recommendation",
-    "reading_request",
-    "curator_request",
 }
 
 
@@ -51,8 +46,8 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
             knowledge_chunks=chunks,
         )
 
-        self.assertEqual(intent, "philosophy_novel_recommendation")
-        self.assertEqual(response["intent"], "philosophy_novel_recommendation")
+        self.assertEqual(intent, "book_recommendation")
+        self.assertEqual(response["intent"], "book_recommendation")
         self.assertEqual(response["reply_format"], "book_recommendation")
         self.assertEqual(response["suggested_action"]["type"], "curator")
         self.assertNotIn("the_loop", [chunk["id"] for chunk in chunks])
@@ -72,8 +67,8 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
                 chunks = retrieve_companion_knowledge(message, mode, intent, max_chunks=4)
                 response = generate_life_companion_fallback(mode, {}, user_message=message)
 
-                self.assertEqual(intent, "novel_recommendation")
-                self.assertEqual(response["intent"], "novel_recommendation")
+                self.assertEqual(intent, "book_recommendation")
+                self.assertEqual(response["intent"], "book_recommendation")
                 self.assertEqual(response["reply_format"], "book_recommendation")
                 self.assertNotEqual(response["suggested_action"]["type"], "loop")
                 self.assertNotIn("the_loop", [chunk["id"] for chunk in chunks])
@@ -90,7 +85,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
             knowledge_chunks=chunks,
         )
 
-        self.assertEqual(intent, "self_growth_book_request")
+        self.assertEqual(intent, "book_recommendation")
         self.assertEqual(response["suggested_action"]["type"], "curator")
         self.assertNotEqual(response["suggested_action"]["type"], "loop")
         self.assertNotIn("the_loop", [chunk["id"] for chunk in chunks])
@@ -118,7 +113,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
         intent = detect_companion_intent(message, "understand_me")
         response = generate_life_companion_fallback("understand_me", {}, user_message=message)
 
-        self.assertEqual(intent, "novel_recommendation")
+        self.assertEqual(intent, "book_recommendation")
         self.assertEqual(response["reply_format"], "book_recommendation")
         self.assertNotEqual(response["suggested_action"]["type"], "loop")
         self.assertIn("siddhartha", section_text(response))
@@ -131,7 +126,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
         )
 
         self.assertEqual(response["reply_format"], "structured_plan")
-        self.assertEqual(response["suggested_action"]["type"], "loop")
+        self.assertEqual(response["suggested_action"]["type"], "none")
 
     def test_time_management_skipping_routine_returns_plan(self):
         response = generate_life_companion_fallback(
@@ -141,7 +136,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
         )
 
         self.assertEqual(response["reply_format"], "structured_plan")
-        self.assertEqual(response["suggested_action"]["type"], "loop")
+        self.assertEqual(response["suggested_action"]["type"], "none")
         self.assertIn("small enough", section_text(response))
 
     def test_serious_talk_stays_conversational_with_no_action(self):
@@ -186,7 +181,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
             user_message="what should I use in this app if restless?",
         )
 
-        self.assertEqual(intent, "reset_need")
+        self.assertEqual(intent, "app_guidance")
         self.assertEqual(response["reply_format"], "app_guidance")
         self.assertEqual(response["suggested_action"]["type"], "reset")
         self.assertIn("reset space", section_text(response))
@@ -233,7 +228,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
         with self.assertRaises(LifeCompanionValidationError) as raised:
             validate_life_companion_response(
                 json.dumps(payload),
-                expected_intent="novel_recommendation",
+                expected_intent="book_recommendation",
             )
 
         self.assertEqual(raised.exception.reason, "book_intent_loop_action")
@@ -255,7 +250,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
         with self.assertRaises(LifeCompanionValidationError) as raised:
             validate_life_companion_response(
                 json.dumps(payload),
-                expected_intent="wants_talk",
+                expected_intent="emotional_talk",
                 user_message="do not send me to reflection, just talk",
             )
 
@@ -272,7 +267,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
             "weekly_mirror": {"next_focus": "begin before overthinking"},
             "streak_band": "early",
             "onboarding_need": {"struggle_tags": ["routine", "distraction"]},
-            "recent_companion": {"recent_intents": ["routine_request", "book_recommendation"]},
+            "recent_companion": {"recent_intents": ["routine_plan", "book_recommendation"]},
             "curator_interest": {
                 "recent_path_slugs": ["discipline"],
                 "recent_book_ids": ["atomic-habits"],
@@ -322,7 +317,7 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
             )
 
         self.assertEqual(result.status, "fallback")
-        self.assertEqual(result.companion_response["intent"], "novel_recommendation")
+        self.assertEqual(result.companion_response["intent"], "book_recommendation")
         self.assertEqual(result.companion_response["reply_format"], "book_recommendation")
         self.assertEqual(result.companion_response["suggested_action"]["type"], "curator")
         self.assertNotIn("loop", section_text(result.companion_response))

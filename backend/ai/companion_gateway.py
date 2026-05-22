@@ -3,13 +3,22 @@ from dataclasses import dataclass, field
 import os
 from time import perf_counter
 
-from ai.companion_knowledge import detect_companion_intent
+from ai.companion_intents import detect_emotional_state, detect_intent, detect_refused_features
+from ai.companion_knowledge import detect_companion_intent, get_rag_filter_tags
+from ai.companion_playbooks.loader import retrieve_playbook_chunks
+from ai.context import get_companion_session, save_companion_session
 from ai.fallbacks import generate_life_companion_fallback
+from ai.prompts import build_life_companion_prompt
 from ai.groq_companion_gateway import (
     GroqCompanionProviderError,
     generate_life_companion_with_groq,
 )
-from ai.validator import LifeCompanionValidationError, validate_life_companion_response
+from ai.validator import (
+    LifeCompanionValidationError,
+    parse_life_companion_json,
+    validate_companion_response,
+    validate_life_companion_response,
+)
 
 try:
     from openai import (
@@ -65,6 +74,250 @@ OPENAI_TO_GROQ_VALIDATION_REASONS = {
     REASON_INVALID_ACTION_ROUTE,
 }
 
+SEVERITY_ORDER = {
+    "none": 0,
+    "mild": 1,
+    "moderate": 2,
+    "active_pain": 3,
+    "crisis": 4,
+}
+
+
+def _fallback_understanding_classification(latest_message: str) -> dict:
+    es = detect_emotional_state(latest_message)
+    it = detect_intent(latest_message, es)
+    refused = detect_refused_features(latest_message)
+    return {
+        "emotional_state": es,
+        "intent": it,
+        "subject": "unknown",
+        "user_goal": "",
+        "wants_to_talk": it == "receive_and_reflect",
+        "is_refusing_feature": bool(refused),
+        "refused_feature": (refused[0].replace("open_", "") if refused else "none"),
+        "answer_posture": it,
+        "confidence": 0.5,
+    }
+
+
+def _complete_understanding_classification(classification: dict) -> dict:
+    intent = str(classification.get("intent") or "solve_directly").strip() or "solve_directly"
+    emotional_state = str(classification.get("emotional_state") or "none").strip() or "none"
+    classification.setdefault("subject", "unknown")
+    classification.setdefault("user_goal", "")
+    classification.setdefault("wants_to_talk", intent == "receive_and_reflect")
+    classification.setdefault("is_refusing_feature", False)
+    classification.setdefault("refused_feature", "none")
+    classification.setdefault("answer_posture", intent)
+    classification.setdefault("confidence", 0.5)
+    classification["intent"] = intent
+    classification["emotional_state"] = emotional_state
+    return classification
+
+
+def run_understanding_pass(
+    latest_message: str,
+    conversation_history: list,
+) -> dict:
+    """
+    PASS 1 - LLM classification for true meaning understanding.
+    Falls back to keyword detection if the LLM call fails.
+    """
+    from ai.prompts import UNDERSTANDING_PROMPT
+
+    recent = (conversation_history or [])[-6:]
+    history_text = "\n".join(
+        f"{t.get('role', 'user')}: {t.get('content', '')}"
+        for t in recent
+        if isinstance(t, dict)
+    )
+    prompt = (
+        f"{UNDERSTANDING_PROMPT}\n\n"
+        f"[RECENT CONVERSATION]\n{history_text}\n\n"
+        f"[LATEST MESSAGE TO CLASSIFY]\n{latest_message}"
+    )
+
+    try:
+        provider_response = generate_life_companion_with_groq(
+            prompt,
+            prompt_version="life_companion_understanding_v1",
+            timeout_seconds=6,
+        )
+        classification = parse_life_companion_json(provider_response.text)
+        if classification and "emotional_state" in classification and "intent" in classification:
+            return _complete_understanding_classification(classification)
+    except Exception:
+        pass
+
+    return _fallback_understanding_classification(latest_message)
+
+
+def merge_with_safety_net(classification: dict, latest_message: str) -> dict:
+    """
+    Merges LLM understanding with keyword crisis safety net.
+    Always takes the MORE SEVERE emotional state. Keyword crisis forces safety.
+    """
+    classification = _complete_understanding_classification(dict(classification or {}))
+    keyword_state = detect_emotional_state(latest_message)
+    llm_state = classification.get("emotional_state", "none")
+
+    if SEVERITY_ORDER.get(keyword_state, 0) > SEVERITY_ORDER.get(llm_state, 0):
+        classification["emotional_state"] = keyword_state
+
+    if keyword_state == "crisis":
+        classification["emotional_state"] = "crisis"
+        classification["intent"] = "safety_path"
+        classification["answer_posture"] = "safety_path"
+
+    keyword_refused = detect_refused_features(latest_message)
+    if keyword_refused:
+        classification["is_refusing_feature"] = True
+        if classification.get("refused_feature", "none") == "none":
+            classification["refused_feature"] = keyword_refused[0].replace("open_", "")
+
+    return classification
+
+
+def _validator_intent_from_classification(classification: dict, user_message: str, mode: str) -> str:
+    intent = classification.get("intent")
+    subject = classification.get("subject")
+    if intent == "safety_path":
+        return "safety"
+    if intent == "ground_first":
+        return "anxiety_grounding"
+    if intent == "receive_and_reflect":
+        return "emotional_talk"
+    if intent == "factual_question":
+        return "general_question"
+    if intent == "conversational":
+        return "general_question"
+    if intent == "app_help":
+        return "app_guidance"
+    if intent == "recommend_list":
+        subject_map = {
+            "places": "peaceful_knowledge_place_recommendation",
+            "books": "book_recommendation",
+            "fitness": "fitness_guidance",
+            "study": "routine_plan",
+            "routine": "routine_plan",
+            "career": "career_skill_guidance",
+        }
+        return subject_map.get(subject, "general_question")
+    return detect_companion_intent(user_message, mode)
+
+
+_WEB_SEARCH_TRIGGER_PHRASES = {
+    "latest",
+    "current",
+    "today",
+    "now",
+    "recent",
+    "news",
+    "price",
+    "prices",
+    "weather",
+    "forecast",
+    "schedule",
+    "score",
+    "scores",
+    "near me",
+    "nearby",
+    "best",
+    "top",
+    "open now",
+    "2025",
+    "2026",
+}
+
+_WEB_SEARCH_INTENTS = {
+    "factual_question",
+    "recommend_list",
+    "solve_directly",
+    "app_help",
+}
+
+_WEB_SEARCH_SUBJECTS = {
+    "places",
+    "books",
+    "career",
+    "fitness",
+    "study",
+    "routine",
+    "app_usage",
+    "general",
+    "unknown",
+}
+
+
+def should_use_web_research(classification: dict, latest_message: str) -> bool:
+    """
+    Decide whether to add web research. Keep web out of crisis/active-pain turns.
+    """
+    if not get_env_bool("LIFE_COMPANION_WEB_RESEARCH_ENABLED", True):
+        return False
+    emotional_state = classification.get("emotional_state", "none")
+    if emotional_state in {"active_pain", "crisis"}:
+        return False
+    intent = classification.get("intent", "")
+    subject = classification.get("subject", "")
+    text = str(latest_message or "").lower()
+    if "search web" in text or "look up" in text or "browse" in text:
+        return True
+    if intent in {"conversational", "receive_and_reflect", "ground_first", "safety_path"}:
+        return False
+    if any(phrase in text for phrase in _WEB_SEARCH_TRIGGER_PHRASES):
+        return True
+    return intent in _WEB_SEARCH_INTENTS and subject in _WEB_SEARCH_SUBJECTS
+
+
+def run_web_research_pass(latest_message: str, classification: dict) -> str:
+    """
+    Optional research pass for current/factual queries. Never logs prompt/output.
+    """
+    if not should_use_web_research(classification, latest_message):
+        return ""
+    api_key = get_env_value("OPENAI_API_KEY")
+    if not api_key or OpenAI is None:
+        return ""
+
+    model = get_env_value("OPENAI_WEB_SEARCH_MODEL") or "gpt-4o-mini"
+    client = OpenAI(api_key=api_key, timeout=8, max_retries=0)
+    research_prompt = (
+        "Research the user's latest message on the web when useful, then return "
+        "a compact factual brief for another assistant. Do not write the final "
+        "companion reply. Include only facts that help answer the user, and include "
+        "URLs when they are available.\n\n"
+        f"User message: {latest_message}\n"
+        f"Understanding: intent={classification.get('intent')}, "
+        f"subject={classification.get('subject')}, "
+        f"goal={classification.get('user_goal')}"
+    )
+
+    try:
+        response = client.responses.create(
+            model=model,
+            tools=[{"type": "web_search"}],
+            tool_choice="auto",
+            input=research_prompt,
+            max_output_tokens=700,
+        )
+    except TypeError:
+        try:
+            response = client.responses.create(
+                model=model,
+                tools=[{"type": "web_search_preview"}],
+                tool_choice="auto",
+                input=research_prompt,
+                max_output_tokens=700,
+            )
+        except Exception:
+            return ""
+    except Exception:
+        return ""
+
+    text = extract_openai_output_text(response)
+    return text[:3000].strip()
+
 
 class CompanionProviderError(Exception):
     def __init__(
@@ -110,6 +363,7 @@ class CompanionGatewayResult:
     error_reason: str | None = None
     validation_failure_reason: str | None = None
     attempts: list[CompanionProviderAttempt] = field(default_factory=list)
+    prompt_build_ms: int | None = None
 
 
 def get_env_value(name: str) -> str | None:
@@ -198,38 +452,57 @@ def classify_openai_error(error: Exception) -> str:
     return REASON_PROVIDER_EXCEPTION
 
 
-def _call_openai(prompt: str, timeout_seconds: int) -> str:
+def _prompt_parts_to_string(prompt_parts: dict) -> str:
+    """Flatten a prompt_parts dict to a plain string for providers that expect one."""
+    parts: list[str] = [prompt_parts.get("system", "")]
+    ctx = prompt_parts.get("context", "")
+    if ctx:
+        parts.append(ctx)
+    for turn in (prompt_parts.get("history") or []):
+        if isinstance(turn, dict):
+            role = str(turn.get("role", "user")).upper()
+            content = str(turn.get("content", ""))
+            if content:
+                parts.append(f"[{role}]: {content}")
+    user_msg = prompt_parts.get("user_message", "")
+    if user_msg:
+        parts.append(f"[USER]: {user_msg}")
+    return "\n\n".join(p for p in parts if p)
+
+
+def _call_openai(prompt_parts: dict, timeout_seconds: int) -> str:
     api_key, model = get_openai_companion_config()
     client = OpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=0)
-    try:
-        response = client.responses.create(
-            model=model,
-            input=prompt,
-            text={"format": {"type": "json_object"}},
-            max_output_tokens=600,
-            store=False,
-        )
-    except (TypeError, BadRequestError):
-        response = client.responses.create(
-            model=model,
-            input=prompt,
-            max_output_tokens=600,
-            store=False,
-        )
-    text = extract_openai_output_text(response)
+    messages: list[dict] = [{"role": "system", "content": prompt_parts["system"]}]
+    ctx = prompt_parts.get("context", "")
+    if ctx:
+        messages.append({"role": "system", "content": ctx})
+    for turn in (prompt_parts.get("history") or []):
+        if isinstance(turn, dict) and turn.get("role") and turn.get("content"):
+            messages.append({"role": turn["role"], "content": str(turn["content"])})
+    user_msg = prompt_parts.get("user_message", "")
+    if user_msg:
+        messages.append({"role": "user", "content": user_msg})
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        response_format={"type": "json_object"},
+        max_tokens=600,
+    )
+    text = (response.choices[0].message.content or "").strip()
     if not text:
         raise CompanionProviderError(REASON_EMPTY_OUTPUT, "OpenAI returned an empty response.")
     return text
 
 
 def generate_life_companion_with_openai(
-    prompt: str,
+    prompt_parts: dict,
     prompt_version: str,
     timeout_seconds: int = 10,
 ) -> CompanionProviderResponse:
     return call_provider_with_timeout(
         PROVIDER_OPENAI,
-        lambda: _call_openai(prompt, timeout_seconds),
+        lambda: _call_openai(prompt_parts, timeout_seconds),
         prompt_version=prompt_version,
         timeout_seconds=timeout_seconds,
     )
@@ -295,24 +568,25 @@ def call_provider_with_timeout(
 def attempt_provider(
     provider: str,
     *,
-    prompt: str,
+    prompt_parts: dict,
     prompt_version: str,
     expected_intent: str | None = None,
     user_message: str | None = None,
+    understanding: dict | None = None,
 ) -> tuple[dict | None, CompanionProviderAttempt]:
     attempt = CompanionProviderAttempt(provider=provider)
     try:
         if provider == PROVIDER_OPENAI:
             log_companion_provider_call(provider=provider, timeout_seconds=10)
             provider_response = generate_life_companion_with_openai(
-                prompt,
+                prompt_parts,
                 prompt_version=prompt_version,
             )
         elif provider == PROVIDER_GROQ:
             log_companion_provider_call(provider=provider, timeout_seconds=10)
             try:
                 provider_response = generate_life_companion_with_groq(
-                    prompt,
+                    _prompt_parts_to_string(prompt_parts),
                     prompt_version=prompt_version,
                 )
             except GroqCompanionProviderError as error:
@@ -331,6 +605,7 @@ def attempt_provider(
                 provider_response.text,
                 expected_intent=expected_intent,
                 user_message=user_message,
+                understanding=understanding,
             )
         finally:
             attempt.validation_ms = int((perf_counter() - validation_started) * 1000)
@@ -398,17 +673,78 @@ def log_companion_provider_summary(
 
 def generate_life_companion_response(
     *,
-    prompt: str,
+    prompt: str = "",
     prompt_version: str,
     mode: str,
     context: dict | None,
     user_message: str,
     knowledge_chunks: list[dict] | None = None,
+    understanding: dict | None = None,
+    conversation_history: list | None = None,
 ) -> CompanionGatewayResult:
     started = perf_counter()
+
+    # ── PIPELINE: Two-pass understanding and session state ─────────────────
+    latest_message = str(user_message or "").strip()
+    user_id = (context or {}).get("user_id", "")
+    session_id = (context or {}).get("conversation_id") or (context or {}).get("session_id", "default")
+    conversation_history = conversation_history or []
+
+    classification = run_understanding_pass(latest_message, conversation_history)
+    classification = merge_with_safety_net(classification, latest_message)
+
+    emotional_state = classification.get("emotional_state", "none")
+    intent = classification.get("intent", "solve_directly")
+
+    session = get_companion_session(user_id, session_id)
+    refused_this_turn = []
+    if classification.get("is_refusing_feature"):
+        refused_feature = classification.get("refused_feature", "none")
+        if refused_feature != "none":
+            refused_this_turn.append(f"open_{refused_feature}")
+    session.update(emotional_state, refused_this_turn)
+    save_companion_session(user_id, session_id, session)
+    _rag_tags = get_rag_filter_tags(emotional_state, intent)
+    # ───────────────────────────────────────────────────────────────────────
+
+    # ── PIPELINE: Playbook RAG retrieval ──────────────────────────────────
+    prompt_build_started = perf_counter()
+    rag_context_string = retrieve_playbook_chunks(
+        query=latest_message,
+        filter_tags=_rag_tags if _rag_tags else None,
+        top_k=4,
+    )
+    if len(rag_context_string.strip()) < 100:
+        rag_context_string = (
+            "[NOTE: No specific playbook content matched this query. "
+            "Answer from your general knowledge as a thoughtful, knowledgeable "
+            "guide. Be direct and complete. Never use any fallback phrase.]"
+        )
+    web_context_string = run_web_research_pass(latest_message, classification)
+    # ───────────────────────────────────────────────────────────────────────
+
+    # ── PIPELINE: Build structured prompt ─────────────────────────────────
+    _safe_memory = (context or {}).get("safe_memory_summary") or {}
+    _memory_summary = str(_safe_memory.get("summary") or "")[:800]
+    prompt_parts = build_life_companion_prompt(
+        user_message=latest_message,
+        rag_context=rag_context_string,
+        conversation_history=conversation_history,
+        memory_summary=_memory_summary,
+        session_context=session.to_summary(),
+        classification=classification,
+        web_context=web_context_string,
+    )
+    provider_prompt_parts = {
+        **prompt_parts,
+        "user_message": latest_message[:1200],
+    }
+    _prompt_build_ms = int((perf_counter() - prompt_build_started) * 1000)
+    # ───────────────────────────────────────────────────────────────────────
+
     provider_order = get_companion_provider_order()
     attempts: list[CompanionProviderAttempt] = []
-    expected_intent = detect_companion_intent(user_message, mode)
+    expected_intent = _validator_intent_from_classification(classification, user_message, mode)
 
     for provider in provider_order:
         if provider == PROVIDER_GROQ and attempts:
@@ -420,13 +756,35 @@ def generate_life_companion_response(
                 break
         companion_response, attempt = attempt_provider(
             provider,
-            prompt=prompt,
+            prompt_parts=provider_prompt_parts,
             prompt_version=prompt_version,
             expected_intent=expected_intent,
             user_message=user_message,
+            understanding=classification,
         )
         attempts.append(attempt)
         if companion_response:
+            # ── PIPELINE: Action suppression ─────────────────────────────
+            _action_type = (companion_response.get("suggested_action") or {}).get("type", "none")
+            if session.should_suppress_action(_action_type):
+                companion_response["suggested_action"] = {"type": "none", "label": "", "reason": ""}
+                companion_response["route_locked"] = True
+
+            # ── PIPELINE: Semantic response validation ────────────────────
+            _validation = validate_companion_response(
+                response=companion_response,
+                latest_message=latest_message,
+                emotional_state=emotional_state,
+                refused_features=list(session.refused_features),
+                conversation_turn=session.turn_count,
+                intent=intent,
+            )
+            if not _validation["valid"] and _validation["fallback"]:
+                companion_response["reply"] = _validation["fallback"]
+                companion_response["suggested_action"] = {"type": "none", "label": "", "reason": ""}
+                companion_response["route_locked"] = True
+            # ─────────────────────────────────────────────────────────────
+
             latency_ms = int((perf_counter() - started) * 1000)
             provider_ms = sum(item.latency_ms or 0 for item in attempts)
             validation_ms = sum(item.validation_ms or 0 for item in attempts)
@@ -447,6 +805,7 @@ def generate_life_companion_response(
                 provider_ms=provider_ms,
                 validation_ms=validation_ms,
                 attempts=attempts,
+                prompt_build_ms=_prompt_build_ms,
             )
 
     fallback_response = generate_life_companion_fallback(
@@ -486,4 +845,5 @@ def generate_life_companion_response(
         error_reason=first_failure if not validation_failed else None,
         validation_failure_reason=first_validation_failure if validation_failed else None,
         attempts=attempts,
+        prompt_build_ms=_prompt_build_ms,
     )

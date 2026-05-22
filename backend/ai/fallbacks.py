@@ -1,6 +1,7 @@
 import re as _fb_re
 
-from .companion_knowledge import detect_companion_intent
+from .companion_knowledge import detect_companion_intent, SUBJECT_TO_INTENT
+from .companion_intents import normalize_intent
 from .context import CORE_CATEGORY_ORDER
 
 
@@ -81,6 +82,12 @@ CATEGORY_LABELS = {
     "awareness": "noticing the pattern before acting",
     "action": "turning thought into one concrete step",
     "meaning": "connecting effort to something that matters",
+}
+
+KOTLER_TAG_BY_CATEGORY = {
+    "awareness": "Curiosity",
+    "action": "Mastery",
+    "meaning": "Purpose",
 }
 
 DEFAULT_RECOMMENDATION = {
@@ -252,6 +259,12 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "category": "awareness",
             "title": avoid_recent_title("awareness", "Name Today's Loop", recent_titles),
             "subtitle": "Awareness Practice",
+            "kotler_tag": KOTLER_TAG_BY_CATEGORY["awareness"],
+            "waar_action": awareness_action,
+            "ikigai_purpose": (
+                "A pattern you can name stops ruling the day from the background. "
+                "This builds the first layer of mental armor: clean attention."
+            ),
             "why_this_helps": f"Naming {struggles_summary} creates space for one clearer choice.",
             "detail_description": f"Clarity starts with one honest note. Action: {awareness_action}",
             "duration_minutes": awareness_duration,
@@ -269,6 +282,12 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "category": "action",
             "title": avoid_recent_title("action", "Take One Useful Step", recent_titles),
             "subtitle": "Action Practice",
+            "kotler_tag": KOTLER_TAG_BY_CATEGORY["action"],
+            "waar_action": action_step,
+            "ikigai_purpose": (
+                "Avoidance loses authority when the body completes one visible rep. "
+                "This trains mastery by proving motion can happen before readiness."
+            ),
             "why_this_helps": "A small action interrupts the loop without asking for a perfect day.",
             "detail_description": f"Momentum returns through one useful movement. Action: {action_step}",
             "duration_minutes": action_duration,
@@ -286,6 +305,12 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "category": "meaning",
             "title": avoid_recent_title("meaning", "Make Tomorrow Lighter", recent_titles),
             "subtitle": "Meaning Practice",
+            "kotler_tag": KOTLER_TAG_BY_CATEGORY["meaning"],
+            "waar_action": meaning_action,
+            "ikigai_purpose": (
+                "Purpose becomes real when effort serves a future beyond the present mood. "
+                "One useful act proves your day can carry weight."
+            ),
             "why_this_helps": "Meaning grows when one action serves a future you care about.",
             "detail_description": f"A small helpful act can reconnect effort to purpose. Action: {meaning_action}",
             "duration_minutes": meaning_duration,
@@ -370,6 +395,44 @@ def companion_action(action_type: str, label: str | None = None) -> dict:
 def has_any(text: str, phrases: list[str]) -> bool:
     lowered = str(text or "").lower()
     return any(phrase in lowered for phrase in phrases)
+
+
+def is_memory_followup(message: str) -> bool:
+    lowered = str(message or "").lower().replace("’", "'")
+    return has_any(
+        lowered,
+        [
+            "what did i say before",
+            "what did i say earlier",
+            "what was my last message",
+            "what did we talk about",
+            "continue from that",
+            "continue from there",
+            "based on my last message",
+            "based on what i said",
+        ],
+    )
+
+
+def is_breakup_message(message: str) -> bool:
+    lowered = str(message or "").lower().replace("’", "'")
+    return has_any(
+        lowered,
+        [
+            "breakup",
+            "break up",
+            "broke up",
+            "heartbreak",
+            "heart broken",
+            "girlfriend left",
+            "boyfriend left",
+            "my ex",
+            "miss her",
+            "miss him",
+            "she left me",
+            "he left me",
+        ],
+    )
 
 
 def detect_companion_fallback_intent(message: str) -> dict:
@@ -640,6 +703,8 @@ def generate_life_companion_crisis_response() -> dict:
         tone="serious",
         risk_level="crisis",
         safety_message="Immediate support is more important than using the app right now.",
+        reply_format="safety",
+        intent="safety",
     )
 
 
@@ -704,8 +769,7 @@ def build_book_recommendation_fallback(
     knowledge_chunks: list[dict] | None = None,
 ) -> dict:
     action_type, label = _book_action_type(flags)
-    _chunk_ids = [str(chunk.get("id") or "") for chunk in (knowledge_chunks or []) if isinstance(chunk, dict)]
-    wants_philosophy = _wants_philosophy_novels(user_message, intent) or "philosophy_novels" in _chunk_ids
+    wants_philosophy = _wants_philosophy_novels(user_message, intent)
     wants_novels = _wants_novels(user_message, intent)
     wants_discipline = intent == "self_growth_book_request" or _wants_discipline_books(user_message)
     support_style = str((safe_memory or {}).get("support_style") or "").lower()
@@ -720,7 +784,7 @@ def build_book_recommendation_fallback(
             label=label,
             tone="grounded",
             reply_format="book_recommendation",
-            intent="philosophy_novel_recommendation",
+            intent="book_recommendation",
             sections=[
                 {
                     "title": "Start here",
@@ -754,7 +818,7 @@ def build_book_recommendation_fallback(
             label=label,
             tone="grounded",
             reply_format="book_recommendation",
-            intent="novel_recommendation",
+            intent="book_recommendation",
             sections=[
                 {
                     "title": "Start here",
@@ -787,7 +851,7 @@ def build_book_recommendation_fallback(
             label=label,
             tone="grounded",
             reply_format="book_recommendation",
-            intent="self_growth_book_request",
+            intent="book_recommendation",
             sections=[
                 {
                     "title": "Start here",
@@ -866,6 +930,7 @@ def generate_life_companion_fallback(
     prompt_injection: bool = False,
     user_message: str = "",
     knowledge_chunks: list[dict] | None = None,
+    correction_replay: bool = False,
 ) -> dict:
     safe_context = context or {}
     task_summary = safe_context.get("task_summary") or {}
@@ -874,7 +939,11 @@ def generate_life_companion_fallback(
     weak_categories = task_summary.get("weak_categories") or []
     first_weak_category = weak_categories[0] if weak_categories else "action"
     flags = detect_companion_fallback_intent(user_message)
-    deterministic_intent = detect_companion_intent(user_message, mode)
+    deterministic_intent = normalize_intent(detect_companion_intent(user_message, mode))
+    _und = safe_context.get("understanding") or {}
+    _subj = _und.get("subject", "unknown")
+    if deterministic_intent == "general_question" and _subj in SUBJECT_TO_INTENT:
+        deterministic_intent = SUBJECT_TO_INTENT[_subj]
     safe_memory = safe_context.get("safe_memory_summary") or {}
 
     if prompt_injection or deterministic_intent == "prompt_injection":
@@ -886,6 +955,42 @@ def generate_life_companion_fallback(
             tone="grounded",
             risk_level="low",
             safety_message="The request tried to move outside the companion boundaries.",
+            reply_format="safety",
+            intent="safety",
+        )
+
+    if deterministic_intent == "safety":
+        return build_life_companion_response(
+            reply=(
+                "I cannot help with private instruction content, unsafe directions, or emergency-like requests in a normal coaching flow. "
+                "If this is about immediate safety, contact local emergency help or a trusted person now."
+            ),
+            action_type="none",
+            tone="serious",
+            risk_level="low",
+            safety_message="This request stays inside safety boundaries.",
+            reply_format="safety",
+            intent="safety",
+        )
+
+    if is_memory_followup(user_message):
+        previous_summary = str(safe_memory.get("previous_user_summary") or "").strip()
+        previous_request = str(safe_memory.get("previous_user_request") or "").strip()
+        if previous_summary:
+            reply = f"Earlier, {previous_summary[0].lower() + previous_summary[1:] if len(previous_summary) > 1 else previous_summary.lower()} We can continue from there."
+        elif previous_request:
+            reply = f"Earlier, you asked about this: {previous_request}. We can continue from there."
+        else:
+            reply = "I do not have enough earlier conversation context in this chat yet. Send the last point again and I will continue from there."
+        return build_life_companion_response(
+            reply=reply,
+            action_type="none",
+            tone="grounded",
+            reply_format="conversation",
+            intent="general_question",
+            sections=[
+                {"title": "Earlier context", "body": reply},
+            ],
         )
 
     if deterministic_intent in BOOK_RECOMMENDATION_INTENTS:
@@ -897,6 +1002,152 @@ def generate_life_companion_fallback(
             knowledge_chunks=knowledge_chunks,
         )
 
+    if deterministic_intent == "correction_request" and not correction_replay:
+        previous_request = str(safe_memory.get("previous_user_request") or "").strip()
+        if previous_request:
+            corrected = generate_life_companion_fallback(
+                mode,
+                context,
+                user_message=previous_request,
+                knowledge_chunks=knowledge_chunks,
+                correction_replay=True,
+            )
+            corrected["reply"] = f"You're right — I missed your question. {corrected.get('reply', '')}"
+            corrected["suggested_action"] = companion_action("none")
+            corrected["intent"] = "correction_request"
+            corrected.setdefault("reply_format", "conversation")
+            return corrected
+        return build_life_companion_response(
+            reply=(
+                "You're right — I missed what you were asking. Send the question once more and I will answer it directly first, without routing you away."
+            ),
+            action_type="none",
+            tone="grounded",
+            reply_format="conversation",
+            intent="correction_request",
+        )
+
+    if deterministic_intent == "peaceful_knowledge_place_recommendation":
+        return build_life_companion_response(
+            reply=(
+                "Here are peaceful places where you can feel calm, meditate, or find quiet."
+            ),
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="peaceful_knowledge_place_recommendation",
+            sections=[
+                {"title": "Peaceful places to visit", "items": [
+                    "Ashram or meditation center — structured silence and calm for sitting with yourself.",
+                    "Gurudwara or temple — peaceful atmosphere and a grounding, disciplined presence.",
+                    "Botanical garden or quiet park — nature helps the mind settle without effort.",
+                    "Riverside or lake area — slow, open environment for long quiet walks or sitting in thought.",
+                    "Library or reading room — if you want peace plus knowledge, this is the best mix.",
+                    "Museum or heritage site — calm walking, stories of time, and low social pressure.",
+                ]},
+                {"title": "How to use the visit", "body": "Go without a fixed plan. Keep your phone low. Sit for ten quiet minutes. If something draws your attention, stay with it. Leave with one line: what did this place give you today?"},
+                {"title": "Best first pick", "body": "If you want meditation and peace, start with a quiet spiritual place, a meditation center, or a nature park near you. That is usually the most accessible first step."},
+            ],
+        )
+
+    if deterministic_intent == "routine_plan":
+        lowered = str(user_message or "").lower()
+        if has_any(lowered, ["study", "studies", "exam", "academic", "focus", "concentrate"]):
+            return build_life_companion_response(
+                reply="If studies are not holding your attention, make the next session smaller and more protected. Do not wait to feel focused first.",
+                action_type="none",
+                tone="grounded",
+                reply_format="structured_plan",
+                intent="routine_plan",
+                sections=[
+                    {"title": "Study reset", "items": [
+                        "Choose one subject and one tiny target: one page, five questions, or one concept.",
+                        "Put the phone away from your body before starting.",
+                        "Study for 25 minutes, then stop for five minutes and write what you remember.",
+                        "Use active recall: close the notes and explain the point in your own words.",
+                    ]},
+                    {"title": "Rule for today", "body": "One honest 25-minute block is better than pretending you will study for six hours. Start with the first block, then decide the next one."},
+                ],
+            )
+        return build_life_companion_response(
+            reply="Here is a simple routine you can start with today. Keep it small enough to repeat and smaller than your ambition so it survives the week.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="routine_plan",
+            sections=[
+                {"title": "Daily structure", "items": [
+                    "Morning: water, bed, wash, then no phone for the first 20 minutes.",
+                    "First block: 60-90 minutes for study or work before distractions take over.",
+                    "Reset: five minutes walking, stretching, or breathing after the first block.",
+                    "Second block: 45 minutes on the next useful task.",
+                    "Evening close: write tomorrow's first task and set clothes/books ready.",
+                ]},
+                {"title": "Smaller version", "body": "On low-energy days, keep it small enough to protect only two anchors: one 25-minute focus block and one evening close. That still counts."},
+            ],
+        )
+
+    if deterministic_intent == "study_gym_plan":
+        return build_life_companion_response(
+            reply="You need a structure that protects both studies and gym without making the day too heavy.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="study_gym_plan",
+            sections=[
+                {"title": "Daily anchors", "items": [
+                    "Morning: 60-90 minutes of focused study before phone or social distractions.",
+                    "Afternoon: 20-30 minutes of active revision from the morning's work.",
+                    "Evening: gym session for 60-75 minutes.",
+                    "After gym: protein-based meal, water, recovery, and a calm wind-down.",
+                    "Night: pack gym/study items and write tomorrow's first study task.",
+                ]},
+                {"title": "The rule", "body": "Protect one study block and one gym block first. Add more only after those two stay consistent for a week."},
+                {"title": "Start today", "body": "Pick your gym time and your first study topic. Those two decisions are enough for day one."},
+            ],
+        )
+
+    if deterministic_intent == "fitness_guidance":
+        return build_life_companion_response(
+            reply="Here is how to learn body growth in the gym: train progressively, eat enough, recover properly, and avoid changing the plan every week.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="fitness_guidance",
+            sections=[
+                {"title": "Training basics", "items": [
+                    "Train 3-4 days per week with compound lifts: squat, hinge, push, pull, and carry.",
+                    "Use 3 sets of 8-12 reps for most exercises while learning form.",
+                    "Progressive overload: add one rep, one set, or small weight when form stays clean.",
+                ]},
+                {"title": "Food and recovery", "items": [
+                    "Protein daily: roughly 1.6-2g per kg bodyweight if available to you.",
+                    "Eat enough overall. Muscle growth slows if you train hard but under-eat.",
+                    "Sleep 7-9 hours. Recovery is where growth is built.",
+                ]},
+                {"title": "Mistakes to avoid", "body": "Do not max out every session, skip legs, copy advanced routines too early, ignore form, or change programs before 8 weeks."},
+                {"title": "Starter plan", "body": "For the first month, do three full-body sessions weekly, walk on off days, eat protein at each meal, and track lifts in a notebook."},
+            ],
+        )
+
+    if deterministic_intent == "anxiety_grounding":
+        return build_life_companion_response(
+            reply="First, do not try to solve your whole life while your mind is loud. Ground your body first.",
+            action_type="none",
+            tone="grounded",
+            reply_format="grounding",
+            intent="anxiety_grounding",
+            sections=[
+                {"title": "Do this now", "items": [
+                    "Put both feet flat on the floor.",
+                    "Relax your jaw and shoulders.",
+                    "Take one slow breath out, longer than the breath in.",
+                    "Name three ordinary things you can see.",
+                ]},
+                {"title": "Small next move", "body": "After that, choose only one visible task or one person to message. Reset Space is optional if you want guided calm."},
+            ],
+        )
+
     if deterministic_intent == "quote_request":
         return build_life_companion_response(
             reply=(
@@ -905,6 +1156,7 @@ def generate_life_companion_fallback(
             action_type="none",
             tone="grounded",
             reply_format="quote",
+            intent="quote_request",
             sections=[
                 {"title": "The idea", "body": "\"Do not wait to feel fearless. Carry your preparation calmly, and let one honest sentence begin the day.\""},
                 {"title": "Apply this", "body": "Before your next difficult moment, choose one sentence that is steady, not perfect."},
@@ -972,9 +1224,214 @@ def generate_life_companion_fallback(
             action_type="real_world_action",
             label="Do one physical reset",
             reply_format="physical_action",
+            intent="physical_action",
             sections=[
                 {"title": "Do this now", "items": ["Stand up", "Drink water", "Put your phone across the room"]},
                 {"title": "Then", "body": "Do one visible task for two minutes. No reflection needed right now, just movement."},
+            ],
+        )
+
+    if deterministic_intent == "shastar_vidya":
+        return build_life_companion_response(
+            reply="Shastar Vidya is a Sikh martial art built on presence, discipline, and body awareness. Here is a beginner practice plan.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="shastar_vidya",
+            sections=[
+                {"title": "Daily beginner practice", "items": [
+                    "Footwork and stance: 10 minutes. Feet shoulder-width, weight balanced evenly, spine upright.",
+                    "Basic strikes in the air: 10 minutes. Slow and deliberate — correct form before any speed.",
+                    "Breathing control: 5 minutes between sets. Each breath leads the movement, not the other way around.",
+                ]},
+                {"title": "The mindset", "body": "Treat it as moving meditation: full attention, no phone, each repetition intentional. Shastar Vidya is not about aggression — it is about controlled presence."},
+                {"title": "First seven days", "body": "Practice footwork and stance only. Build the foundation before adding technique. Seven days of stance work will change how your body holds itself."},
+            ],
+        )
+
+    if deterministic_intent == "body_growth":
+        return build_life_companion_response(
+            reply="Here is a clear gym learning guide for body growth — training, food, recovery, and the mistakes to avoid.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="body_growth",
+            sections=[
+                {"title": "Training", "items": [
+                    "Three full-body sessions per week: squat, push (bench or press), pull (row or pull-up).",
+                    "3 sets of 8–12 reps per exercise. Progress by adding one rep or a small weight each week.",
+                    "Rest 60–90 seconds between sets for muscle building.",
+                ]},
+                {"title": "Food and recovery", "items": [
+                    "Protein: 1.6–2g per kg of bodyweight daily. Eggs, chicken, lentils, dairy count.",
+                    "Sleep 7–9 hours: most muscle repair happens at night, not in the gym.",
+                    "Eat enough — under-eating stops growth even with good training.",
+                ]},
+                {"title": "Mistakes to avoid", "body": "Changing the program too often, skipping recovery days, training without progressive overload, and expecting visible results in under 8 weeks."},
+                {"title": "Start today", "body": "Three full-body sessions this week, protein at every meal, sleep on time. That is the entire system for the first month."},
+            ],
+        )
+
+    if deterministic_intent == "empathy_eq":
+        return build_life_companion_response(
+            reply="Empathy is a skill you can build through daily practice. Here is a guide on active listening and understanding feelings.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="empathy_eq",
+            sections=[
+                {"title": "What empathy actually is", "body": "Empathy is not agreement or fixing. It is staying present with how someone feels without rushing toward a solution."},
+                {"title": "Active listening steps", "items": [
+                    "Stop preparing your response while they speak — listen until they fully finish.",
+                    "Reflect back what you heard: 'That sounds frustrating' — not advice or your own story.",
+                    "Ask one question about how they felt, not what they did or should do next.",
+                    "Stay quiet after your question. Let them fill the space.",
+                ]},
+                {"title": "Daily exercise", "body": "In one conversation today, give no advice. Ask only 'How did that feel?' and listen fully to the answer. That is the whole practice."},
+                {"title": "Over time", "body": "Empathy grows through repeated attention and patience, not natural talent. It gets easier the more you choose it."},
+            ],
+        )
+
+    if deterministic_intent == "relationship_understanding":
+        return build_life_companion_response(
+            reply="Understanding others' feelings is a skill built through attention, not intuition. Here is how to develop it.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="relationship_understanding",
+            sections=[
+                {"title": "What gets in the way", "body": "Most people listen to respond, not to understand. The mind is already preparing the next sentence while the other person is still speaking."},
+                {"title": "How to understand others", "items": [
+                    "Listen to finish: do not speak until they have fully stopped.",
+                    "Name what you notice, gently: 'You sound tired' — not 'You are tired.'",
+                    "Ask about feelings, not facts: 'How did that land for you?' — not 'What happened?'",
+                    "Do not jump to advice or comparison. Presence is the point.",
+                ]},
+                {"title": "Practice for today", "body": "In the next conversation you have, ask one feeling-based question and stay silent for the full answer. Notice what you hear when you stop filling the space."},
+            ],
+        )
+
+    if deterministic_intent == "emotional_talk":
+        if is_breakup_message(user_message):
+            return build_life_companion_response(
+                reply=(
+                    "That kind of breakup pain can hit the body as much as the mind. Tonight, your job is not to solve the whole relationship; it is to stay steady and avoid doing something impulsive from the hurt."
+                ),
+                action_type="none",
+                tone="serious",
+                reply_format="conversation",
+                intent="emotional_talk",
+                sections=[
+                    {"title": "Right now", "body": "Let the feeling be real without letting it drive every action. Do not check, text, stalk, or argue while the pain is fresh."},
+                    {"title": "One safe step", "body": "Drink water, put your phone away for 20 minutes, and sit somewhere you are not alone if possible. What part is hurting most right now: missing them, regret, or shock?"},
+                ],
+            )
+        return build_life_companion_response(
+            reply="That sounds like a lot to hold. We do not need to turn this into a plan right now. What is the part that feels heaviest?",
+            action_type="none",
+            tone="grounded",
+            reply_format="conversation",
+            intent="emotional_talk",
+            sections=[
+                {"title": "What I notice", "body": "Something heavy is in the room. You do not need to fix it, solve it, or explain it perfectly."},
+                {"title": "One question", "body": "What is the part that feels heaviest right now?"},
+            ],
+        )
+
+    if deterministic_intent == "life_clarity":
+        return build_life_companion_response(
+            reply="When life feels unclear, do not demand a final answer from yourself. Use a smaller decision frame first.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="life_clarity",
+            sections=[
+                {"title": "Decision frame", "items": [
+                    "What responsibility is already in front of me?",
+                    "What skill would make me more useful in six months?",
+                    "What kind of person do my repeated actions point toward?",
+                ]},
+                {"title": "Small experiment", "body": "For seven days, test one direction through action: study one skill, help one person, or finish one meaningful task. Let evidence speak louder than overthinking."},
+            ],
+        )
+
+    if deterministic_intent == "career_skill_guidance":
+        return build_life_companion_response(
+            reply="Build career skill through visible output, not just consuming lessons.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="career_skill_guidance",
+            sections=[
+                {"title": "Learning path", "items": [
+                    "Pick one skill lane: coding, design, writing, data, sales, or operations.",
+                    "Learn the basics for 30-45 minutes daily.",
+                    "Build one small public project every week.",
+                    "Keep proof: GitHub, portfolio, notes, case studies, or short demos.",
+                    "Apply or reach out only after you have visible work to show.",
+                ]},
+                {"title": "Start today", "body": "Choose one skill and create one tiny output today: a page, a script, a design, a summary, or a practice problem solved cleanly."},
+            ],
+        )
+
+    if deterministic_intent == "task_help":
+        return build_life_companion_response(
+            reply="Do not fight the whole task at once. Shrink it until the first move is visible.",
+            action_type="none",
+            tone="grounded",
+            reply_format="structured_plan",
+            intent="task_help",
+            sections=[
+                {"title": "Action frame", "items": [
+                    "Write the task in one sentence.",
+                    "Circle the first physical or visible step.",
+                    "Set a 10-minute timer.",
+                    "Stop after 10 minutes only to decide the next small step.",
+                ]},
+                {"title": "The rule", "body": "Momentum is built by beginning before the whole plan feels clear."},
+            ],
+        )
+
+    if deterministic_intent == "app_guidance":
+        lowered = str(user_message or "").lower()
+        if has_any(lowered, ["reset", "calm", "anxious", "restless"]):
+            action_type, label = "reset", "Open Reset Space"
+            feature = "Use Reset Space when your mind is loud and you need breathing, grounding, or calm audio before choosing a task."
+        elif has_any(lowered, ["book", "read", "curator", "learning"]):
+            action_type, label = "curator", "Open Curator"
+            feature = "Use Curator when you want books, ideas, or a learning path."
+        elif has_any(lowered, ["reflect", "journal", "reflection"]):
+            action_type, label = "reflection", "Open Reflection"
+            feature = "Use Reflection when you want to write honestly and understand your inner weather."
+        elif has_any(lowered, ["weekly", "mirror", "pattern"]):
+            action_type, label = "weekly_mirror", "Open Dashboard"
+            feature = "Use Weekly Mirror when you want to see patterns across the week."
+        else:
+            action_type, label = "loop", "Open The Loop"
+            feature = "Use The Loop when you want one practical task, structure, or a next step."
+        return build_life_companion_response(
+            reply=feature,
+            action_type=action_type,
+            label=label,
+            tone="grounded",
+            reply_format="app_guidance",
+            intent="app_guidance",
+            sections=[
+                {"title": "Use this feature", "body": feature},
+                {"title": "How to use it", "body": "Open it after this answer, choose the smallest available step, and avoid turning the app into another place to overthink."},
+            ],
+        )
+
+    if deterministic_intent == "spiritual_reflection":
+        return build_life_companion_response(
+            reply="A grounded way to hold this is: let the question make you more honest, not more certain.",
+            action_type="none",
+            tone="grounded",
+            reply_format="moral_reflection",
+            intent="spiritual_reflection",
+            sections=[
+                {"title": "Neutral reflection", "body": "Spiritual and philosophical questions do not need forced certainty. They can point you toward humility, attention, and better choices."},
+                {"title": "Small practice", "body": "Ask: 'What would I do today if I wanted to live with a little more truth?' Then choose one small action that matches the answer."},
             ],
         )
 
@@ -1347,58 +1804,15 @@ def generate_life_companion_fallback(
             label="Open Reflection",
         )
 
-    if mode == "make_today_easier":
+    if deterministic_intent == "general_question":
         return build_life_companion_response(
             reply=(
-                "The friction makes sense. When the day feels heavy, the useful move is not a perfect plan; "
-                f"it is one smaller {first_weak_category} step. Open The Loop and choose the task that takes the least resistance."
+                "I can answer that directly. Send the thing you want help with, and I will keep it clear, practical, and focused on your actual question."
             ),
-            action_type="loop",
-        )
-
-    if mode == "reset_my_mind":
-        return build_life_companion_response(
-            reply=(
-                "Your mind sounds like it needs less argument and more ground. Give it a short reset: breathe, lower the pressure, "
-                "and let the next choice become visible after your body settles."
-            ),
-            action_type="reset",
-        )
-
-    if mode == "help_me_reflect":
-        if flags["no_reflection"]:
-            return build_life_companion_response(
-                reply=(
-                    "Understood. We can skip Reflection. Say the problem in one plain sentence here, and we can work from that."
-                ),
-                action_type="none",
-            )
-        return build_life_companion_response(
-            reply=(
-                "You do not need a perfect reflection tonight. Start with one line: "
-                "\"The thing I kept returning to today was...\" That is enough to open the door."
-            ),
-            action_type="reflection",
-            label="Open Reflection",
-        )
-
-    if mode == "suggest_next_step":
-        mirror_action = choose_companion_action_from_weekly_mirror(safe_context)
-        if mirror_action:
-            return {
-                "reply": (
-                    f"Your latest Weekly Mirror points toward this focus: {next_focus} "
-                    "You do not need to solve the whole pattern today. Carry one clear next step."
-                ),
-                "suggested_action": mirror_action,
-                "tone": "grounded",
-                "safety": {"risk_level": "none", "message": None},
-            }
-        return build_life_companion_response(
-            reply=(
-                "The cleanest next step is to give the day one shape. Open The Loop and choose the smallest useful action available."
-            ),
-            action_type="loop",
+            action_type="none",
+            tone="grounded",
+            reply_format="conversation",
+            intent="general_question",
         )
 
     return build_life_companion_response(

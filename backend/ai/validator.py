@@ -2,6 +2,7 @@ import json
 import re
 
 from .context import CORE_CATEGORY_ORDER, normalize_category
+from .companion_intents import normalize_intent
 
 
 class TaskValidationError(Exception):
@@ -55,6 +56,7 @@ COMPANION_REPLY_FORMATS = {
 }
 
 BOOK_RECOMMENDATION_INTENTS = {
+    "book_recommendation",
     "philosophy_novel_recommendation",
     "novel_recommendation",
     "self_growth_book_request",
@@ -62,6 +64,23 @@ BOOK_RECOMMENDATION_INTENTS = {
     "reading_request",
     "curator_request",
     "reading_or_learning",
+}
+
+DIRECT_ANSWER_INTENTS = {
+    "peaceful_knowledge_place_recommendation",
+    "empathy_eq",
+    "relationship_understanding",
+    "study_gym_plan",
+    "fitness_guidance",
+    "routine_plan",
+    "book_recommendation",
+    "quote_request",
+    "physical_action",
+    "career_skill_guidance",
+    "life_clarity",
+    "spiritual_reflection",
+    "correction_request",
+    "general_question",
 }
 
 _DEDUP_STOP_WORDS = {
@@ -207,6 +226,18 @@ COMPANION_UNSAFE_PATTERNS = [
     r"\bwill change your life\b",
 ]
 
+SOURCE_LEAKAGE_PATTERNS = [
+    r"\baccording to (the )?(pdf|document|knowledge base|source|retrieved context)\b",
+    r"\b(the|this) pdf\b",
+    r"\bknowledge base\b",
+    r"\bretrieved (guidance|knowledge|context|text|chunk)\b",
+    r"\bchunk(_id| id| ids?)\b",
+    r"\bsource (name|metadata|document|text)\b",
+    r"\bsimilarity score\b",
+    r"\bpage number\b",
+    r"\bon page \d+\b",
+]
+
 CRISIS_PATTERNS = [
     r"\bkill myself\b",
     r"\bkill me\b",
@@ -260,6 +291,9 @@ INTENSITY_DURATION_RANGES = {
     "normal": (10, 20),
     "deeper": (20, 30),
 }
+
+KOTLER_TAGS = {"Curiosity", "Purpose", "Passion", "Autonomy", "Mastery"}
+KOTLER_TAG_LOOKUP = {tag.lower(): tag for tag in KOTLER_TAGS}
 
 
 def parse_model_json(raw_text: str):
@@ -460,7 +494,7 @@ def validate_companion_sections(sections: object) -> list[dict]:
         return []
     if not isinstance(sections, list):
         raise LifeCompanionValidationError("sections_not_array")
-    if len(sections) > 5:
+    if len(sections) > 6:
         raise LifeCompanionValidationError("too_many_sections")
     validated = []
     for i, section in enumerate(sections):
@@ -482,14 +516,14 @@ def validate_companion_sections(sections: object) -> list[dict]:
         if raw_items is not None:
             if not isinstance(raw_items, list):
                 raise LifeCompanionValidationError(f"section_{i}_items_not_array")
-            if len(raw_items) > 8:
+            if len(raw_items) > 10:
                 raise LifeCompanionValidationError(f"section_{i}_too_many_items")
             clean_items = []
             for j, item in enumerate(raw_items):
                 if not isinstance(item, str):
                     raise LifeCompanionValidationError(f"section_{i}_item_{j}_not_string")
                 cleaned = " ".join(item.strip().split())
-                if len(cleaned) > 120:
+                if len(cleaned) > 180:
                     raise LifeCompanionValidationError(f"section_{i}_item_{j}_too_long")
                 if has_pattern(cleaned, COMPANION_UNSAFE_PATTERNS):
                     raise LifeCompanionValidationError(f"section_{i}_item_{j}_unsafe")
@@ -499,7 +533,7 @@ def validate_companion_sections(sections: object) -> list[dict]:
             if not isinstance(raw_body, str):
                 raise LifeCompanionValidationError(f"section_{i}_body_not_string")
             body = " ".join(raw_body.strip().split())
-            if len(body) > 400:
+            if len(body) > 650:
                 raise LifeCompanionValidationError(f"section_{i}_body_too_long")
             if has_pattern(body, COMPANION_UNSAFE_PATTERNS):
                 raise LifeCompanionValidationError(f"section_{i}_unsafe_body")
@@ -521,17 +555,81 @@ def _sections_contain(sections: list[dict], keyword: str) -> bool:
     return False
 
 
-def validate_direct_output_contract(result: dict, expected_intent: str | None = None) -> None:
-    intent = str(expected_intent or result.get("intent") or "").strip().lower()
+def _combined_response_text(result: dict) -> str:
     sections = result.get("sections") or []
+    parts = [str(result.get("reply") or "")]
+    for section in sections:
+        parts.append(str(section.get("title") or ""))
+        parts.append(str(section.get("body") or ""))
+        parts.extend(str(item or "") for item in (section.get("items") or []))
+    return " ".join(parts).lower()
 
-    if intent == "study_gym_routine":
+
+def validate_no_source_leakage(result: dict) -> None:
+    if has_pattern(_combined_response_text(result), SOURCE_LEAKAGE_PATTERNS):
+        raise LifeCompanionValidationError("source_metadata_leakage")
+
+
+def _has_any_text(result: dict, words: list[str]) -> bool:
+    text = _combined_response_text(result)
+    return any(word in text for word in words)
+
+
+def _reject_wrong_route(result: dict, intent: str) -> None:
+    action_type = (result.get("suggested_action") or {}).get("type")
+    if action_type in {"loop", "curator", "reset", "reflection", "weekly_mirror"}:
+        allowed = {
+            "book_recommendation": {"curator", "none"},
+            "anxiety_grounding": {"reset", "real_world_action", "none"},
+            "app_guidance": {"loop", "reflection", "reset", "curator", "weekly_mirror", "real_world_action", "none"},
+            "task_help": {"loop", "real_world_action", "none"},
+            "routine_plan": {"loop", "none"},
+        }.get(intent, {"none", "real_world_action"})
+        if action_type not in allowed:
+            raise LifeCompanionValidationError(f"{intent}_invalid_route_action")
+
+    reply = str(result.get("reply") or "").lower()
+    if intent in DIRECT_ANSWER_INTENTS and action_type != "none":
+        if len(_significant_words(reply)) < 8 and has_pattern(reply, [r"\b(open|go to|use)\b"]):
+            raise LifeCompanionValidationError(f"{intent}_route_only_answer")
+
+
+def validate_direct_output_contract(result: dict, expected_intent: str | None = None) -> None:
+    intent = normalize_intent(expected_intent or result.get("intent"))
+    sections = result.get("sections") or []
+    _reject_wrong_route(result, intent)
+
+    if intent in {"study_gym_plan", "study_gym_routine"}:
         has_study = _sections_contain(sections, "study") or "study" in str(result.get("reply", "")).lower()
         has_gym = _sections_contain(sections, "gym") or "gym" in str(result.get("reply", "")).lower()
         if not has_study:
             raise LifeCompanionValidationError("study_gym_routine_missing_study_content")
         if not has_gym:
             raise LifeCompanionValidationError("study_gym_routine_missing_gym_content")
+
+    if intent in {"peaceful_knowledge_place_recommendation", "peaceful_place_recommendation"}:
+        place_words = [
+            "library", "reading room", "museum", "garden", "park", "gurudwara",
+            "temple", "monastery", "ashram", "fort", "memorial", "book cafe",
+            "bookshop", "gallery", "university", "heritage",
+            "meditation center", "riverside", "lake", "river",
+        ]
+        combined = _combined_response_text(result)
+        has_places = sum(1 for word in place_words if word in combined) >= 3
+        if not has_places:
+            raise LifeCompanionValidationError("place_recommendation_missing_places")
+        # Reject grounding-only response — place requests must not be answered with
+        # breathing steps alone, even when the user's tone sounds anxious.
+        grounding_phrases = [
+            "feet flat on the floor", "relax your jaw", "one slow breath out",
+            "name three things you can see",
+        ]
+        is_grounding_only = any(phrase in combined for phrase in grounding_phrases) and not has_places
+        if is_grounding_only:
+            raise LifeCompanionValidationError("place_recommendation_grounding_only_response")
+        # Require peace/calm/meditation context (knowledge is optional for pure place requests)
+        if not _has_any_text(result, ["peace", "calm", "quiet", "meditat", "serene"]):
+            raise LifeCompanionValidationError("place_recommendation_missing_peace_context")
 
     if intent == "quote_request":
         reply = str(result.get("reply") or "")
@@ -555,6 +653,39 @@ def validate_direct_output_contract(result: dict, expected_intent: str | None = 
         )
         if not has_action:
             raise LifeCompanionValidationError("physical_action_missing_action")
+
+    if intent in {"empathy_eq", "relationship_understanding"}:
+        reply = str(result.get("reply") or "").lower()
+        empathy_words = ["empathy", "listen", "feeling", "emotion", "understanding", "understand", "empathize", "empathise"]
+        has_empathy = (
+            any(word in reply for word in empathy_words)
+            or _sections_contain(sections, "listen")
+            or _sections_contain(sections, "empathy")
+            or _sections_contain(sections, "feeling")
+            or _sections_contain(sections, "understand")
+        )
+        if not has_empathy:
+            raise LifeCompanionValidationError(f"{intent}_missing_empathy_content")
+
+    if intent in {"fitness_guidance", "body_growth", "gym_routine"}:
+        has_training = _has_any_text(result, ["gym", "train", "training", "exercise", "workout", "muscle", "strength", "set", "rep"])
+        has_recovery_or_food = _has_any_text(result, ["protein", "food", "eat", "meal", "recovery", "sleep"])
+        if not has_training:
+            raise LifeCompanionValidationError(f"{intent}_missing_training_content")
+        if not has_recovery_or_food:
+            raise LifeCompanionValidationError(f"{intent}_missing_food_recovery_content")
+
+    if intent == "routine_plan":
+        if not _has_any_text(result, ["morning", "evening", "routine", "block", "smaller"]):
+            raise LifeCompanionValidationError("routine_plan_missing_structure")
+
+    if intent == "anxiety_grounding":
+        if not _has_any_text(result, ["breath", "feet", "floor", "ground", "body", "jaw", "shoulder"]):
+            raise LifeCompanionValidationError("anxiety_grounding_missing_grounding")
+
+    if intent == "correction_request":
+        if _has_any_text(result, ["what is happening for you right now", "what has been occupying your thoughts"]):
+            raise LifeCompanionValidationError("correction_request_generic_reflection")
 
 
 def validate_book_recommendation_contract(result: dict, expected_intent: str | None = None) -> None:
@@ -595,15 +726,45 @@ def validate_book_recommendation_contract(result: dict, expected_intent: str | N
     if item_count > 10:
         raise LifeCompanionValidationError("book_recommendation_too_many_items")
 
+    text = _combined_response_text(result)
+    known_books = [
+        "siddhartha",
+        "the alchemist",
+        "the little prince",
+        "sophie's world",
+        "the stranger",
+        "atomic habits",
+        "deep work",
+        "man's search for meaning",
+        "the courage to be disliked",
+        "think like a monk",
+        "the midnight library",
+        "norwegian wood",
+    ]
+    if not any(book in text for book in known_books):
+        raise LifeCompanionValidationError("book_recommendation_missing_book_names")
+
     response_intent = result.get("intent")
-    if expected_intent and response_intent and response_intent != expected_intent:
+    if expected_intent and response_intent and normalize_intent(response_intent) != normalize_intent(expected_intent):
         raise LifeCompanionValidationError("book_recommendation_intent_mismatch")
+
+
+def _validate_request_satisfaction(result: dict, understanding: dict) -> None:
+    route = str(understanding.get("route") or "")
+    subject = str(understanding.get("subject") or "unknown")
+    if route != "direct_answer":
+        return
+    action_type = (result.get("suggested_action") or {}).get("type", "none")
+    reply = str(result.get("reply") or "")
+    if action_type in {"loop", "reset"} and len(_significant_words(reply)) < 8:
+        raise LifeCompanionValidationError(f"direct_answer_routing_only_{subject}")
 
 
 def validate_life_companion_response(
     raw_text: str,
     expected_intent: str | None = None,
     user_message: str | None = None,
+    understanding: dict | None = None,
 ) -> dict:
     payload = parse_life_companion_json(raw_text)
     if isinstance(payload.get("companion_response"), dict):
@@ -612,9 +773,9 @@ def validate_life_companion_response(
     reply = validate_life_companion_text(
         payload.get("reply"),
         field="reply",
-        max_chars=1000,
+        max_chars=1800,
     )
-    if sentence_count(reply) > 8:
+    if sentence_count(reply) > 14:
         raise LifeCompanionValidationError("too_many_sentences_reply")
 
     suggested_action = validate_life_companion_action(payload.get("suggested_action"))
@@ -664,19 +825,228 @@ def validate_life_companion_response(
 
     raw_intent = payload.get("intent")
     if raw_intent is not None:
-        result["intent"] = str(raw_intent or "").strip().lower()[:64]
+        result["intent"] = normalize_intent(raw_intent)
     elif expected_intent:
-        result["intent"] = expected_intent
+        result["intent"] = normalize_intent(expected_intent)
 
-    normalized_expected_intent = str(expected_intent or "").strip().lower()
+    normalized_expected_intent = normalize_intent(expected_intent) if expected_intent else ""
     if normalized_expected_intent in BOOK_RECOMMENDATION_INTENTS or result.get("reply_format") == "book_recommendation":
         validate_book_recommendation_contract(result, normalized_expected_intent or None)
 
-    _direct_output_intents = {"study_gym_routine", "quote_request", "physical_action"}
+    _direct_output_intents = {
+        "peaceful_knowledge_place_recommendation",
+        "peaceful_place_recommendation",
+        "study_gym_plan",
+        "study_gym_routine",
+        "quote_request",
+        "physical_action",
+        "empathy_eq",
+        "relationship_understanding",
+        "fitness_guidance",
+        "body_growth",
+        "gym_routine",
+        "routine_plan",
+        "anxiety_grounding",
+        "correction_request",
+        "task_help",
+        "career_skill_guidance",
+        "life_clarity",
+        "spiritual_reflection",
+        "general_question",
+    }
     if normalized_expected_intent in _direct_output_intents:
         validate_direct_output_contract(result, normalized_expected_intent)
 
+    if understanding:
+        _validate_request_satisfaction(result, understanding)
+
+    validate_no_source_leakage(result)
+
     return result
+
+
+def validate_companion_response(
+    response: dict,
+    latest_message: str,
+    emotional_state: str,
+    refused_features: list,
+    conversation_turn: int,
+    intent: str,
+) -> dict:
+    """
+    Validates the companion response before it reaches the frontend.
+
+    Returns:
+        {
+            "valid": bool,
+            "issues": list[str],
+            "fallback": str | None
+        }
+
+    Callers must use fallback reply if valid is False and fallback is set.
+    """
+    issues = []
+    message_lower = latest_message.lower().strip()
+    reply = response.get("reply", "").strip()
+    reply_lower = reply.lower()
+    action_type = response.get("suggested_action", {}).get("type", "none")
+
+    # ── CHECK 1: suggested_action suppression ─────────────────────
+    if emotional_state in ("active_pain", "crisis") and action_type != "none":
+        issues.append(
+            f"BLOCK: suggested_action '{action_type}' fired during "
+            f"{emotional_state}. Must be none."
+        )
+
+    if action_type in refused_features:
+        issues.append(
+            f"BLOCK: suggested_action '{action_type}' was refused by user. "
+            "Must be none."
+        )
+
+    if conversation_turn <= 2 and action_type != "none":
+        issues.append(
+            "BLOCK: suggested_action set in first 2 turns. Must be none."
+        )
+
+    # ── CHECK 2: Reply quality ────────────────────────────────────
+    BANNED_OPENERS = [
+        "i understand how you feel",
+        "that's totally valid",
+        "tell me the exact question",
+        "i'm here to help you",
+        "as your ai companion",
+        "here are some tips",
+        "it's okay to feel",
+        "great question",
+    ]
+    for phrase in BANNED_OPENERS:
+        if reply_lower.startswith(phrase):
+            issues.append(
+                f"BLOCK: Reply opens with banned phrase: '{phrase}'"
+            )
+
+    if len(reply) < 30:
+        issues.append("BLOCK: Reply is too short to be meaningful.")
+
+    # ── CHECK 3: Breakup/rejection must address relational pain ───
+    BREAKUP_TRIGGERS = [
+        "breakup", "broke up", "rejected me", "rejection",
+        "left me", "she left", "he left", "girlfriend rejected",
+        "boyfriend rejected", "relationship ended", "heart is shaking",
+        "can't hold the truth",
+    ]
+    is_breakup = any(t in message_lower for t in BREAKUP_TRIGGERS)
+
+    if is_breakup and emotional_state == "active_pain":
+        BREAKUP_MARKERS = [
+            "rejection", "rejected", "left", "loss", "break", "heart",
+            "relationship", "hurt", "pain", "heavy", "alone", "numb",
+            "griev", "hold", "truth", "miss", "feel", "tonight",
+        ]
+        if not any(m in reply_lower for m in BREAKUP_MARKERS):
+            issues.append(
+                "BLOCK: Breakup/rejection message but reply does not address "
+                "relational pain. Must regenerate."
+            )
+
+    # ── CHECK 4: Place recommendation must return places ─────────
+    PLACE_TRIGGERS = [
+        "peaceful places", "places in india", "where to go",
+        "where can i visit", "places to visit", "good for peace",
+        "calm place", "spiritual place",
+    ]
+    is_places = any(t in message_lower for t in PLACE_TRIGGERS)
+
+    if is_places:
+        PLACE_MARKERS = [
+            "rishikesh", "dharamshala", "bodh gaya", "auroville",
+            "coorg", "hampi", "kerala", "amritsar", "golden temple",
+            "haridwar", "mcleod", "pondicherry", "backwaters",
+        ]
+        if not any(m in reply_lower for m in PLACE_MARKERS):
+            issues.append(
+                "BLOCK: User asked for peaceful places but reply contains "
+                "no place names. Must regenerate."
+            )
+
+    # ── CHECK 5: No metadata leaks ────────────────────────────────
+    LEAK_STRINGS = [
+        ".pdf", ".md", "chunk", "source:", "document:",
+        "retrieved from", "playbook", "knowledge base",
+        "according to my database", "from the rag",
+    ]
+    for leak in LEAK_STRINGS:
+        if leak in reply_lower:
+            issues.append(f"BLOCK: Metadata leak detected: '{leak}'")
+
+    # ── CHECK 6: Crisis must include helpline ─────────────────────
+    CRISIS_TRIGGERS = [
+        "want to die", "end my life", "kill myself",
+        "self harm", "hurt myself", "don't want to exist",
+    ]
+    is_crisis_msg = any(t in message_lower for t in CRISIS_TRIGGERS)
+
+    if is_crisis_msg:
+        HELPLINE_MARKERS = [
+            "9152987821", "1860", "112", "helpline",
+            "icall", "vandrevala", "aasra",
+        ]
+        if not any(m in reply_lower for m in HELPLINE_MARKERS):
+            issues.append(
+                "BLOCK: Crisis message but reply contains no helpline resources."
+            )
+
+    # ── DETERMINE VALIDITY AND FALLBACK ──────────────────────────
+    is_valid = not any(i.startswith("BLOCK") for i in issues)
+    fallback = None
+
+    if not is_valid:
+        if is_crisis_msg or emotional_state == "crisis":
+            fallback = (
+                "What you've shared is serious and I'm fully here right now. "
+                "Are you safe where you are?\n\n"
+                "If you need to talk to someone immediately:\n"
+                "iCall: 9152987821\n"
+                "Vandrevala Foundation: 1860-2662-345 (24/7, free)\n"
+                "Emergency: 112\n\n"
+                "I'm not going anywhere. Talk to me."
+            )
+        elif is_breakup and emotional_state == "active_pain":
+            fallback = (
+                "What you're carrying right now is real and it's heavy. "
+                "Rejection from someone you care about hits differently — "
+                "it's not just losing a person, it's losing what you imagined together. "
+                "You don't have to make sense of it tonight.\n\n"
+                "Don't reach out to them right now. Don't open their profile. "
+                "Just be somewhere quiet if you can.\n\n"
+                "What would feel like the smallest relief right now, "
+                "even just physically?"
+            )
+        elif is_places:
+            fallback = (
+                "Some genuinely peaceful places in India worth considering:\n\n"
+                "• Rishikesh / Haridwar — river sound, forest trails, yoga energy\n"
+                "• Dharamshala / McLeod Ganj — Tibetan stillness, mountain air\n"
+                "• Bodh Gaya — deep meditative quiet, ancient ground\n"
+                "• Golden Temple, Amritsar — sarovar at 4am, unconditional peace\n"
+                "• Auroville / Pondicherry — intentional quiet, Matrimandir silence\n"
+                "• Coorg, Karnataka — coffee mist, waterfalls, slow mornings\n"
+                "• Hampi — ancient boulders, Tungabhadra river, perspective at scale\n"
+                "• Kerala backwaters — slow water, coconut light, complete stillness\n\n"
+                "Are you looking for somewhere nearby or open to traveling?"
+            )
+        else:
+            fallback = (
+                "I hear you. Take your time — "
+                "I'm here and I'm not going anywhere."
+            )
+
+    return {
+        "valid": is_valid,
+        "issues": issues,
+        "fallback": fallback,
+    }
 
 
 def normalize_title(value: str) -> str:
@@ -733,6 +1103,38 @@ def parse_duration(task: dict, context: dict | None = None) -> int:
     return duration
 
 
+def normalize_kotler_tag(value: object) -> str:
+    raw = str(value or "").strip()
+    normalized = KOTLER_TAG_LOOKUP.get(raw.lower())
+    if not normalized:
+        raise TaskValidationError("invalid_kotler_tag")
+    return normalized
+
+
+def sanitize_waar_action(value: object) -> str:
+    action = " ".join(str(value or "").replace("\n", " ").split()).strip()
+    if not action:
+        raise TaskValidationError("missing_waar_action")
+    if len(action.split()) < 4:
+        raise TaskValidationError("missing_waar_action")
+    if sentence_count(action) > 2:
+        raise TaskValidationError("too_many_sentences_waar_action")
+    if has_pattern(action, VAGUE_ACTION_PATTERNS):
+        raise TaskValidationError("vague_waar_action")
+    return limit_words(action, 36)
+
+
+def sanitize_ikigai_purpose(value: object) -> str:
+    purpose = " ".join(str(value or "").replace("\n", " ").split()).strip()
+    if not purpose:
+        raise TaskValidationError("missing_ikigai_purpose")
+    if len(purpose.split()) < 6:
+        raise TaskValidationError("missing_ikigai_purpose")
+    if sentence_count(purpose) > 2:
+        raise TaskValidationError("too_many_sentences_ikigai_purpose")
+    return ensure_terminal_punctuation(limit_words(purpose, 44))
+
+
 def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
     payload = parse_model_json(raw_text)
     if not isinstance(payload, list):
@@ -778,7 +1180,7 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
             if _word_overlap_ratio(title, _recent_t) >= _OVERLAP_THRESHOLD:
                 raise TaskValidationError("similar_recent_title")
 
-        action_source = item.get("action_step") or item.get("easier_version") or ""
+        action_source = item.get("waar_action") or item.get("action_step") or item.get("easier_version") or ""
         if isinstance(item.get("action_steps"), list):
             action_source = next(
                 (str(step).strip() for step in item["action_steps"] if str(step).strip()),
@@ -787,6 +1189,7 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
 
         detail_source = (
             item.get("detail_description")
+            or item.get("ikigai_purpose")
             or item.get("why_this_helps")
             or item.get("why_chosen")
             or item.get("supportive_line")
@@ -798,6 +1201,9 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
         )
 
         duration_minutes = parse_duration(item, context)
+        kotler_tag = normalize_kotler_tag(item.get("kotler_tag"))
+        waar_action = sanitize_waar_action(item.get("waar_action"))
+        ikigai_purpose = sanitize_ikigai_purpose(item.get("ikigai_purpose"))
         if not str(item.get("personalization_reason") or "").strip():
             print(
                 f"AI_TASK_GENERATION missing_personalization_reason=true category={category}"
@@ -806,6 +1212,9 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
             **item,
             "category": category,
             "title": limit_words(title, 8),
+            "kotler_tag": kotler_tag,
+            "waar_action": waar_action,
+            "ikigai_purpose": ikigai_purpose,
             "detail_description": detail_description,
             "duration_minutes": duration_minutes,
         }
@@ -928,6 +1337,7 @@ def normalize_task_for_insert(
     subtitle = str(task.get("subtitle") or f"{category.title()} Practice").strip()
     why_this_helps = str(
         task.get("why_this_helps")
+        or task.get("ikigai_purpose")
         or task.get("why_chosen")
         or task.get("why")
         or ""
@@ -963,6 +1373,8 @@ def normalize_task_for_insert(
     _valid_frameworks = {"ikigai", "morita", "logotherapy", "flow", "symbol"}
     _raw_framework = str(task.get("framework_key") or "").strip().lower()
     framework_key = _raw_framework if _raw_framework in _valid_frameworks else None
+    _raw_kotler_tag = str(task.get("kotler_tag") or "").strip()
+    kotler_tag = KOTLER_TAG_LOOKUP.get(_raw_kotler_tag.lower())
 
     return {
         "user_id": user_id,
@@ -972,7 +1384,14 @@ def normalize_task_for_insert(
         "subtitle": subtitle,
         "why": why_this_helps,
         "detail_title": title,
-        "detail_description": str(task.get("detail_description") or "").strip(),
+        "detail_description": str(
+            task.get("detail_description")
+            or (
+                f"{task.get('ikigai_purpose')}\n\nAction: {task.get('waar_action')}"
+                if task.get("ikigai_purpose") and task.get("waar_action")
+                else ""
+            )
+        ).strip(),
         "duration_minutes": int(task.get("duration_minutes") or 15),
         "preferred_time": preferred_time or "today",
         "inline_quote": supportive_line or None,
@@ -990,4 +1409,5 @@ def normalize_task_for_insert(
         "smaller_version": smaller_version or None,
         "post_completion_question": post_completion_question or None,
         "framework_key": framework_key,
+        "kotler_tag": kotler_tag,
     }

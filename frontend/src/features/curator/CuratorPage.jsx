@@ -15,6 +15,7 @@ import HiddenShelfGate from "./HiddenShelfGate";
 import CuratorIntelligencePanel from "./CuratorIntelligencePanel";
 import useCuratorIntelligence from "./useCuratorIntelligence";
 import { supabase } from "../../lib/supabase";
+import { getSupabaseOrAppAccessToken } from "../../lib/appAuth";
 import { useAppState } from "../../contexts/AppStateContext";
 import "./CuratorPage.css";
 
@@ -58,9 +59,8 @@ export default function CuratorPage() {
     if (!user?.id || !actionType) return;
 
     try {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (sessionError || !accessToken) return;
+      const accessToken = await getSupabaseOrAppAccessToken(supabase);
+      if (!accessToken) return;
 
       await fetch(`${API_BASE_URL}/api/curator/interactions`, {
         method: "POST",

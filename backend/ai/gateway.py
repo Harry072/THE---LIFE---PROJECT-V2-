@@ -33,6 +33,9 @@ class LoopTaskPayload(BaseModel):
     category: Literal["awareness", "action", "meaning"]
     title: str = Field(min_length=3, max_length=80)
     subtitle: str = Field(min_length=3, max_length=80)
+    kotler_tag: Literal["Curiosity", "Purpose", "Passion", "Autonomy", "Mastery"]
+    waar_action: str = Field(min_length=10, max_length=260)
+    ikigai_purpose: str = Field(min_length=10, max_length=360)
     why_this_helps: str = Field(min_length=10, max_length=260)
     detail_description: str = Field(min_length=10, max_length=420)
     duration_minutes: int = Field(ge=2, le=30)
@@ -167,15 +170,28 @@ def generate_with_gemini(
 
 
 def _call_google_genai_loop_tasks(client, model_name: str, prompt: str) -> str:
+    # The google-genai SDK uses camelCase kwarg names in GenerateContentConfig
+    # (responseMimeType, responseSchema) — not the snake_case names that were
+    # previously passed (response_mime_type, response_json_schema), which caused
+    # a silent validation error and blocked every first-attempt generation.
     response = client.models.generate_content(
         model=model_name,
         contents=prompt,
         config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_json_schema=LoopTasksPayload.model_json_schema(),
+            responseMimeType="application/json",
+            responseSchema=LoopTasksPayload.model_json_schema(),
         ),
     )
-    text = getattr(response, "text", "") or ""
+    # Extract text defensively — response shape varies by SDK version
+    text = (
+        getattr(response, "text", None)
+        or (
+            response.candidates[0].content.parts[0].text
+            if getattr(response, "candidates", None)
+            else ""
+        )
+        or ""
+    )
     if not text.strip():
         raise AIGenerationError("empty_provider_response", "Gemini returned an empty response.")
     return text
@@ -187,7 +203,7 @@ def generate_loop_tasks_with_gemini(
     prompt: str,
     prompt_version: str,
     *,
-    timeout_seconds: int = 12,
+    timeout_seconds: int = 25,
     diagnosis_context: dict | None = None,
 ) -> ProviderResponse:
     started = perf_counter()

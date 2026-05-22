@@ -75,6 +75,24 @@ function getVitalityMsg(vitality) {
   return "Every journey has quiet days.";
 }
 
+function getLatestTaskCompletedDate(tasks = []) {
+  if (!Array.isArray(tasks)) return null;
+
+  return tasks.reduce((latest, task) => {
+    const completedAt = task?.completed_at || task?.completedAt;
+    if (!completedAt) return latest;
+    if (!latest) return completedAt;
+
+    const latestTime = new Date(latest).getTime();
+    const completedTime = new Date(completedAt).getTime();
+
+    if (!Number.isFinite(completedTime)) return latest;
+    if (!Number.isFinite(latestTime)) return completedAt;
+
+    return completedTime > latestTime ? completedAt : latest;
+  }, null);
+}
+
 export function useGrowthTree() {
   const {
     user,
@@ -90,7 +108,10 @@ export function useGrowthTree() {
 
   const tree = useMemo(() => {
     const score = Math.max(0, toFiniteNumber(
-      userTree?.cumulative_score ?? stats?.lifeScore,
+      userTree?.total_life_score
+        ?? userTree?.cumulative_score
+        ?? stats?.total_life_score
+        ?? stats?.lifeScore,
       0
     ));
     const vitality = Math.max(0, Math.min(100, toFiniteNumber(
@@ -115,6 +136,13 @@ export function useGrowthTree() {
       0
     );
     const stage = getStage(score);
+    const lastCompletedDate = userTree?.last_task_completed_date
+      ?? userTree?.last_completed_date
+      ?? userTree?.last_completed_at
+      ?? userBehavior?.last_task_completed_date
+      ?? userBehavior?.last_completed_date
+      ?? userBehavior?.last_completed_at
+      ?? getLatestTaskCompletedDate(tasks);
 
     return {
       score,
@@ -129,6 +157,7 @@ export function useGrowthTree() {
       reflectionsDone,
       message: stage.message,
       vitalityMsg: getVitalityMsg(vitality),
+      lastCompletedDate,
     };
   }, [stats, tasks, userBehavior, userTree]);
 

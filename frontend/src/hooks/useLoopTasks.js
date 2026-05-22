@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -78,9 +79,18 @@ const sortTasks = (rows) => [...rows].sort((a, b) => {
   return String(a.id ?? "").localeCompare(String(b.id ?? ""));
 });
 
+const sentenceBeforeAction = (value = "") => (
+  String(value).split(/\bAction:\s*/i)[0]?.trim() || ""
+);
+
+const actionAfterMarker = (value = "") => (
+  String(value).split(/\bAction:\s*/i)[1]?.trim() || ""
+);
+
 const normalizeTask = (row = {}) => {
   const durationMinutes = row.duration_minutes ?? row.estimated_duration_mins ?? 15;
   const completedAt = row.completed_at ?? null;
+  const detailDescription = row.detail_description ?? "";
 
   return {
     ...row,
@@ -90,7 +100,7 @@ const normalizeTask = (row = {}) => {
     duration_minutes: durationMinutes,
     estimated_duration_mins: row.estimated_duration_mins ?? durationMinutes,
     detail_title: row.detail_title ?? row.title ?? "",
-    detail_description: row.detail_description ?? "",
+    detail_description: detailDescription,
     subtitle: row.subtitle ?? row.category ?? "",
     task_friction_level: row.task_friction_level ?? null,
     post_action_mood: row.post_action_mood ?? null,
@@ -99,6 +109,9 @@ const normalizeTask = (row = {}) => {
     smaller_version: row.smaller_version ?? row.easier_version ?? "",
     success_condition: row.success_condition ?? "",
     post_completion_question: row.post_completion_question ?? "",
+    kotler_tag: row.kotler_tag ?? "",
+    ikigai_purpose: row.ikigai_purpose || row.why || row.why_this_helps || sentenceBeforeAction(detailDescription),
+    waar_action: row.waar_action || actionAfterMarker(detailDescription) || row.success_condition || "",
   };
 };
 
@@ -166,10 +179,9 @@ export function useLoopTasks() {
     setError(null);
 
     try {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
+      const accessToken = await getSupabaseOrAppAccessToken(supabase);
 
-      if (sessionError || !accessToken) {
+      if (!accessToken) {
         setError(auto
           ? AUTO_GENERATION_ERROR
           : "Your session has expired. Please sign in again to generate your Loop.");
@@ -336,10 +348,9 @@ export function useLoopTasks() {
   const saveTaskFeedback = useCallback(async (taskId, feedback = {}) => {
     if (!user?.id || !taskId) return null;
 
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    const accessToken = sessionData?.session?.access_token;
+    const accessToken = await getSupabaseOrAppAccessToken(supabase);
 
-    if (sessionError || !accessToken) {
+    if (!accessToken) {
       throw new Error("Your session has expired. Please sign in again.");
     }
 

@@ -10,6 +10,23 @@ export const FEATURE_PURPOSE = {
   companion: "Talk, plan, reset, or choose the next step.",
 };
 
+export const LIFE_PATH_INTRO = {
+  storageKey: "lifeproject_life_path_intro_seen",
+  eyebrow: "Life Path",
+  text: "This app works as a path: Act, Reset, Learn, Grow, Reflect.",
+  prompt: "Start with one honest action.",
+  actionLabel: "Open The Loop",
+  dismissLabel: "Not now",
+};
+
+export const LIFE_PATH_STATE_LABELS = {
+  completed: "Done",
+  current: "Current",
+  start: "Start here",
+  suggested: "Next",
+  open: "Open",
+};
+
 export const NAV_GROUPS = [
   {
     label: "Today",
@@ -22,7 +39,6 @@ export const NAV_GROUPS = [
     label: "Recover",
     items: [
       { id: "reset", label: "Reset Space", icon: "meditate", path: "/meditation" },
-      { id: "music", label: "Music", icon: "music", path: "/music" },
     ],
   },
   {
@@ -57,52 +73,57 @@ export const LIFE_PATH_STEPS = [
   {
     id: "act",
     order: 1,
-    title: "Act",
+    title: "Start here",
     feature: "The Loop",
-    purpose: "Take one honest action.",
+    microcopy: "Take one honest action.",
+    purpose: FEATURE_PURPOSE.loop,
     icon: "loop",
     path: "/loop",
-    stateLabel: "Start here",
+    actionLabel: "Begin The Loop",
   },
   {
     id: "reset",
     order: 2,
-    title: "Reset",
-    feature: "Reset Space / Music",
-    purpose: "Settle your system before forcing more.",
+    title: "Then recover",
+    feature: "Reset Space",
+    microcopy: "Settle your system.",
+    purpose: FEATURE_PURPOSE.reset,
     icon: "meditate",
     path: "/meditation",
-    stateLabel: "Then recover",
+    actionLabel: "Open Reset Space",
   },
   {
     id: "learn",
     order: 3,
-    title: "Learn",
+    title: "When ready",
     feature: "Curator / Books",
-    purpose: "Feed your direction with the right ideas.",
+    microcopy: "Feed your direction.",
+    purpose: FEATURE_PURPOSE.curator,
     icon: "books",
     path: "/curator",
-    stateLabel: "When ready",
+    actionLabel: "Open Curator",
   },
   {
     id: "grow",
     order: 4,
-    title: "Grow",
-    feature: "Growth Tree",
-    purpose: "See your consistency become visible.",
+    title: "See growth",
+    feature: "Progress / Growth Tree",
+    microcopy: "See consistency become visible.",
+    purpose: FEATURE_PURPOSE.progress,
     icon: "progress",
     path: "/progress",
-    stateLabel: "Visible over time",
+    actionLabel: "Open Progress",
   },
   {
     id: "reflect",
     order: 5,
-    title: "Reflect",
-    feature: "Reflection Journal",
-    purpose: "Name what the day taught you.",
+    title: "Close the loop",
+    feature: "Reflection / Weekly Mirror",
+    microcopy: "Name what the day taught you.",
+    purpose: FEATURE_PURPOSE.reflection,
     icon: "leaf",
     path: "/reflection",
-    stateLabel: "Close the loop",
+    actionLabel: "Open Reflection",
   },
 ];
 
@@ -120,22 +141,16 @@ export const GUIDE_ME_OPTIONS = [
     path: "/meditation",
   },
   {
-    id: "music",
-    label: "I want calm music",
-    icon: "music",
-    path: "/music",
+    id: "direction",
+    label: "I want direction",
+    icon: "books",
+    path: "/curator",
   },
   {
     id: "understand",
     label: "I want to understand myself",
     icon: "leaf",
     path: "/reflection",
-  },
-  {
-    id: "direction",
-    label: "I feel lost about direction",
-    icon: "books",
-    path: "/curator",
   },
   {
     id: "growth",

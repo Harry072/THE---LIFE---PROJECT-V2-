@@ -1,4 +1,6 @@
 import "../styles/tokens.css";
+import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { useUserStore } from "../store/userStore";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
@@ -19,8 +21,24 @@ import QuoteFooter
   from "../components/dashboard/QuoteFooter";
  
 export default function Dashboard() {
+  const location = useLocation();
   const user = useUserStore(state => state.user);
   const profile = useUserStore(state => state.profile);
+
+  useEffect(() => {
+    if (!location.hash) return;
+
+    const targetId = location.hash.slice(1);
+    if (!targetId) return;
+
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById(targetId);
+      if (!target) return;
+
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [location.hash]);
+
   return (
     <div style={{
       minHeight: "100vh",
@@ -42,13 +60,10 @@ export default function Dashboard() {
  
       <Sidebar />
  
-      <main style={{
-        marginLeft: 240,
-        position: "relative", zIndex: 1,
-      }}>
+      <main className="sidebar-main">
         <TopBar />
  
-        <div style={{
+        <div className="dashboard-content" style={{
           maxWidth: 1200,
           margin: "0 auto",
           padding: "8px 32px 48px",
@@ -75,7 +90,7 @@ export default function Dashboard() {
             <StatCards />
           </div>
 
-          <div id="weekly-mirror">
+          <div id="weekly-mirror" style={{ scrollMarginTop: 24 }}>
             <WeeklyMirrorCard />
           </div>
           <LifeCompanionCard />
@@ -103,7 +118,7 @@ export default function Dashboard() {
           </section>
  
           {/* Row 7: Quote */}
-          <div style={{
+          <div className="dashboard-quote-footer-wrap" style={{
             animation: "fadeIn 0.8s ease 0.75s both",
           }}>
             <QuoteFooter />
@@ -127,6 +142,14 @@ export default function Dashboard() {
           main { margin-left: 0 !important; }
           main > div {
             padding-bottom: 96px !important;
+          }
+          .dashboard-content {
+            padding-left: 16px !important;
+            padding-right: 16px !important;
+          }
+          .dashboard-quote-footer-wrap > section {
+            margin-left: -16px !important;
+            margin-right: -16px !important;
           }
           section[style*="grid-template-columns"] {
             grid-template-columns: 1fr !important;

@@ -32,6 +32,7 @@ function CompanionSection({ section }) {
 export default function CompanionMessageBubble({ message, onAction }) {
   const isUser = message.role === "user";
   const hasSections = !isUser && Array.isArray(message.sections) && message.sections.length > 0;
+  const hasContent = Boolean(String(message.content || "").trim());
 
   return (
     <div className={`companion-message-row${isUser ? " is-user" : ""}`}>
@@ -39,14 +40,15 @@ export default function CompanionMessageBubble({ message, onAction }) {
         {!isUser && message.status === "safety" && (
           <p className="companion-safety-label">Safety first</p>
         )}
-        {hasSections ? (
-          <div style={{ display: "flex", flexDirection: "column" }}>
+        {hasContent && (
+          <p>{message.content}</p>
+        )}
+        {hasSections && (
+          <div style={{ display: "flex", flexDirection: "column", marginTop: hasContent ? 14 : 0 }}>
             {message.sections.map((section, i) => (
               <CompanionSection key={i} section={section} />
             ))}
           </div>
-        ) : (
-          <p>{message.content}</p>
         )}
         {!isUser && (
           <SuggestedActionCard action={message.suggested_action} onAction={onAction} />

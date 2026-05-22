@@ -382,7 +382,6 @@ export default function LifeCompanionPage() {
             linear-gradient(145deg, rgba(7, 18, 14, 0.9), rgba(2, 8, 6, 0.82));
           box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42), var(--shadow-glow);
           backdrop-filter: blur(24px);
-          overflow: hidden;
         }
 
         .companion-sidebar {
@@ -390,6 +389,7 @@ export default function LifeCompanionPage() {
           display: grid;
           grid-template-rows: auto auto minmax(0, 1fr);
           padding: 16px;
+          overflow: hidden;
         }
 
         .companion-sidebar-top {
@@ -574,6 +574,10 @@ export default function LifeCompanionPage() {
           background: rgba(255, 255, 255, 0.045);
           color: rgba(232, 232, 227, 0.78);
           padding: 16px;
+          height: auto;
+          min-height: fit-content;
+          overflow: visible;
+          word-break: break-word;
         }
 
         .companion-message-bubble.user {
@@ -598,26 +602,11 @@ export default function LifeCompanionPage() {
           line-height: 1.65;
           white-space: pre-wrap;
           overflow-wrap: anywhere;
+          word-break: break-word;
         }
 
         .companion-action-card {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          margin-top: 14px;
-          padding: 10px 12px;
-          border: 1px solid rgba(240, 165, 0, 0.18);
-          border-radius: 12px;
-          background: rgba(240, 165, 0, 0.06);
-        }
-
-        .companion-action-card h3 {
-          margin: 0;
-          font-family: var(--font-display);
-          font-size: 16px;
-          font-weight: 500;
-          line-height: 1.2;
+          margin-top: 12px;
         }
 
         .companion-action-card button,
@@ -766,11 +755,6 @@ export default function LifeCompanionPage() {
 
           .companion-message-bubble {
             width: 94%;
-          }
-
-          .companion-action-card {
-            align-items: stretch;
-            flex-direction: column;
           }
 
           .companion-action-card button {

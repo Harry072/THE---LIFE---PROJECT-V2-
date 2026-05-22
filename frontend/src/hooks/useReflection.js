@@ -131,10 +131,9 @@ export function useReflection() {
     try {
       const { data, error } = await supabase
         .from("reflections")
-        .select("id, user_id, for_date, mood, questions, created_at, updated_at")
+        .select("*")
         .eq("user_id", user.id)
-        .order("for_date", { ascending: false })
-        .limit(14);
+        .order("for_date", { ascending: false });
 
       if (error) throw error;
 
@@ -180,7 +179,7 @@ export function useReflection() {
     };
 
     setSaving(true);
-    setStatusMessage("Saving your reflection...");
+    setStatusMessage("Saving privately...");
     setStatusTone("neutral");
 
     try {
@@ -198,14 +197,14 @@ export function useReflection() {
       setSelectedMood(data?.mood || selectedMood || null);
       setSavedToday(true);
       setStatusMessage(
-        wasSavedToday ? "Tonight’s reflection was updated." : "Saved for tonight."
+        wasSavedToday ? "Entry updated privately." : "Entry saved privately."
       );
       setStatusTone("success");
       await loadRecentReflections();
       return { success: true, data };
     } catch (error) {
       logSupabaseError("Night reflection save failed", error);
-      setStatusMessage("We couldn’t save just now. Your words are still here.");
+      setStatusMessage("Couldn’t save this entry. Your words are still here.");
       setStatusTone("error");
       return { success: false, error };
     } finally {

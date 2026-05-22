@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useUserStore } from './store/userStore';
 import { AppStateProvider } from './contexts/AppStateContext';
 import Onboarding from './pages/Onboarding';
+import AuthCallback from './pages/AuthCallback';
 import Dashboard from './pages/Dashboard';
 import MeditationPage from './pages/MeditationPage';
 import FounderStoryPage from './pages/FounderStoryPage';
@@ -37,6 +38,7 @@ function AppRoutes() {
       <Routes>
         {/* Public */}
         <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" /> : <Onboarding />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
 
         {/* Protected — existing pages */}
         <Route path="/dashboard" element={

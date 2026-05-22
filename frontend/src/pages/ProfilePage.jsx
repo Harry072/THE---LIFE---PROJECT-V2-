@@ -432,6 +432,10 @@ export default function ProfilePage() {
           z-index: 1;
         }
 
+        @media (max-width: 1023px) {
+          .profile-main { margin-left: 64px; }
+        }
+
         .profile-shell {
           width: 100%;
           max-width: 1040px;

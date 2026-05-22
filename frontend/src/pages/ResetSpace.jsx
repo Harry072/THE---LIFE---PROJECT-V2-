@@ -14,6 +14,7 @@ import {
   SOUND_SESSIONS,
 } from "../data/sessions";
 import { supabase } from "../lib/supabase";
+import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
 import "./MeditationPage.css";
 
@@ -73,9 +74,8 @@ export default function ResetSpace() {
       throw new Error("Sign in again to save this reset signal.");
     }
 
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    const accessToken = sessionData?.session?.access_token;
-    if (sessionError || !accessToken) {
+    const accessToken = await getSupabaseOrAppAccessToken(supabase);
+    if (!accessToken) {
       throw new Error("Your session has expired. Please sign in again.");
     }
 

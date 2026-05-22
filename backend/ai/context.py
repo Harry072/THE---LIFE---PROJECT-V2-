@@ -1,7 +1,171 @@
 import hashlib
 import json
+import os
 from collections import Counter
 from datetime import date, datetime, timedelta
+
+from .companion_intents import (
+    detect_companion_intent,
+    normalize_intent,
+    topic_label_from_intent,
+)
+
+
+class CompanionConversationState:
+    """
+    Tracks per-session conversation state for the Life Companion.
+    Persists refused features and emotional lock across turns.
+    Must be keyed by user_id + session_id.
+    """
+
+    def __init__(self):
+        self.refused_features: set = set()
+        self.emotional_lock_active: bool = False
+        self.emotional_lock_turns_remaining: int = 0
+        self.last_emotional_state: str = "none"
+        self.turn_count: int = 0
+
+    def update(
+        self,
+        emotional_state: str,
+        refused_features_this_turn: list
+    ):
+        self.turn_count += 1
+
+        # Accumulate refused features — permanent for this session
+        self.refused_features.update(refused_features_this_turn)
+
+        # Set or maintain emotional lock
+        if emotional_state in ("active_pain", "crisis"):
+            self.emotional_lock_active = True
+            self.emotional_lock_turns_remaining = 3
+        elif self.emotional_lock_turns_remaining > 0:
+            self.emotional_lock_turns_remaining -= 1
+            if self.emotional_lock_turns_remaining == 0:
+                self.emotional_lock_active = False
+
+        self.last_emotional_state = emotional_state
+
+    def is_feature_allowed(self, feature_type: str) -> bool:
+        """Returns False if feature is locked or refused."""
+        if self.emotional_lock_active:
+            return False
+        if feature_type in self.refused_features:
+            return False
+        return True
+
+    def should_suppress_action(self, action_type: str) -> bool:
+        """True means force suggested_action to none."""
+        if action_type == "none":
+            return False
+        if self.emotional_lock_active:
+            return True
+        if action_type in self.refused_features:
+            return True
+        if self.turn_count <= 2:
+            return True
+        return False
+
+    def to_summary(self) -> dict:
+        """Safe dict for passing to gateway context."""
+        return {
+            "refused_features": list(self.refused_features),
+            "emotional_lock_active": self.emotional_lock_active,
+            "turn_count": self.turn_count,
+            "last_emotional_state": self.last_emotional_state,
+        }
+
+
+# In-memory fallback store — used when Supabase is unavailable
+_companion_sessions: dict = {}
+_supabase_session_client = None
+
+
+def _get_session_supabase():
+    global _supabase_session_client
+    if _supabase_session_client is None:
+        url = (os.environ.get("SUPABASE_URL") or "").strip()
+        key = (
+            os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+            or os.environ.get("SUPABASE_KEY")
+            or ""
+        ).strip().strip('"').strip("'")
+        if url and key:
+            try:
+                from supabase import create_client
+                _supabase_session_client = create_client(url, key)
+            except Exception:
+                pass
+    return _supabase_session_client
+
+
+def _state_from_row(state_data: dict) -> CompanionConversationState:
+    session = CompanionConversationState()
+    session.refused_features = set(state_data.get("refused_features") or [])
+    session.emotional_lock_active = bool(state_data.get("emotional_lock_active", False))
+    session.emotional_lock_turns_remaining = int(
+        state_data.get("emotional_lock_turns_remaining", 0)
+    )
+    session.last_emotional_state = str(state_data.get("last_emotional_state", "none"))
+    session.turn_count = int(state_data.get("turn_count", 0))
+    return session
+
+
+def get_companion_session(user_id: str, session_id: str) -> CompanionConversationState:
+    """Retrieve or create a conversation state for this session."""
+    key = f"{user_id}:{session_id}"
+    db = _get_session_supabase()
+    if db:
+        try:
+            row = (
+                db.table("companion_sessions")
+                .select("state")
+                .eq("id", key)
+                .maybe_single()
+                .execute()
+            )
+            if row.data:
+                session = _state_from_row(row.data.get("state") or {})
+                _companion_sessions[key] = session
+                return session
+        except Exception:
+            pass
+    if key not in _companion_sessions:
+        _companion_sessions[key] = CompanionConversationState()
+    return _companion_sessions[key]
+
+
+def save_companion_session(user_id: str, session_id: str, session: CompanionConversationState) -> None:
+    """Persist session state to Supabase, with in-memory fallback."""
+    key = f"{user_id}:{session_id}"
+    _companion_sessions[key] = session
+    db = _get_session_supabase()
+    if db:
+        state_data = {
+            "refused_features": list(session.refused_features),
+            "emotional_lock_active": session.emotional_lock_active,
+            "emotional_lock_turns_remaining": session.emotional_lock_turns_remaining,
+            "last_emotional_state": session.last_emotional_state,
+            "turn_count": session.turn_count,
+        }
+        try:
+            db.table("companion_sessions").upsert(
+                {"id": key, "state": state_data}
+            ).execute()
+        except Exception:
+            pass
+
+
+def clear_companion_session(user_id: str, session_id: str) -> None:
+    """Clear session state when conversation ends."""
+    key = f"{user_id}:{session_id}"
+    _companion_sessions.pop(key, None)
+    db = _get_session_supabase()
+    if db:
+        try:
+            db.table("companion_sessions").delete().eq("id", key).execute()
+        except Exception:
+            pass
 
 
 ALLOWED_LOOP_CATEGORIES = {"awareness", "action", "meaning"}
@@ -170,6 +334,36 @@ def clean_short_text(value: object, max_chars: int) -> str:
 def clean_label(value: object, max_chars: int = 32) -> str:
     cleaned = clean_short_text(value, max_chars).lower().replace("-", "_").replace(" ", "_")
     return "".join(char for char in cleaned if char.isalnum() or char == "_")
+
+
+def summarize_companion_message_for_memory(content: object, intent: str | None = None) -> str:
+    text = clean_short_text(content, 280)
+    lowered = text.lower()
+    canonical_intent = normalize_intent(intent)
+
+    if not text:
+        return ""
+    if any(word in lowered for word in ["breakup", "broke up", "heartbreak", "girlfriend", "boyfriend", "ex"]):
+        return "You mentioned a breakup or relationship pain."
+    if canonical_intent == "peaceful_knowledge_place_recommendation":
+        return "You asked about peaceful places to visit, especially for calm or knowledge."
+    if canonical_intent == "anxiety_grounding" or any(word in lowered for word in ["anxious", "anxiety", "panic", "overwhelmed"]):
+        return "You said you were feeling anxious or mentally overwhelmed."
+    if any(word in lowered for word in ["study", "studies", "exam", "focus"]):
+        return "You asked about studies, focus, or academic pressure."
+    if canonical_intent == "book_recommendation":
+        return "You asked for reading or book recommendations."
+    if canonical_intent == "fitness_guidance":
+        return "You asked about gym, fitness, or body growth."
+    if canonical_intent == "routine_plan":
+        return "You asked for a routine, schedule, or structure."
+    if canonical_intent == "app_guidance":
+        return "You asked which Life Project feature to use."
+    if canonical_intent == "emotional_talk":
+        return "You shared something emotional and wanted to talk it through."
+    if canonical_intent == "relationship_understanding":
+        return "You asked about a relationship or understanding someone better."
+    return f"You previously asked about {topic_label_from_intent(canonical_intent)}."
 
 
 def clean_request_struggles(struggles: list[str]) -> list[str]:
@@ -721,6 +915,105 @@ def fetch_life_companion_recent_intents(supabase, user_id: str) -> tuple[dict, b
     }, bool(intents or action_types)
 
 
+def fetch_life_companion_current_conversation_signals(
+    supabase,
+    user_id: str,
+    conversation_id: str | None,
+    current_intent: str | None,
+) -> tuple[dict, bool]:
+    if not conversation_id:
+        return {}, False
+
+    rows = table_select_optional(
+        supabase,
+        "companion_messages",
+        "life_companion_current_conversation_signals",
+        {
+            "select": "role,content,companion_intent,resolved_action_type,created_at",
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("eq", ("conversation_id", conversation_id)),
+                ("order", ("created_at",), {"desc": True}),
+                ("limit", (8,)),
+            ],
+        },
+    )
+    if not rows:
+        return {}, False
+
+    ordered = list(reversed(rows))
+    user_intents: list[str] = []
+    last_user_correction = ""
+    previous_user_request = ""
+    previous_user_intent = ""
+    previous_user_summary = ""
+    previous_assistant_summary = ""
+    previous_assistant_failure_type = ""
+
+    user_rows = [row for row in ordered if row.get("role") == "user"]
+    assistant_rows = [row for row in ordered if row.get("role") == "assistant"]
+
+    for row in user_rows:
+        content = clean_short_text(row.get("content"), 280)
+        row_intent = normalize_intent(row.get("companion_intent") or detect_companion_intent(content))
+        if row_intent:
+            user_intents.append(row_intent)
+        if row_intent == "correction_request":
+            last_user_correction = "assistant did not answer the latest request"
+
+    current_canonical = normalize_intent(current_intent)
+    for row in reversed(user_rows):
+        content = clean_short_text(row.get("content"), 280)
+        row_intent = normalize_intent(row.get("companion_intent") or detect_companion_intent(content))
+        if content:
+            previous_user_summary = summarize_companion_message_for_memory(content, row_intent)
+            break
+    for row in reversed(assistant_rows):
+        content = clean_short_text(row.get("content"), 240)
+        if content:
+            previous_assistant_summary = "The Companion gave a response on the previous topic."
+            break
+
+    if current_canonical == "correction_request":
+        for row in reversed(user_rows):
+            content = clean_short_text(row.get("content"), 280)
+            row_intent = normalize_intent(row.get("companion_intent") or detect_companion_intent(content))
+            if row_intent == "correction_request":
+                continue
+            previous_user_request = content
+            previous_user_intent = row_intent
+            break
+        for row in reversed(assistant_rows):
+            action_type = clean_label(row.get("resolved_action_type"))
+            if action_type in {"loop", "curator", "reset", "reflection"}:
+                previous_assistant_failure_type = f"possible_route_over_answer:{action_type}"
+                break
+
+    recent_user_intents = list(reversed(user_intents))[:3]
+    current_topic = topic_label_from_intent(recent_user_intents[0] if recent_user_intents else current_canonical)
+    result = {
+        "last_user_intents": recent_user_intents,
+        "current_topic": current_topic,
+        "last_user_correction": last_user_correction,
+        "previous_assistant_failure_type": previous_assistant_failure_type,
+    }
+    if previous_user_request:
+        result["previous_user_request"] = previous_user_request
+        result["previous_user_intent"] = previous_user_intent
+    if previous_user_summary:
+        result["previous_user_summary"] = previous_user_summary
+    if previous_assistant_summary:
+        result["previous_assistant_summary"] = previous_assistant_summary
+    return result, bool(
+        recent_user_intents
+        or last_user_correction
+        or previous_user_request
+        or previous_user_summary
+        or previous_assistant_summary
+        or previous_assistant_failure_type
+    )
+
+
 def fetch_life_companion_curator_interest(supabase, user_id: str) -> tuple[dict, bool]:
     rows = table_select_optional(
         supabase,
@@ -799,13 +1092,37 @@ def build_companion_safe_memory_summary(context: dict) -> dict:
     onboarding_need = context.get("onboarding_need") or {}
     reset_signal = context.get("reset_signal") or {}
     recent_companion = context.get("recent_companion") or {}
+    current_conversation = context.get("current_conversation") or {}
     curator_interest = context.get("curator_interest") or {}
 
     struggle_tags = onboarding_need.get("struggle_tags") or []
     if not struggle_tags and onboarding_need.get("struggle_cluster"):
         struggle_tags = [onboarding_need.get("struggle_cluster")]
 
-    return {
+    avoid = []
+    if current_conversation.get("previous_assistant_failure_type"):
+        avoid.extend(["route-only answer", "repeat previous failure"])
+    if current_conversation.get("last_user_correction"):
+        avoid.append("generic follow-up before answering")
+
+    summary = {
+        "current_topic": clean_short_text(
+            current_conversation.get("current_topic"),
+            96,
+        ) or topic_label_from_intent(context.get("current_intent")),
+        "last_user_intents": [
+            normalize_intent(intent)
+            for intent in (current_conversation.get("last_user_intents") or [])[:3]
+        ],
+        "last_user_correction": clean_short_text(
+            current_conversation.get("last_user_correction"),
+            120,
+        ),
+        "previous_assistant_failure_type": clean_label(
+            current_conversation.get("previous_assistant_failure_type"),
+            80,
+        ),
+        "avoid": avoid[:4],
         "onboarding_need": [
             clean_label(tag, 32)
             for tag in struggle_tags
@@ -817,6 +1134,14 @@ def build_companion_safe_memory_summary(context: dict) -> dict:
         "weekly_focus": clean_short_text(weekly_mirror.get("next_focus"), 140) or "not enough weekly signal",
         "streak_band": clean_label(context.get("streak_band")) or "new",
         "recent_companion_intents": (recent_companion.get("recent_intents") or [])[:5],
+        "previous_user_summary": clean_short_text(
+            current_conversation.get("previous_user_summary"),
+            180,
+        ),
+        "previous_assistant_summary": clean_short_text(
+            current_conversation.get("previous_assistant_summary"),
+            160,
+        ),
         "curator_interest": {
             "recent_path_slugs": (curator_interest.get("recent_path_slugs") or [])[:4],
             "recent_book_ids": (curator_interest.get("recent_book_ids") or [])[:4],
@@ -827,16 +1152,82 @@ def build_companion_safe_memory_summary(context: dict) -> dict:
             reset_signal,
         ),
     }
+    previous_user_request = clean_short_text(
+        current_conversation.get("previous_user_request"),
+        280,
+    )
+    if previous_user_request:
+        summary["previous_user_request"] = previous_user_request
+        summary["previous_user_intent"] = normalize_intent(
+            current_conversation.get("previous_user_intent")
+        )
+    return summary
 
 
-def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
+def build_life_companion_context(
+    supabase,
+    user_id: str,
+    mode: str,
+    *,
+    conversation_id: str | None = None,
+    current_intent: str | None = None,
+) -> dict:
     normalized_mode = str(mode or "understand_me").strip().lower()
-    include_tasks = normalized_mode in {"make_today_easier", "suggest_next_step", "understand_me"}
-    include_tree = normalized_mode in {"make_today_easier", "reset_my_mind", "suggest_next_step", "understand_me"}
-    include_reflection = normalized_mode in {"reset_my_mind", "help_me_reflect", "understand_me"}
-    include_weekly_mirror = normalized_mode == "suggest_next_step"
-    include_onboarding = normalized_mode == "understand_me"
-    include_reset_signal = normalized_mode in {"reset_my_mind", "make_today_easier", "suggest_next_step", "understand_me"}
+    canonical_intent = normalize_intent(current_intent)
+    # Context is selected by latest intent, not by UI mode. Mode remains a
+    # tone hint; it does not decide which answer or route the user receives.
+    include_tasks = canonical_intent in {
+        "routine_plan",
+        "study_gym_plan",
+        "task_help",
+        "fitness_guidance",
+        "career_skill_guidance",
+        "app_guidance",
+        "general_question",
+    }
+    include_tree = canonical_intent in {
+        "routine_plan",
+        "study_gym_plan",
+        "task_help",
+        "fitness_guidance",
+        "career_skill_guidance",
+        "life_clarity",
+        "app_guidance",
+        "general_question",
+    }
+    include_reflection = canonical_intent in {
+        "emotional_talk",
+        "anxiety_grounding",
+        "life_clarity",
+        "empathy_eq",
+        "relationship_understanding",
+        "spiritual_reflection",
+        "correction_request",
+        "general_question",
+    }
+    include_weekly_mirror = canonical_intent in {
+        "life_clarity",
+        "app_guidance",
+        "correction_request",
+        "general_question",
+    }
+    include_onboarding = canonical_intent in {
+        "emotional_talk",
+        "routine_plan",
+        "study_gym_plan",
+        "task_help",
+        "life_clarity",
+        "career_skill_guidance",
+        "fitness_guidance",
+        "general_question",
+    }
+    include_reset_signal = canonical_intent in {
+        "emotional_talk",
+        "anxiety_grounding",
+        "app_guidance",
+        "correction_request",
+        "general_question",
+    }
 
     task_rows: list[dict] = []
     tree_data: dict = {}
@@ -846,6 +1237,7 @@ def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
     reset_signal: dict = {}
     recent_companion: dict = {}
     curator_interest: dict = {}
+    current_conversation: dict = {}
     has_tasks = False
     has_tree = False
     has_reflection = False
@@ -854,6 +1246,7 @@ def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
     has_reset_signal = False
     has_recent_companion = False
     has_curator_interest = False
+    has_current_conversation = False
 
     if include_tasks:
         task_rows, has_tasks = fetch_life_companion_today_tasks(supabase, user_id)
@@ -869,6 +1262,12 @@ def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
         reset_signal, has_reset_signal = fetch_latest_reset_signal(supabase, user_id)
     recent_companion, has_recent_companion = fetch_life_companion_recent_intents(supabase, user_id)
     curator_interest, has_curator_interest = fetch_life_companion_curator_interest(supabase, user_id)
+    current_conversation, has_current_conversation = fetch_life_companion_current_conversation_signals(
+        supabase,
+        user_id,
+        conversation_id,
+        current_intent,
+    )
 
     task_summary = summarize_life_companion_tasks(task_rows)
     tree_summary = {
@@ -880,6 +1279,7 @@ def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
     context = {
         "user_id": user_id,
         "mode": normalized_mode,
+        "current_intent": canonical_intent,
         "local_date": date.today().isoformat(),
         "task_summary": task_summary,
         "latest_inner_weather": latest_reflection,
@@ -889,6 +1289,7 @@ def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
         "onboarding_need": onboarding_context,
         "reset_signal": reset_signal,
         "recent_companion": recent_companion,
+        "current_conversation": current_conversation,
         "curator_interest": curator_interest,
         "context_used": [
             source
@@ -901,6 +1302,7 @@ def build_life_companion_context(supabase, user_id: str, mode: str) -> dict:
                 "onboarding_need": has_onboarding,
                 "reset_signal": has_reset_signal,
                 "recent_companion_intents": has_recent_companion,
+                "current_conversation_signals": has_current_conversation,
                 "curator_interest": has_curator_interest,
             }.items()
             if present

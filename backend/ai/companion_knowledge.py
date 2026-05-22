@@ -1,5 +1,75 @@
 import re
 
+from .companion_intents import (
+    detect_companion_intent as detect_latest_companion_intent,
+    normalize_intent,
+)
+from .companion_pdf_knowledge import (
+    build_sparse_embedding,
+    load_companion_pdf_chunks,
+    sparse_cosine,
+)
+
+
+RAG_GATE_RULES = {
+    "crisis":       ["crisis", "safety", "emergency", "mental_health"],
+    "active_pain":  [
+        "emotional_support", "breakup", "grief", "rejection",
+        "validation", "small_step", "anxiety", "grounding",
+        "heartbreak", "loneliness", "numbness",
+    ],
+    "moderate":     [
+        "emotional_support", "anxiety", "stress", "motivation",
+        "habits", "routine", "practical", "study", "sleep",
+    ],
+    "mild":         [
+        "practical", "habits", "routine", "motivation",
+        "study", "fitness", "books", "philosophy",
+    ],
+    "none":         [],  # empty = no tag filter, retrieve freely
+}
+
+INTENT_RAG_TAGS = {
+    "recommend_list": [
+        "places", "books", "fitness", "study", "philosophy",
+        "india", "meditation", "travel", "peaceful",
+    ],
+    "ground_first": ["grounding", "anxiety", "breathing", "panic"],
+    "safety_path":  ["crisis", "safety", "emergency"],
+    "receive_and_reflect": [
+        "emotional_support", "validation", "empathy",
+        "breakup", "grief", "loneliness",
+    ],
+    "solve_directly": [],  # no tag restriction
+}
+
+
+def get_rag_filter_tags(
+    emotional_state: str,
+    intent: str
+) -> list:
+    """
+    Returns the list of tags to filter RAG chunks by.
+    Empty list means no filtering — retrieve freely.
+
+    Priority:
+      1. Crisis always uses crisis tags only.
+      2. active_pain locks to emotional tags.
+      3. recommend_list uses intent-specific tags.
+      4. Otherwise combine emotional + intent tags.
+    """
+    if emotional_state == "crisis":
+        return RAG_GATE_RULES["crisis"]
+
+    if emotional_state == "active_pain":
+        return RAG_GATE_RULES["active_pain"]
+
+    emotional_tags = RAG_GATE_RULES.get(emotional_state, [])
+    intent_tags = INTENT_RAG_TAGS.get(intent, [])
+
+    combined = list(set(emotional_tags + intent_tags))
+    return combined  # empty list = unrestricted retrieval
+
 
 COMPANION_KNOWLEDGE_CHUNKS = [
     {
@@ -253,6 +323,43 @@ COMPANION_KNOWLEDGE_CHUNKS = [
         ),
     },
     {
+        "id": "peaceful_knowledge_places",
+        "title": "Peaceful Knowledge Places",
+        "tags": [
+            "places",
+            "peace",
+            "knowledge",
+            "learning",
+            "calm",
+            "visit",
+            "wander",
+            "library",
+            "museum",
+            "garden",
+            "heritage",
+        ],
+        "guidance": "Suggest real place types that provide both calm and learning. Do not route this intent to Loop.",
+        "when_to_use": "Use when the user asks where to visit for peace, calm, wandering, reflection, or knowledge.",
+        "safe_app_route": None,
+        "content": (
+            "Peaceful knowledge places include libraries and reading rooms, museums, heritage sites, botanical gardens, "
+            "quiet public parks, art galleries, historical forts or memorials, reflective temples/gurudwaras/monasteries/ashrams, "
+            "book cafes, independent bookshops, and public university learning spaces. Explain why each gives peace and knowledge."
+        ),
+    },
+    {
+        "id": "place_visit_practice",
+        "title": "How To Use A Place",
+        "tags": ["places", "peace", "knowledge", "visit", "practice", "reflection", "learning"],
+        "guidance": "Give a simple way to use the place: go slowly, notice, read one plaque/page, and leave with one line learned.",
+        "when_to_use": "Use for peaceful place recommendations and reflective wandering requests.",
+        "safe_app_route": None,
+        "content": (
+            "For place recommendations, include how to use the visit: go without rushing, keep the phone low, read one visible thing, "
+            "sit for ten quiet minutes, and leave with one sentence about what the place taught."
+        ),
+    },
+    {
         "id": "growth_tree_symbolism",
         "tags": ["growth_tree", "tree", "progress", "symbolism", "consistency"],
         "content": (
@@ -399,6 +506,51 @@ COMPANION_KNOWLEDGE_CHUNKS = [
         ),
     },
     {
+        "id": "empathy_practice",
+        "title": "Building Empathy",
+        "tags": ["empathy", "emotional_intelligence", "eq", "active_listening", "understanding_others", "connection", "conversation"],
+        "guidance": "Teach empathy as a daily practice: listening without fixing, naming emotions gently, staying present.",
+        "when_to_use": "Use when the user asks how to build empathy, understand others' feelings, or improve active listening.",
+        "safe_app_route": None,
+        "content": (
+            "Empathy is a learnable skill, not a fixed trait. "
+            "Active listening: stop preparing your response while the other person speaks — listen until they fully finish. "
+            "Reflect back one sentence about what you heard, not a solution: 'That sounds frustrating' not 'You should...' "
+            "Ask one question about how they felt, not what they did. "
+            "Stay quiet after your question and let them fill the space. "
+            "Daily practice: in one conversation today, give no advice, ask only 'How did that feel?' and listen fully. "
+            "Empathy grows through repeated attention and patience, not natural talent."
+        ),
+    },
+    {
+        "id": "shastar_vidya",
+        "title": "Shastar Vidya",
+        "tags": ["shastar_vidya", "martial_arts", "physical_action", "discipline", "body", "practice", "sikh", "gatka"],
+        "guidance": "Give a beginner-friendly Shastar Vidya or martial arts practice plan grounded in body awareness.",
+        "when_to_use": "Use when the user asks about Shastar Vidya, Gatka, Sikh martial arts, or martial arts practice.",
+        "safe_app_route": None,
+        "content": (
+            "Shastar Vidya is a traditional Sikh system of armed and unarmed combat emphasizing presence, discipline, and body awareness. "
+            "A beginner practice starts with footwork and stance (10 minutes), basic strikes in the air (10 minutes), and breath control between sets. "
+            "Daily practice of 20-30 minutes builds coordination before adding weapons or sparring. "
+            "Treat it as a moving meditation: full attention, no phone, each repetition intentional."
+        ),
+    },
+    {
+        "id": "body_growth_training",
+        "title": "Body Growth and Strength Training",
+        "tags": ["gym", "fitness", "strength", "muscle", "bodybuilding", "body_growth", "workout", "routine", "discipline"],
+        "guidance": "Give a practical beginner strength or body-growth plan as direct output, no app routing first.",
+        "when_to_use": "Use when the user asks about building muscle, strength training, bodybuilding, or body growth.",
+        "safe_app_route": None,
+        "content": (
+            "For body growth and strength training, three full-body sessions per week are enough to start. "
+            "Each session: compound lifts first (squat, push, pull), 3 sets of 8-12 reps, progressive overload by adding one rep or small weight each week. "
+            "Protein target: 1.6-2g per kg of bodyweight. Sleep 7-9 hours — most muscle repair happens at night. "
+            "Consistency over two months beats any perfect program used for two weeks."
+        ),
+    },
+    {
         "id": "forbidden_language",
         "tags": ["forbidden", "safety", "boundaries", "dependency", "secrets", "therapy"],
         "content": (
@@ -430,6 +582,9 @@ SAFE_ROUTE_BY_CHUNK_ID = {
     "study_routine": None,
     "gym_routine_balance": None,
     "time_blocking": None,
+    "shastar_vidya": None,
+    "body_growth_training": None,
+    "empathy_practice": None,
 }
 
 
@@ -438,9 +593,45 @@ for _chunk in COMPANION_KNOWLEDGE_CHUNKS:
     _chunk.setdefault("guidance", str(_chunk.get("content") or "")[:220])
     _chunk.setdefault("when_to_use", "Use when the latest user message matches this chunk's tags.")
     _chunk.setdefault("safe_app_route", SAFE_ROUTE_BY_CHUNK_ID.get(_chunk.get("id")))
+    _chunk.setdefault(
+        "_embedding",
+        build_sparse_embedding(
+            " ".join(
+                [
+                    str(_chunk.get("title") or ""),
+                    " ".join(str(tag) for tag in (_chunk.get("tags") or [])),
+                    str(_chunk.get("guidance") or ""),
+                    str(_chunk.get("content") or ""),
+                ]
+            )
+        ),
+    )
+
+
+def get_companion_knowledge_chunks() -> list[dict]:
+    return [*COMPANION_KNOWLEDGE_CHUNKS, *load_companion_pdf_chunks()]
 
 
 INTENT_TAGS = {
+    "emotional_talk": ["emotion", "support", "conversation", "companion", "inner_weather", "listening"],
+    "anxiety_grounding": ["anxiety", "anxious", "panic", "overwhelm", "grounding", "reset", "body"],
+    "routine_plan": ["routine", "schedule", "time_management", "plan", "focus", "small_step"],
+    "study_gym_plan": ["routine", "gym", "study", "schedule", "discipline", "focus"],
+    "task_help": ["action", "steps", "tasks", "productivity", "focus", "small_step"],
+    "life_clarity": ["purpose", "direction", "meaning", "lost", "values", "identity"],
+    "relationship_understanding": ["empathy", "connection", "active_listening", "understanding_others", "conversation"],
+    "book_recommendation": ["curator", "books", "reading", "learning", "ideas", "novel", "philosophy"],
+    "app_guidance": ["life_project", "app", "feature", "navigation", "loop", "reset", "reflection", "curator"],
+    "peaceful_knowledge_place_recommendation": [
+        "places", "peace", "knowledge", "learning", "calm", "visit", "wander",
+        "library", "museum", "garden", "heritage",
+    ],
+    "career_skill_guidance": ["career", "skills", "coding", "internship", "learning", "roadmap"],
+    "fitness_guidance": ["gym", "fitness", "strength", "muscle", "bodybuilding", "body_growth", "workout", "recovery"],
+    "spiritual_reflection": ["spiritual", "philosophy", "meaning", "values", "reflection"],
+    "correction_request": ["correction", "answer", "latest_message", "conversation"],
+    "general_question": ["life_project", "companion", "conversation", "philosophy"],
+    "safety": ["forbidden", "safety", "support"],
     "quote_request": ["quote", "line", "caption", "words", "voice"],
     "seminar_public_speaking": ["seminar", "presentation", "speech", "stage", "public_speaking", "quote"],
     "serious_talk": ["serious", "talk", "conversation", "support"],
@@ -452,6 +643,11 @@ INTENT_TAGS = {
     "anxiety_overwhelm": ["anxiety", "anxious", "panic", "overwhelm", "grounding", "reset"],
     "loneliness": ["loneliness", "lonely", "alone", "connection"],
     "physical_action": ["action", "grounding", "body", "real_world_action"],
+    "emotional_support": ["emotion", "support", "conversation", "companion", "inner_weather"],
+    "empathy_eq": ["empathy", "emotional_intelligence", "eq", "active_listening", "understanding_others", "connection"],
+    "relationship_understanding": ["empathy", "connection", "active_listening", "understanding_others", "conversation"],
+    "shastar_vidya": ["shastar_vidya", "martial_arts", "physical_action", "discipline", "body", "practice", "sikh", "gatka"],
+    "body_growth": ["gym", "fitness", "strength", "muscle", "bodybuilding", "body_growth", "workout", "routine"],
     "gym_routine": ["routine", "gym", "fitness", "schedule", "discipline", "loop"],
     "study_gym_routine": ["routine", "gym", "study", "schedule", "discipline", "focus", "loop"],
     "study_routine": ["study", "routine", "schedule", "focus", "revision", "academic"],
@@ -499,8 +695,34 @@ KEYWORD_TAGS = {
     "why am i like this": ["identity", "self"],
     "serious": ["serious", "conversation"],
     "need to talk": ["talk", "conversation"],
+    "breakup": ["breakup", "heartbreak", "relationship", "emotion", "support"],
+    "broke up": ["breakup", "heartbreak", "relationship", "emotion", "support"],
+    "heartbreak": ["breakup", "heartbreak", "relationship", "emotion", "support"],
+    "girlfriend": ["breakup", "heartbreak", "relationship"],
+    "boyfriend": ["breakup", "heartbreak", "relationship"],
+    "ex": ["breakup", "heartbreak", "relationship"],
+    "what did i say before": ["memory", "conversation", "context"],
+    "what did i say earlier": ["memory", "conversation", "context"],
+    "last message": ["memory", "conversation", "context"],
+    "continue from that": ["memory", "conversation", "context"],
+    "based on my last message": ["memory", "conversation", "context"],
     "physical": ["action", "grounding", "body"],
     "move my body": ["action", "body"],
+    "empathy": ["empathy", "emotional_intelligence", "understanding_others", "connection"],
+    "active listening": ["empathy", "active_listening", "understanding_others"],
+    "emotional intelligence": ["empathy", "emotional_intelligence", "eq"],
+    "understand others": ["empathy", "understanding_others", "active_listening"],
+    "feelings of others": ["empathy", "understanding_others", "emotional_intelligence"],
+    "learning feelings": ["empathy", "understanding_others", "active_listening"],
+    "shastar vidya": ["shastar_vidya", "martial_arts", "discipline", "body"],
+    "shastarvidya": ["shastar_vidya", "martial_arts", "discipline", "body"],
+    "gatka": ["shastar_vidya", "martial_arts", "sikh", "discipline"],
+    "martial arts": ["martial_arts", "discipline", "physical_action", "body"],
+    "muscle": ["gym", "fitness", "strength", "body_growth"],
+    "strength training": ["gym", "fitness", "strength", "body_growth"],
+    "bodybuilding": ["gym", "fitness", "bodybuilding", "body_growth"],
+    "bulk": ["gym", "fitness", "body_growth"],
+    "build muscle": ["gym", "fitness", "strength", "body_growth"],
     "gym": ["gym", "fitness", "workout", "routine"],
     "fitness": ["gym", "fitness", "workout", "routine"],
     "workout": ["gym", "fitness", "workout"],
@@ -512,6 +734,16 @@ KEYWORD_TAGS = {
     "roadmap": ["roadmap", "plan"],
     "steps": ["steps", "action"],
     "what should i do": ["next_action", "action"],
+    "place": ["places", "peace", "knowledge", "visit"],
+    "places": ["places", "peace", "knowledge", "visit"],
+    "visit": ["places", "visit"],
+    "wander": ["places", "peace", "calm"],
+    "peace": ["peace", "calm", "grounded"],
+    "knowledge": ["knowledge", "learning", "ideas"],
+    "library": ["library", "knowledge", "reading"],
+    "museum": ["museum", "knowledge", "heritage"],
+    "garden": ["garden", "peace", "calm"],
+    "heritage": ["heritage", "knowledge", "history"],
     "scroll": ["distraction", "scrolling", "phone"],
     "wasting time": ["distraction", "wasting_time"],
     "focus": ["loop", "focus", "discipline"],
@@ -621,112 +853,31 @@ def has_pattern(text: str, patterns: list[str]) -> bool:
 
 
 def detect_companion_intent(message: str, mode: str) -> str:
-    text = normalize_text(message)
-    normalized_mode = normalize_text(mode)
-
-    if has_pattern(text, CRISIS_PATTERNS):
-        return "crisis"
-    if has_pattern(text, PROMPT_INJECTION_PATTERNS):
-        return "prompt_injection"
-    if has_pattern(text, PHILOSOPHY_NOVEL_REQUEST_PATTERNS):
-        return "philosophy_novel_recommendation"
-    if has_pattern(text, SELF_GROWTH_BOOK_REQUEST_PATTERNS):
-        return "self_growth_book_request"
-    if has_pattern(text, NOVEL_REQUEST_PATTERNS):
-        return "novel_recommendation"
-    if has_pattern(text, BOOK_REQUEST_PATTERNS):
-        return "book_recommendation"
-    if has_pattern(text, CURATOR_REQUEST_PATTERNS):
-        return "curator_request"
-    if has_any(text, ["i need quote", "need quote", "give me quote", "give me a quote", "quote to make my day", "quote", "caption"]):
-        return "quote_request"
-    if has_any(text, ["seminar", "presentation", "public speaking", "speech", "stage fear", "on stage", "stage"]):
-        return "seminar_public_speaking"
-    if has_any(text, ["can i be a good person", "can i be good", "am i bad", "bad person", "good person", "moral", "guilt", "right thing", "wrong thing"]):
-        return "moral_question"
-    if has_any(text, ["why am i like this", "who am i", "what am i becoming", "am i broken", "identity"]):
-        return "identity_question"
-    if has_any(text, ["something serious", "talk about something serious", "serious thing", "serious issue"]):
-        return "serious_talk"
-    if has_any(text, ["anxious", "panic", "panicking", "overwhelmed", "overthinking", "overthink", "spiral", "stressed", "too much"]):
-        return "anxiety_overwhelm"
-    if has_any(text, ["what should i use in this app", "which app feature", "what app feature"]) and has_any(text, ["restless", "calm", "reset", "soothe"]):
-        return "reset_need"
-    if has_any(text, ["lonely", "alone", "isolated", "unseen"]):
-        return "loneliness"
-    if has_any(text, ["physical action", "body action", "move my body", "stand up", "one thing i can do now", "action i can do now"]):
-        return "physical_action"
-    if has_any(text, ["scrolling", "doomscroll", "wasting time", "waste time", "phone addiction", "stuck on my phone"]):
-        return "scrolling_distraction"
-    if (has_any(text, ["study", "studies", "exam", "academic", "college", "university"])
-            and has_any(text, ["gym", "fitness", "workout", "exercise", "training"])
-            and has_any(text, ["routine", "schedule", "plan", "structure", "time", "manage"])):
-        return "study_gym_routine"
-    if (has_any(text, ["gym", "fitness", "workout", "training"])
-            and has_any(text, ["routine", "schedule", "plan", "structure"])):
-        return "gym_routine"
-    if has_any(text, ["exam study plan", "exam plan", "prepare for exam", "exam preparation", "study for exam"]):
-        return "exam_study_plan"
-    if has_any(text, ["study routine", "make me study routine", "create study routine", "daily study routine", "study daily routine"]):
-        return "study_routine"
-    if has_any(text, ["daily schedule", "make me daily schedule", "create daily schedule", "make daily schedule", "day schedule", "my daily schedule"]):
-        return "daily_schedule"
-    if has_any(text, ["weekly schedule", "make me weekly schedule", "create weekly schedule", "week schedule"]):
-        return "weekly_schedule"
-    if has_any(text, ["time management plan", "manage my schedule", "better time management", "improve time management"]):
-        return "time_management_plan"
-    if has_any(text, ["time management", "manage my time", "managing my time", "time blocking"]):
-        return "time_management"
-    if has_any(text, ["make schedule", "create schedule", "make timetable", "create timetable", "daily plan", "schedule", "timetable", "time table"]):
-        return "schedule_request"
-    if has_any(text, ["study routine", "study plan", "exam study", "exam timetable", "study timetable", "study schedule"]):
-        return "study_plan"
-    if has_any(text, ["make me routine", "make a routine", "make routine", "create routine", "create a routine", "better routine", "make me better routine", "skipping my routine", "skip my routine", "routine according", "routine"]):
-        return "routine_request"
-    if has_any(text, ["checklist", "check list", "to-do list", "todo list"]):
-        return "checklist_request"
-    if has_any(text, ["what should i do now", "what should i do", "give me tasks", "give me task", "give me one task", "next action", "next step", "one thing to do", "suggest next step"]):
-        return "next_action_request"
-    if has_any(text, ["give me plan", "make plan", "make a plan", "create plan", "create a plan", "roadmap", "make roadmap", "make a roadmap", "give me steps", "suggest steps", "according to my problem"]):
-        return "plan_request"
-    if has_any(text, ["just simply make", "do not ask, make", "do not ask just make", "make me better", "according to my odds"]):
-        return "direct_help_request"
-    if has_any(text, ["i need to talk", "need to talk", "can we talk", "want to talk", "talk to me", "need your assistance", "need assistance"]):
-        return "wants_talk"
-    if has_any(text, ["journal", "reflect", "reflection", "write about", "write this down", "process my thoughts"]):
-        return "reflective_writing"
-    if has_any(text, ["reset", "calm down", "clear my mind", "quiet my mind", "ground me", "restless"]):
-        return "reset_need"
-    if has_pattern(text, [r"\bread(?:ing)?\b", r"\blearn\b"]):
-        return "reading_request"
-    if has_any(text, ["purpose", "direction", "meaning", "feel lost", "feeling lost", "lost in life"]):
-        return "purpose_question"
-    if has_any(text, ["book", "read", "reading", "learn", "curator", "recommend a book"]):
-        return "reading_or_learning"
-    if has_any(text, ["weekly mirror", "this week", "weekly pattern", "patterns this week", "my week"]):
-        return "weekly_pattern"
-    if has_any(text, ["focus", "study", "work", "task", "productive", "productivity", "procrastinate", "discipline", "get started"]):
-        return "productivity"
-    if has_any(text, ["sad", "heavy", "tired", "empty", "hurt", "confused", "low"]):
-        return "emotional_support"
-
-    if normalized_mode == "reset_my_mind":
-        return "reset_need"
-    if normalized_mode == "help_me_reflect":
-        return "reflective_writing"
-    if normalized_mode in {"make_today_easier", "suggest_next_step"}:
-        return "productivity"
-    return "general"
+    return detect_latest_companion_intent(message, mode)
 
 
 def message_tags(message: str, mode: str, intent: str | None) -> set[str]:
     text = normalize_text(message)
-    tags = set(INTENT_TAGS.get(intent or "general", []))
-    tags.add(normalize_text(mode))
+    tags = set(INTENT_TAGS.get(normalize_intent(intent), []))
     for keyword, keyword_tags in KEYWORD_TAGS.items():
         if keyword in text:
             tags.update(keyword_tags)
     return {tag for tag in tags if tag}
+
+
+SUBJECT_TO_INTENT: dict[str, str] = {
+    "places": "peaceful_knowledge_place_recommendation",
+    "fitness": "fitness_guidance",
+    "books": "book_recommendation",
+    "empathy": "empathy_eq",
+    "career": "career_skill_guidance",
+    "study": "routine_plan",
+    "routine": "routine_plan",
+    "relationship": "relationship_understanding",
+    "purpose": "life_clarity",
+    "spirituality": "spiritual_reflection",
+    "anxiety": "anxiety_grounding",
+}
 
 
 def retrieve_companion_knowledge(
@@ -734,10 +885,40 @@ def retrieve_companion_knowledge(
     mode: str,
     intent: str | None = None,
     max_chunks: int = 4,
+    understanding: dict | None = None,
+    safe_memory_summary: dict | None = None,
 ) -> list[dict]:
-    normalized_intent = intent or detect_companion_intent(message, mode)
-    wanted_tags = message_tags(message, mode, normalized_intent)
+    _und = understanding or {}
+    _subject = _und.get("subject", "unknown")
+    _effective_intent = intent
+    if _effective_intent in {None, "general_question"} and _subject in SUBJECT_TO_INTENT:
+        _effective_intent = SUBJECT_TO_INTENT[_subject]
+    normalized_intent = normalize_intent(_effective_intent or detect_companion_intent(message, mode))
+    max_chunks = max(2, min(4, int(max_chunks or 4)))
+    safe_memory = safe_memory_summary or {}
+    retrieval_context_text = " ".join(
+        str(value or "")
+        for value in [
+            message,
+            safe_memory.get("current_topic"),
+            safe_memory.get("previous_user_summary"),
+            safe_memory.get("previous_user_intent"),
+            _und.get("request_type"),
+            _und.get("subject"),
+            _und.get("user_goal"),
+        ]
+    )
+    wanted_tags = message_tags(retrieval_context_text, mode, normalized_intent)
     text = normalize_text(message)
+    query_embedding = build_sparse_embedding(
+        " ".join(
+            [
+                retrieval_context_text,
+                " ".join(sorted(wanted_tags)),
+                normalized_intent,
+            ]
+        )
+    )
     latest_asks_for_task = has_any(
         text,
         [
@@ -752,6 +933,59 @@ def retrieve_companion_knowledge(
         ],
     )
     forced_by_intent = {
+        "emotional_talk": [
+            "pdf_life_companion_4_2_breakup_heartbreak",
+            "serious_talk",
+            "inner_weather",
+            "companion_personality",
+            "forbidden_language",
+        ],
+        "anxiety_grounding": [
+            "pdf_life_companion_4_4_anxiety_panic",
+            "anxiety_grounding",
+            "reset_space",
+            "inner_weather",
+            "forbidden_language",
+        ],
+        "routine_plan": ["routine_building", "one_thing_rule", "task_halving", "time_blocking"],
+        "study_gym_plan": ["study_gym_balance", "study_routine", "gym_routine_balance", "routine_building"],
+        "task_help": ["action_despite_feeling", "one_thing_rule", "task_halving", "focus_gate"],
+        "life_clarity": ["purpose_direction", "moral_question", "inner_weather", "companion_personality"],
+        "empathy_eq": ["empathy_practice", "companion_personality", "product_philosophy", "forbidden_language"],
+        "relationship_understanding": [
+            "pdf_life_companion_4_2_breakup_heartbreak",
+            "empathy_practice",
+            "companion_personality",
+            "inner_weather",
+            "forbidden_language",
+        ],
+        "book_recommendation": ["books_for_purpose", "philosophy_novels", "curator_reading_path", "reading_as_reset"],
+        "quote_request": ["quote_support", "quote_style", "product_philosophy", "companion_personality"],
+        "physical_action": ["action_despite_feeling", "one_thing_rule", "inner_weather", "companion_personality"],
+        "app_guidance": ["life_project_identity", "the_loop", "reset_space", "reflection", "curator_books"],
+        "peaceful_knowledge_place_recommendation": [
+            "pdf_life_companion_9_5_peaceful_places_in_india_recommendations",
+            "peaceful_knowledge_places",
+            "place_visit_practice",
+            "companion_personality",
+        ],
+        "peaceful_place_recommendation": [
+            "pdf_life_companion_9_5_peaceful_places_in_india_recommendations",
+            "peaceful_knowledge_places",
+            "place_visit_practice",
+            "companion_personality",
+        ],
+        "career_skill_guidance": ["one_thing_rule", "routine_building", "focus_gate", "companion_personality"],
+        "fitness_guidance": ["body_growth_training", "gym_routine_balance", "one_thing_rule", "companion_personality"],
+        "spiritual_reflection": ["purpose_direction", "moral_question", "companion_personality", "forbidden_language"],
+        "correction_request": ["companion_personality", "product_philosophy", "forbidden_language", "one_thing_rule"],
+        "general_question": [
+            "pdf_life_companion_7_4_multi_turn_conversations_using_context_across_messages",
+            "life_project_identity",
+            "companion_personality",
+            "product_philosophy",
+        ],
+        "safety": ["forbidden_language", "companion_personality", "life_project_identity", "product_philosophy"],
         "quote_request": ["quote_support", "quote_style", "product_philosophy", "companion_personality"],
         "seminar_public_speaking": ["seminar_public_speaking", "quote_style", "companion_personality", "life_project_identity"],
         "moral_question": ["moral_question", "purpose_direction", "companion_personality", "forbidden_language"],
@@ -761,6 +995,17 @@ def retrieve_companion_knowledge(
         "anxiety_overwhelm": ["anxiety_grounding", "reset_space", "inner_weather", "forbidden_language"],
         "loneliness": ["loneliness", "companion_personality", "product_philosophy", "forbidden_language"],
         "physical_action": ["action_despite_feeling", "one_thing_rule", "inner_weather", "companion_personality"],
+        "empathy_eq": ["empathy_practice", "companion_personality", "product_philosophy", "forbidden_language"],
+        "relationship_understanding": ["empathy_practice", "companion_personality", "inner_weather", "forbidden_language"],
+        "emotional_support": [
+            "pdf_life_companion_4_2_breakup_heartbreak",
+            "inner_weather",
+            "companion_personality",
+            "product_philosophy",
+            "forbidden_language",
+        ],
+        "shastar_vidya": ["shastar_vidya", "action_despite_feeling", "one_thing_rule", "companion_personality"],
+        "body_growth": ["body_growth_training", "gym_routine_balance", "one_thing_rule", "companion_personality"],
         "gym_routine": ["gym_routine_balance", "time_blocking", "routine_building", "one_thing_rule"],
         "study_gym_routine": ["study_gym_balance", "study_routine", "gym_routine_balance", "routine_building"],
         "study_routine": ["study_routine", "study_gym_balance", "time_blocking", "routine_building"],
@@ -770,7 +1015,7 @@ def retrieve_companion_knowledge(
         "time_management_plan": ["time_blocking", "routine_building", "focus_gate", "one_thing_rule"],
         "routine_request": ["routine_building", "one_thing_rule", "task_halving", "the_loop"],
         "time_management": ["time_blocking", "routine_building", "one_thing_rule", "focus_gate"],
-        "study_plan": ["study_routine", "time_blocking", "routine_building", "focus_gate"],
+        "study_plan": ["pdf_life_companion_5_1_exam_academic_pressure", "study_routine", "time_blocking", "routine_building", "focus_gate"],
         "schedule_request": ["time_blocking", "routine_building", "one_thing_rule", "the_loop"],
         "plan_request": ["routine_building", "one_thing_rule", "task_halving", "the_loop"],
         "checklist_request": ["routine_building", "one_thing_rule", "task_halving", "the_loop"],
@@ -789,10 +1034,20 @@ def retrieve_companion_knowledge(
         "reading_or_learning": ["curator_books", "curator_reading_path", "books_for_purpose", "purpose_direction"],
         "weekly_pattern": ["weekly_mirror", "product_philosophy", "companion_personality", "life_project_identity"],
         "prompt_injection": ["forbidden_language", "companion_personality", "life_project_identity", "product_philosophy"],
-        "crisis": ["forbidden_language", "companion_personality", "life_project_identity", "product_philosophy"],
+        "crisis": [
+            "pdf_life_companion_10_2_crisis_response_framework",
+            "forbidden_language",
+            "companion_personality",
+            "life_project_identity",
+        ],
     }.get(normalized_intent, ["life_project_identity", "companion_personality", "product_philosophy"])
     forced_ids = set(forced_by_intent)
+    if "study" in wanted_tags or any(word in text for word in ["study", "studies", "exam"]):
+        forced_ids.add("pdf_life_companion_5_1_exam_academic_pressure")
+    if "memory" in wanted_tags or any(phrase in text for phrase in ["what did i say", "last message", "continue from"]):
+        forced_ids.add("pdf_life_companion_7_4_multi_turn_conversations_using_context_across_messages")
     book_like_intents = {
+        "book_recommendation",
         "philosophy_novel_recommendation",
         "novel_recommendation",
         "self_growth_book_request",
@@ -811,9 +1066,32 @@ def retrieve_companion_knowledge(
             "focus_gate",
             "distraction_scrolling",
         }
+    if normalized_intent in {
+        "peaceful_knowledge_place_recommendation",
+        "peaceful_place_recommendation",
+    }:
+        excluded_ids.update({
+            "the_loop",
+            "routine_building",
+            "task_halving",
+            "execution_first_plans",
+            "focus_gate",
+            "curator_books",
+            "curator_reading_path",
+            "books_for_purpose",
+            "reading_as_reset",
+            "reset_space",
+            # Exclude grounding/mood chunks — they bias the AI toward breathing steps
+            # instead of place recommendations when the user mentions "meditate".
+            "anxiety_grounding",
+            "overthinking_anxiety",
+            "inner_weather",
+        })
+    if normalized_intent in {"empathy_eq", "relationship_understanding", "fitness_guidance", "study_gym_plan"}:
+        excluded_ids.update({"curator_books", "curator_reading_path"})
 
-    scored_chunks: list[tuple[int, int, dict]] = []
-    for index, chunk in enumerate(COMPANION_KNOWLEDGE_CHUNKS):
+    scored_chunks: list[tuple[float, int, dict]] = []
+    for index, chunk in enumerate(get_companion_knowledge_chunks()):
         chunk_id = str(chunk.get("id") or "")
         if chunk_id in excluded_ids:
             continue
@@ -822,8 +1100,10 @@ def retrieve_companion_knowledge(
         content_tokens = set(re.findall(r"[a-z0-9_]+", content_text))
         tag_score = len(wanted_tags & chunk_tags)
         content_score = sum(1 for tag in wanted_tags if len(tag) >= 4 and tag in content_tokens)
-        forced_score = 10 if chunk_id in forced_ids else 0
-        score = forced_score + tag_score * 3 + content_score
+        forced_score = 14 if chunk_id in forced_ids and chunk_id.startswith("pdf_") else (10 if chunk_id in forced_ids else 0)
+        embedding_score = sparse_cosine(query_embedding, chunk.get("_embedding") or {}) * 12
+        priority_score = min(10, int(chunk.get("priority") or 5)) / 10
+        score = forced_score + tag_score * 3 + content_score + embedding_score + priority_score
         if score > 0:
             scored_chunks.append((score, -index, chunk))
 
@@ -844,19 +1124,31 @@ def retrieve_companion_knowledge(
     for fallback_id in ["life_project_identity", "companion_personality", "product_philosophy"]:
         if fallback_id in seen_ids:
             continue
-        fallback = next((chunk for chunk in COMPANION_KNOWLEDGE_CHUNKS if chunk["id"] == fallback_id), None)
+        fallback = next((chunk for chunk in get_companion_knowledge_chunks() if chunk["id"] == fallback_id), None)
         if fallback:
             selected.append(fallback)
             seen_ids.add(fallback_id)
         if len(selected) >= max_chunks:
             break
+    return selected
 
 
 _SLOT_REQUIRED_TOPICS: dict[str, list[str]] = {
+    "peaceful_knowledge_place_recommendation": ["peace", "knowledge", "places"],
+    "study_gym_plan": ["study", "gym"],
+    "fitness_guidance": ["training", "food", "recovery"],
+    "routine_plan": ["routine"],
+    "career_skill_guidance": ["skills", "path"],
+    "book_recommendation": ["books"],
+    "anxiety_grounding": ["grounding"],
     "study_gym_routine": ["study", "gym"],
     "study_routine": ["study", "revision"],
     "exam_study_plan": ["study", "exam"],
     "gym_routine": ["gym"],
+    "body_growth": ["training", "protein", "recovery"],
+    "shastar_vidya": ["practice", "stance", "breathing"],
+    "empathy_eq": ["empathy", "listening"],
+    "relationship_understanding": ["feelings", "listening"],
     "daily_schedule": ["morning", "evening"],
     "weekly_schedule": ["week"],
     "time_management_plan": ["focus", "schedule"],
@@ -866,6 +1158,14 @@ _SLOT_REQUIRED_TOPICS: dict[str, list[str]] = {
 }
 
 _SLOT_REQUESTED_OUTPUT: dict[str, str] = {
+    "peaceful_knowledge_place_recommendation": "peaceful_knowledge_place_list",
+    "study_gym_plan": "balanced_study_gym_structure",
+    "fitness_guidance": "gym_learning_guide",
+    "routine_plan": "routine",
+    "career_skill_guidance": "career_skill_path",
+    "anxiety_grounding": "grounding_step",
+    "life_clarity": "clarity_frame",
+    "correction_request": "corrected_answer",
     "study_gym_routine": "balanced_daily_structure",
     "study_routine": "study_schedule",
     "exam_study_plan": "exam_study_plan",
@@ -882,9 +1182,34 @@ _SLOT_REQUESTED_OUTPUT: dict[str, str] = {
     "self_growth_book_request": "self_growth_book_list",
     "quote_request": "quote",
     "physical_action": "physical_step",
+    "body_growth": "gym_learning_guide",
+    "shastar_vidya": "martial_arts_practice_plan",
+    "empathy_eq": "empathy_guide",
+    "relationship_understanding": "understanding_others_guide",
 }
 
 _SLOT_MUST_INCLUDE: dict[str, list[str]] = {
+    "peaceful_knowledge_place_recommendation": [
+        "5 to 8 place types",
+        "why each gives peace and knowledge",
+        "how to use the place",
+        "best first pick",
+    ],
+    "study_gym_plan": [
+        "morning study block (60-90 min)",
+        "afternoon revision (20-30 min)",
+        "evening gym (60-75 min)",
+        "meal and recovery after gym",
+        "night prep for tomorrow",
+    ],
+    "fitness_guidance": [
+        "training basics",
+        "progressive overload",
+        "food or protein",
+        "recovery and sleep",
+        "mistakes to avoid",
+    ],
+    "routine_plan": ["morning", "study or work block", "reset", "evening close", "smaller version"],
     "study_gym_routine": [
         "morning study block (60-90 min)",
         "afternoon revision (20-30 min)",
@@ -906,15 +1231,25 @@ _SLOT_MUST_INCLUDE: dict[str, list[str]] = {
 }
 
 _SLOT_AVOID: dict[str, list[str]] = {
+    "peaceful_knowledge_place_recommendation": ["Loop routing", "book-only answer", "routine-only answer"],
+    "study_gym_plan": ["generic tips without times", "plan that omits gym", "plan that omits study"],
+    "fitness_guidance": ["generic motivation", "routing without actual training content"],
+    "routine_plan": ["route-only answer", "no structured routine"],
+    "correction_request": ["generic emotional reflection", "asking another question before answering"],
     "study_gym_routine": ["generic tips without times", "plan that omits gym", "plan that omits study"],
     "book_recommendation": ["routes to Curator only", "no actual book titles"],
     "quote_request": ["routing to Reset Space", "routing to Reflection without giving a quote"],
     "physical_action": ["abstract advice", "routing without giving an action"],
+    "empathy_eq": ["routing to Curator without giving empathy guidance", "book recommendations instead of direct teaching"],
+    "relationship_understanding": ["routing to Curator without direct guidance", "diagnosis of relationship"],
+    "body_growth": ["generic motivation", "routing without actual training content"],
+    "shastar_vidya": ["routing to The Loop instead of giving practice steps"],
 }
 
 
 def extract_request_slots(message: str, intent: str) -> dict:
     """Return the required topics, output type, must-include elements, and avoidance rules for this request."""
+    intent = normalize_intent(intent)
     text = normalize_text(message)
     required_topics = list(_SLOT_REQUIRED_TOPICS.get(intent, []))
     for topic_word in ["study", "gym", "exam", "revision", "fitness", "workout", "exercise"]:
@@ -927,5 +1262,3 @@ def extract_request_slots(message: str, intent: str) -> dict:
         "must_include": _SLOT_MUST_INCLUDE.get(intent, []),
         "avoid": _SLOT_AVOID.get(intent, []),
     }
-
-    return selected[:max_chunks]

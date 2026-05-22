@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -42,10 +43,9 @@ export function useWeeklyMirror() {
     setError("");
 
     try {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
+      const accessToken = await getSupabaseOrAppAccessToken(supabase);
 
-      if (sessionError || !accessToken) {
+      if (!accessToken) {
         throw new Error("Your session has expired. Please sign in again.");
       }
 

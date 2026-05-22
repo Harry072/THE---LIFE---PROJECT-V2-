@@ -1,9 +1,23 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Icon from "../Icon";
 import { GUIDE_ME_OPTIONS } from "../../data/lifeNavigation";
 
 export default function GuideMeModal({ isOpen, onClose }) {
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -19,12 +33,16 @@ export default function GuideMeModal({ isOpen, onClose }) {
         aria-modal="true"
         role="dialog"
         aria-labelledby="guide-me-title"
+        aria-describedby="guide-me-description"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="guide-me-header">
           <div>
             <p>Guide Me</p>
             <h2 id="guide-me-title">What do you need right now?</h2>
+            <span id="guide-me-description">
+              Choose a direction. Nothing here locks the rest of the app.
+            </span>
           </div>
           <button type="button" onClick={onClose} aria-label="Close Guide Me">
             Close
@@ -33,17 +51,32 @@ export default function GuideMeModal({ isOpen, onClose }) {
 
         <div className="guide-me-options">
           {GUIDE_ME_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => handleSelect(option.path)}
-            >
-              <span>
-                <Icon name={option.icon} size={18} />
-              </span>
-              <strong>{option.label}</strong>
-              <Icon name="arrow" size={15} />
-            </button>
+            <div key={option.id} className="guide-me-option">
+              <button
+                type="button"
+                className="guide-me-option-main"
+                onClick={() => handleSelect(option.path)}
+              >
+                <span className="guide-me-option-icon">
+                  <Icon name={option.icon} size={18} />
+                </span>
+                <span className="guide-me-option-copy">
+                  <strong>{option.label}</strong>
+                  {option.detail && <small>{option.detail}</small>}
+                </span>
+                <Icon name="arrow" size={15} />
+              </button>
+              {option.secondaryPath && (
+                <button
+                  type="button"
+                  className="guide-me-secondary-action"
+                  onClick={() => handleSelect(option.secondaryPath)}
+                >
+                  {option.secondaryLabel}
+                  <Icon name="arrow" size={13} />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </section>
@@ -102,7 +135,17 @@ export default function GuideMeModal({ isOpen, onClose }) {
           letter-spacing: 0;
         }
 
+        .guide-me-header span {
+          display: block;
+          max-width: 430px;
+          margin-top: 9px;
+          color: var(--text-dim);
+          font-size: 13px;
+          line-height: 1.5;
+        }
+
         .guide-me-header > button {
+          min-height: 38px;
           border: 1px solid var(--border);
           border-radius: 999px;
           background: rgba(255, 255, 255, 0.035);
@@ -118,7 +161,13 @@ export default function GuideMeModal({ isOpen, onClose }) {
           gap: 10px;
         }
 
-        .guide-me-options button {
+        .guide-me-option {
+          display: grid;
+          gap: 8px;
+          min-width: 0;
+        }
+
+        .guide-me-option-main {
           min-height: 56px;
           display: grid;
           grid-template-columns: 38px minmax(0, 1fr) 18px;
@@ -136,13 +185,14 @@ export default function GuideMeModal({ isOpen, onClose }) {
           transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
         }
 
-        .guide-me-options button:hover {
+        .guide-me-option-main:hover,
+        .guide-me-secondary-action:hover {
           transform: translateY(-1px);
           border-color: var(--border-strong);
           background: rgba(46, 204, 113, 0.06);
         }
 
-        .guide-me-options button span {
+        .guide-me-option-icon {
           width: 38px;
           height: 38px;
           display: inline-flex;
@@ -154,12 +204,48 @@ export default function GuideMeModal({ isOpen, onClose }) {
           background: rgba(46, 204, 113, 0.055);
         }
 
-        .guide-me-options button strong {
+        .guide-me-option-copy {
           min-width: 0;
+          display: grid;
+          gap: 3px;
+        }
+
+        .guide-me-option-copy strong,
+        .guide-me-option-copy small {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          line-height: 1.35;
+        }
+
+        .guide-me-option-copy strong {
           color: var(--text);
           font-size: 14px;
           font-weight: 600;
-          line-height: 1.35;
+        }
+
+        .guide-me-option-copy small {
+          color: var(--text-faint);
+          font-size: 12px;
+          font-weight: 500;
+        }
+
+        .guide-me-secondary-action {
+          justify-self: end;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          min-height: 40px;
+          border: 1px solid rgba(126, 217, 154, 0.13);
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.025);
+          color: var(--text-dim);
+          cursor: pointer;
+          font-family: var(--font-body);
+          font-size: 12px;
+          font-weight: 800;
+          padding: 10px 13px;
+          transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
         }
 
         @media (max-width: 767px) {
@@ -178,8 +264,13 @@ export default function GuideMeModal({ isOpen, onClose }) {
             flex-direction: column;
           }
 
-          .guide-me-header > button {
+          .guide-me-header > button,
+          .guide-me-secondary-action {
             min-height: 44px;
+          }
+
+          .guide-me-secondary-action {
+            justify-self: stretch;
           }
         }
       `}</style>

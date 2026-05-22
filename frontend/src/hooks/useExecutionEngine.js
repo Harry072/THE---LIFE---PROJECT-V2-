@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase";
+import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
 import { useUserStore } from "../store/userStore";
 
@@ -77,8 +78,7 @@ export function useExecutionEngine({
     setError(null);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
+      const accessToken = await getSupabaseOrAppAccessToken(supabase);
 
       if (!accessToken) {
         setError("Session expired.");

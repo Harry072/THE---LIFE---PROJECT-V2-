@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,6 +11,7 @@ from ai.gateway import (
     build_gemini_diagnosis,
     classify_gemini_error,
 )
+from ai.validator import TaskValidationError, validate_ai_tasks
 
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
@@ -25,6 +27,9 @@ def task(category: str, title: str) -> dict:
         "category": category,
         "title": title,
         "subtitle": f"{category.title()} Practice",
+        "kotler_tag": "Mastery" if category == "action" else ("Purpose" if category == "meaning" else "Curiosity"),
+        "waar_action": "Do the named action once with full attention.",
+        "ikigai_purpose": "A clear action gives the mind one visible proof that movement is possible.",
         "why_this_helps": "This practice creates one concrete signal from today's pattern.",
         "detail_description": "A clear task helps the user act without overthinking.\n\nAction: Do the named action once.",
         "duration_minutes": 5,
@@ -103,6 +108,7 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         self.assertEqual(len(captured["rows"]), 3)
         self.assertTrue(all(row["ai_generated"] is True for row in captured["rows"]))
         self.assertTrue(all(row["generation_provider"] == "gemini" for row in captured["rows"]))
+        self.assertEqual(captured["rows"][0]["kotler_tag"], "Curiosity")
 
     def test_first_gemini_failure_returns_retryable_without_saving_fallback(self):
         request = main.TaskRequest(
@@ -216,9 +222,25 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         self.assertEqual(text, '{"tasks": []}')
         self.assertEqual(captured["model"], "gemini-2.5-flash")
         self.assertEqual(captured["config"].response_mime_type, "application/json")
-        schema = captured["config"].response_json_schema
+        schema = captured["config"].response_schema
         self.assertEqual(schema["properties"]["tasks"]["minItems"], 3)
         self.assertEqual(schema["properties"]["tasks"]["maxItems"], 3)
+        task_schema = schema["$defs"]["LoopTaskPayload"]["properties"]
+        self.assertIn("kotler_tag", task_schema)
+        self.assertIn("waar_action", task_schema)
+        self.assertIn("ikigai_purpose", task_schema)
+
+    def test_loop_task_validation_rejects_invalid_kotler_tag(self):
+        invalid_tasks = [
+            {**task("awareness", "Write 3 Honest Lines"), "kotler_tag": "Discipline"},
+            task("action", "Move 1 Visible Step"),
+            task("meaning", "Send 1 Useful Message"),
+        ]
+
+        with self.assertRaises(TaskValidationError) as raised:
+            validate_ai_tasks(json.dumps({"tasks": invalid_tasks}))
+
+        self.assertEqual(raised.exception.reason, "invalid_kotler_tag")
 
     def test_diagnosis_reports_google_key_precedence_without_key_values(self):
         diagnosis = build_gemini_diagnosis(

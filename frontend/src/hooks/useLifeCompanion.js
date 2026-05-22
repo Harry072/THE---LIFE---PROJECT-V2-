@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -44,18 +45,24 @@ const sortConversations = (items) => (
   ))
 );
 
-const mapPersistedMessage = (row) => ({
-  id: row.id || createMessageId(),
-  role: row.role,
-  content: row.content || "",
-  tone: row.tone || "grounded",
-  suggested_action: row.suggested_action_json || EMPTY_ACTION,
-  safety: {
-    risk_level: row.risk_level || "none",
-    message: null,
-  },
-  created_at: row.created_at,
-});
+const mapPersistedMessage = (row) => {
+  const savedJson = row.suggested_action_json || {};
+  const isV2 = savedJson?._v === 2;
+  return {
+    id: row.id || createMessageId(),
+    role: row.role,
+    content: row.content || "",
+    tone: row.tone || "grounded",
+    suggested_action: isV2 ? (savedJson.action || EMPTY_ACTION) : (savedJson || EMPTY_ACTION),
+    safety: { risk_level: row.risk_level || "none", message: null },
+    sections: isV2 && Array.isArray(savedJson.sections) && savedJson.sections.length > 0
+      ? savedJson.sections
+      : null,
+    reply_format: isV2 ? (savedJson.reply_format || null) : null,
+    intent: row.companion_intent || null,
+    created_at: row.created_at,
+  };
+};
 
 export function useLifeCompanion() {
   const { user } = useAppState();
@@ -73,10 +80,9 @@ export function useLifeCompanion() {
       throw new Error("Sign in again to use Life Companion.");
     }
 
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    const accessToken = sessionData?.session?.access_token;
+    const accessToken = await getSupabaseOrAppAccessToken(supabase);
 
-    if (sessionError || !accessToken) {
+    if (!accessToken) {
       throw new Error("Your session has expired. Please sign in again.");
     }
 

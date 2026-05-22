@@ -75,6 +75,15 @@ function Onboarding() {
   };
 
   const authMessageFor = (result, modeIsLogin) => {
+    if (result?.reason === 'oauth_not_configured') {
+      return "Google sign-in is missing VITE_GOOGLE_CLIENT_ID. Add it to frontend/.env and restart the app.";
+    }
+    if (result?.reason === 'provider_disabled') {
+      return "Google sign-in is not enabled in Supabase. Enable Google under Authentication > Providers, add the Google Client ID and Secret, then try again.";
+    }
+    if (result?.reason === 'oauth_error' && result?.message) {
+      return result.message;
+    }
     if (result?.reason === 'email_unverified') {
       return "Check your email to verify your account before entering.";
     }
@@ -109,8 +118,10 @@ function Onboarding() {
   const handleGoogleAuth = async () => {
     setError(null);
     const result = await loginWithGoogle();
-    if (!result.ok && result.reason !== 'oauth_started') {
-      setError("Authentication failed. Please try again.");
+    if (result.ok) {
+      navigate('/dashboard');
+    } else if (result.reason !== 'oauth_started') {
+      setError(authMessageFor(result, isLogin));
     }
   };
 

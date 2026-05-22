@@ -13,6 +13,7 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 import google.generativeai as legacy_genai
 from google import genai as google_genai
+from auth import router as auth_router, verify_app_access_token
 
 from ai.context import (
     ALLOWED_LOOP_CATEGORIES,
@@ -27,6 +28,7 @@ from ai.companion_knowledge import (
     extract_request_slots,
     retrieve_companion_knowledge,
 )
+from ai.companion_understanding import understand_companion_message
 from ai.fallbacks import (
     generate_fallback_tasks,
     generate_fallback_weekly_mirror,
@@ -49,11 +51,11 @@ from ai.prompts import (
     LIFE_COMPANION_PROMPT_VERSION,
     WEEKLY_MIRROR_PROMPT_VERSION,
     EXECUTION_ENGINE_PROMPT_VERSION,
-    build_life_companion_prompt,
     build_loop_tasks_prompt,
     build_weekly_mirror_prompt,
     build_execution_engine_prompt,
 )
+from ai.companion_playbooks.loader import build_chunk_index
 from ai.groq_companion_gateway import (
     GroqCompanionProviderError,
     generate_life_companion_with_groq,
@@ -80,6 +82,8 @@ def get_cors_origins() -> list[str]:
         return [
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
         ]
 
     origins = [
@@ -90,10 +94,16 @@ def get_cors_origins() -> list[str]:
     return origins or [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ]
 
 
 app = FastAPI()
+app.include_router(auth_router)
+
+# Build playbook chunk index at startup (graceful — missing .md files are skipped).
+build_chunk_index()
 
 app.add_middleware(
     CORSMiddleware,
@@ -228,6 +238,7 @@ LOOP_TASK_OPTIONAL_INSERT_COLUMNS: set[str] = {
     "smaller_version",
     "post_completion_question",
     "framework_key",
+    "kotler_tag",
 }
 _loop_task_missing_optional_insert_columns: set[str] | None = None
 
@@ -301,6 +312,12 @@ def extract_bearer_token(authorization: str | None) -> str:
 
 def validate_supabase_access_token(authorization: str | None) -> str:
     token = extract_bearer_token(authorization)
+
+    try:
+        app_payload = verify_app_access_token(token)
+        return str(app_payload["sub"])
+    except HTTPException:
+        pass
 
     try:
         user_response = supabase.auth.get_user(token)
@@ -700,10 +717,9 @@ def log_life_companion_event(
     error_reason: str | None = None,
     risk_level: str = "none",
     context: dict | None = None,
-    knowledge_chunk_ids: list[str] | None = None,
+    knowledge_used_count: int | None = None,
 ) -> None:
     context_used = ",".join((context or {}).get("context_used") or []) or "none"
-    knowledge_used = ",".join(knowledge_chunk_ids or []) or "none"
     print(
         "LIFE_COMPANION "
         f"status={status} "
@@ -718,7 +734,7 @@ def log_life_companion_event(
         f"retrieval_ms={retrieval_ms if retrieval_ms is not None else 'n/a'} "
         f"provider_ms={provider_ms if provider_ms is not None else 'n/a'} "
         f"validation_ms={validation_ms if validation_ms is not None else 'n/a'} "
-        f"knowledge_used={knowledge_used} "
+        f"knowledge_used_count={knowledge_used_count if knowledge_used_count is not None else 0} "
         f"fallback_reason={fallback_reason or 'none'} "
         f"provider_selected={provider_selected or provider} "
         f"final_response_mode={final_response_mode or status} "
@@ -757,7 +773,7 @@ def build_life_companion_meta(
     context_build_ms: int | None = None,
     prompt_build_ms: int | None = None,
     retrieval_ms: int | None = None,
-    knowledge_chunk_ids: list[str] | None = None,
+    knowledge_used_count: int | None = None,
 ) -> dict:
     return {
         "prompt_version": LIFE_COMPANION_PROMPT_VERSION,
@@ -771,7 +787,7 @@ def build_life_companion_meta(
         "prompt_build_ms": prompt_build_ms,
         "retrieval_ms": retrieval_ms,
         "context_used": (context or {}).get("context_used") or [],
-        "knowledge_chunk_ids": knowledge_chunk_ids or [],
+        "knowledge_used_count": knowledge_used_count or 0,
     }
 
 
@@ -933,7 +949,12 @@ def persist_companion_exchange(
             "role": "assistant",
             "content": assistant_reply,
             "mode": mode,
-            "suggested_action_json": suggested_action,
+            "suggested_action_json": {
+                "_v": 2,
+                "action": suggested_action or {},
+                "sections": companion_response.get("sections") or [],
+                "reply_format": companion_response.get("reply_format") or "conversation",
+            },
             "tone": companion_response.get("tone"),
             "risk_level": safety.get("risk_level") or "none",
             "companion_intent": safe_intent,
@@ -1611,6 +1632,7 @@ async def life_companion_chat(
             )
 
         detected_intent = detect_companion_intent(user_message, mode)
+        understanding = understand_companion_message(user_message, mode)
         request_slots = extract_request_slots(user_message, detected_intent)
         safety_signal = detect_life_companion_safety(user_message)
         if safety_signal.get("crisis"):
@@ -1653,23 +1675,40 @@ async def life_companion_chat(
             )
 
         context_started = perf_counter()
-        context = build_life_companion_context(supabase, token_user_id, mode)
+        context = build_life_companion_context(
+            supabase,
+            token_user_id,
+            mode,
+            conversation_id=conversation.get("id") if conversation else None,
+            current_intent=detected_intent,
+        )
         context["latest_request_slots"] = request_slots
+        context["understanding"] = understanding
         context_build_ms = int((perf_counter() - context_started) * 1000)
+
+        retrieval_message = user_message
+        retrieval_intent = detected_intent
+        correction_target = (
+            (context.get("safe_memory_summary") or {}).get("previous_user_request")
+            if detected_intent == "correction_request"
+            else None
+        )
+        if correction_target:
+            retrieval_message = correction_target
+            retrieval_intent = detect_companion_intent(correction_target, mode)
+            context["correction_target_intent"] = retrieval_intent
 
         retrieval_started = perf_counter()
         knowledge_chunks = retrieve_companion_knowledge(
-            user_message,
+            retrieval_message,
             mode,
-            detected_intent,
+            retrieval_intent,
             max_chunks=4,
+            understanding=understanding,
+            safe_memory_summary=context.get("safe_memory_summary") or {},
         )
         retrieval_ms = int((perf_counter() - retrieval_started) * 1000)
-        knowledge_chunk_ids = [
-            str(chunk.get("id") or "")
-            for chunk in knowledge_chunks
-            if isinstance(chunk, dict) and chunk.get("id")
-        ]
+        knowledge_used_count = len(knowledge_chunks)
 
         if safety_signal.get("prompt_injection"):
             companion_response = generate_life_companion_fallback(
@@ -1695,7 +1734,7 @@ async def life_companion_chat(
                 validation_ms=0,
                 provider_selected="deterministic",
                 final_response_mode="fallback",
-                knowledge_chunk_ids=knowledge_chunk_ids,
+                knowledge_used_count=knowledge_used_count,
             )
             total_request_ms = int((perf_counter() - request_started) * 1000)
             updated_conversation = persist_companion_exchange(
@@ -1720,29 +1759,21 @@ async def life_companion_chat(
                     context_build_ms=context_build_ms,
                     prompt_build_ms=prompt_build_ms,
                     retrieval_ms=retrieval_ms,
-                    knowledge_chunk_ids=knowledge_chunk_ids,
+                    knowledge_used_count=knowledge_used_count,
                 ),
                 conversation_id=updated_conversation["id"],
                 conversation=updated_conversation,
             )
 
-        prompt_started = perf_counter()
-        prompt = build_life_companion_prompt(
-            context,
-            mode,
-            user_message,
-            intent=detected_intent,
-            knowledge_chunks=knowledge_chunks,
-        )
-        prompt_build_ms = int((perf_counter() - prompt_started) * 1000)
         gateway_result = generate_life_companion_response(
-            prompt=prompt,
             prompt_version=LIFE_COMPANION_PROMPT_VERSION,
             mode=mode,
             context=context,
             user_message=user_message,
             knowledge_chunks=knowledge_chunks,
+            understanding=understanding,
         )
+        prompt_build_ms = gateway_result.prompt_build_ms or 0
         log_life_companion_event(
             status=gateway_result.status,
             mode=mode,
@@ -1761,7 +1792,7 @@ async def life_companion_chat(
             error_reason=gateway_result.error_reason,
             risk_level=gateway_result.companion_response["safety"]["risk_level"],
             context=context,
-            knowledge_chunk_ids=knowledge_chunk_ids,
+            knowledge_used_count=knowledge_used_count,
         )
         total_request_ms = int((perf_counter() - request_started) * 1000)
         updated_conversation = None
@@ -1788,7 +1819,7 @@ async def life_companion_chat(
                 context_build_ms=context_build_ms,
                 prompt_build_ms=prompt_build_ms,
                 retrieval_ms=retrieval_ms,
-                knowledge_chunk_ids=knowledge_chunk_ids,
+                knowledge_used_count=knowledge_used_count,
             ),
             conversation_id=(updated_conversation or conversation)["id"],
             conversation=updated_conversation,
@@ -1997,11 +2028,27 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
                 auth_user = getattr(auth_resp, "user", None)
                 if auth_user:
                     raw_meta = getattr(auth_user, "user_metadata", None) or {}
-                    meta_struggles = raw_meta.get("struggles") or raw_meta.get("struggle_tags") or []
+                    meta_struggles = (
+                        raw_meta.get("struggle_tags")
+                        or raw_meta.get("struggles")
+                        or raw_meta.get("onboarding_answers")
+                        or []
+                    )
                     if isinstance(meta_struggles, list):
                         resolved_struggles = [str(s) for s in meta_struggles if s]
             except Exception:
                 pass  # Safe: tier 3 handles this inside build_generation_context
+
+        # Persist resolved struggles to user_behavior so the DB fallback tier
+        # works for future sessions even after JWT metadata changes.
+        if resolved_struggles:
+            try:
+                supabase.table("user_behavior").upsert(
+                    {"user_id": request.user_id, "core_struggles": resolved_struggles[:4]},
+                    on_conflict="user_id",
+                ).execute()
+            except Exception:
+                pass  # Non-critical; do not block task generation
 
         existing_tasks = fetch_today_core_tasks(request.user_id, request.local_date)
         existing_categories = {normalize_category(t.get("category", "")) for t in existing_tasks}
@@ -2104,6 +2151,7 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
                 gemini_model_name,
                 prompt,
                 prompt_version=LOOP_TASKS_PROMPT_VERSION,
+                timeout_seconds=25,
                 diagnosis_context=gemini_diagnosis_context,
             )
             category_tasks = validate_ai_tasks(provider_response.text, context)

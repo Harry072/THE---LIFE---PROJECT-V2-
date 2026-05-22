@@ -68,14 +68,14 @@ export function useEnsureTodayLoopTasks({
   }, []);
 
   useEffect(() => {
-    console.debug("[AutoLoopDebug] Hook mounted/updated.", { 
-      userId: user?.id, 
-      hasFetched, 
-      loading, 
-      generating, 
-      error, 
-      existingCoreTasks, 
-      tasksCount: tasks?.length 
+    console.debug("[AutoLoopDebug] Hook mounted/updated.", {
+      userId: user?.id,
+      hasFetched,
+      loading,
+      generating,
+      error,
+      existingCoreTasks,
+      tasksCount: tasks?.length
     });
 
     if (
@@ -102,6 +102,10 @@ export function useEnsureTodayLoopTasks({
     const storage = getSessionStorage();
     const guardKey = getGuardKey(user.id, localDate);
 
+    // Resolve context struggles in priority order:
+    // 1. Original onboarding labels from sessionStorage (most specific)
+    // 2. User's struggle_tags from auth metadata (persistent across sessions)
+    // 3. Mapped keyword fallback from sessionStorage (legacy support)
     let contextStruggles = null;
     if (storage) {
       const pendingRaw = storage.getItem('lifeProject.pendingNeed');
@@ -115,11 +119,29 @@ export function useEnsureTodayLoopTasks({
       if (selectedRaw) {
         try {
           const parsed = JSON.parse(selectedRaw);
-          contextStruggles = getMappedStruggles(parsed);
+          // Send the original human-readable labels (e.g. "I feel lost")
+          // directly — the backend prompt understands them better than keywords.
+          if (Array.isArray(parsed.struggles) && parsed.struggles.length > 0) {
+            contextStruggles = parsed.struggles.filter(s => typeof s === "string" && s.trim());
+          } else {
+            contextStruggles = getMappedStruggles(parsed);
+          }
           console.debug("[AutoLoopDebug] Parsed contextStruggles:", contextStruggles);
         } catch (e) {
           console.warn("[AutoLoopDebug] Failed to parse selectedNeed", e);
         }
+      }
+    }
+
+    // Fallback: use struggle_tags already saved in the user's auth metadata
+    // (covers returning users and those whose sessionStorage was cleared).
+    if (!contextStruggles || contextStruggles.length === 0) {
+      const meta = user?.user_metadata ?? {};
+      const metaTags =
+        meta.struggle_tags ?? meta.struggles ?? meta.onboarding_answers ?? [];
+      if (Array.isArray(metaTags) && metaTags.length > 0) {
+        contextStruggles = metaTags.filter(s => typeof s === "string" && s.trim());
+        console.debug("[AutoLoopDebug] Using struggle_tags from auth metadata:", contextStruggles);
       }
     }
 
@@ -138,19 +160,21 @@ export function useEnsureTodayLoopTasks({
 
       try {
         console.debug("[AutoLoopDebug] Calling generateTasks({ auto: true, contextStruggles })");
+        // allowSafeFallback: true — if Gemini is momentarily unavailable, use a
+        // safe static plan so the user always sees tasks on first load.
         const generatedTasks = await generateTasks({
           auto: true,
-          contextStruggles
+          contextStruggles,
+          allowSafeFallback: true,
         });
         console.debug("[AutoLoopDebug] generation complete. Tasks count:", generatedTasks?.length);
         if (isMounted.current && !hasTodayCoreTasks(generatedTasks)) {
-          // Clear guard so the next page refresh can retry — backend may have been temporarily unavailable.
+          // Clear guard so the next page refresh can retry.
           storage?.removeItem(guardKey);
           setAutoGenerationError(AUTO_GENERATION_ERROR);
         }
       } catch (generationError) {
         console.warn("[AutoLoopDebug] Automatic Loop task preparation failed:", generationError);
-        // Clear guard so the next page refresh can retry — backend may have been temporarily unavailable.
         storage?.removeItem(guardKey);
         if (isMounted.current) {
           setAutoGenerationError(AUTO_GENERATION_ERROR);
