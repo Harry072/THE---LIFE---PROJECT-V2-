@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 import { useUserStore } from '../store/userStore';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -20,17 +21,104 @@ const STRUGGLES = [
 
 const MotionDiv = motion.div;
 const MotionP = motion.p;
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const GOOGLE_AUTH_ORIGIN = import.meta.env.VITE_GOOGLE_AUTH_ORIGIN ?? 'http://localhost:5173';
+const GOOGLE_AUTH_DRAFT_HASH_PREFIX = 'googleAuthDraft=';
+
+let googleIdentityInitialized = false;
+let googleScriptPromise = null;
+
+const loadGoogleIdentityScript = () => {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('Google sign-in is only available in the browser.'));
+  }
+
+  if (window.google?.accounts?.id) {
+    return Promise.resolve();
+  }
+
+  if (googleScriptPromise) {
+    return googleScriptPromise;
+  }
+
+  googleScriptPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    if (existingScript) {
+      existingScript.addEventListener('load', resolve, { once: true });
+      existingScript.addEventListener('error', () => reject(new Error('Google Identity Services failed to load.')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Google Identity Services failed to load.'));
+    document.head.appendChild(script);
+  });
+
+  return googleScriptPromise;
+};
+
+const getGoogleAuthDraft = () => {
+  if (typeof window === 'undefined') return null;
+
+  const hashValue = window.location.hash.replace(/^#/, '');
+  if (hashValue.startsWith(GOOGLE_AUTH_DRAFT_HASH_PREFIX)) {
+    try {
+      const draft = JSON.parse(decodeURIComponent(hashValue.slice(GOOGLE_AUTH_DRAFT_HASH_PREFIX.length)));
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+      return draft;
+    } catch {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+      return null;
+    }
+  }
+
+  try {
+    return JSON.parse(sessionStorage.getItem('lifeProject.googleAuthDraft') || 'null');
+  } catch {
+    return null;
+  }
+};
+
+const normalizeOrigin = (origin) => origin.replace(/\/+$/, '');
+
+const ensureGoogleAuthOrigin = (draft = {}) => {
+  if (typeof window === 'undefined') return true;
+
+  const expectedOrigin = normalizeOrigin(GOOGLE_AUTH_ORIGIN);
+  if (!expectedOrigin || window.location.origin === expectedOrigin) {
+    return true;
+  }
+
+  const expectedHost = new URL(expectedOrigin).hostname;
+  const localHosts = ['localhost', '127.0.0.1', '[::1]', '::1'];
+  const isLocalhostAlias = localHosts.includes(window.location.hostname) && localHosts.includes(expectedHost);
+  if (!isLocalhostAlias) {
+    return true;
+  }
+
+  const encodedDraft = encodeURIComponent(JSON.stringify(draft));
+  window.location.replace(
+    `${expectedOrigin}${window.location.pathname}${window.location.search}#${GOOGLE_AUTH_DRAFT_HASH_PREFIX}${encodedDraft}`
+  );
+  return false;
+};
 
 function Onboarding() {
-  const [selectedStruggles, setSelectedStruggles] = useState([]);
-  const [step, setStep] = useState(0); // 0: Enter, 1: Struggles, 2: Insight, 3: Auth
+  const authDraft = getGoogleAuthDraft();
+  const [selectedStruggles, setSelectedStruggles] = useState(authDraft?.selectedStruggles || []);
+  const [step, setStep] = useState(authDraft?.step ?? 0); // 0: Enter, 1: Struggles, 2: Insight, 3: Auth
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLogin, setIsLogin] = useState(false);
+  const [isLogin, setIsLogin] = useState(authDraft?.isLogin || false);
   const [error, setError] = useState(null);
   
-  const { register, login, loginWithGoogle } = useUserStore();
+  const { register, login, completeGoogleLogin } = useUserStore();
   const navigate = useNavigate();
 
   const toggleStruggle = (struggle) => {
@@ -93,6 +181,70 @@ function Onboarding() {
     return "Authentication failed. Please try again.";
   };
 
+  const handleGoogleResponse = async (response) => {
+    const credential = response?.credential;
+    if (!credential) {
+      setError("Google did not return an ID token. Please try again.");
+      return;
+    }
+
+    console.log('[Google Auth] ID token received from Google Identity Services.');
+
+    try {
+      setError(null);
+      const backendResponse = await axios.post(`${API_BASE_URL}/api/v1/auth/google`, {
+        token: credential,
+      });
+      const result = completeGoogleLogin(backendResponse.data);
+
+      if (result.ok) {
+        navigate('/dashboard');
+      } else {
+        setError(authMessageFor(result, isLogin));
+      }
+    } catch (googleError) {
+      console.error('[Google Auth] Backend token exchange failed:', googleError);
+      const message = googleError?.response?.data?.detail
+        || googleError?.message
+        || "Google authentication failed. Please try again.";
+      setError(message);
+    }
+  };
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      console.error('[Google Auth] Missing import.meta.env.VITE_GOOGLE_CLIENT_ID.');
+      setError("Google sign-in is missing VITE_GOOGLE_CLIENT_ID. Add it to frontend/.env and restart the app.");
+      return;
+    }
+
+    let isMounted = true;
+
+    loadGoogleIdentityScript()
+      .then(() => {
+        if (!isMounted || googleIdentityInitialized) return;
+
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleGoogleResponse,
+          auto_select: false,
+          cancel_on_tap_outside: true,
+          use_fedcm_for_prompt: true,
+        });
+        googleIdentityInitialized = true;
+      })
+      .catch((scriptError) => {
+        console.error('[Google Auth] Failed to load Google Identity Services:', scriptError);
+        if (isMounted) {
+          setError("Google sign-in could not load. Check your connection and try again.");
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setError(null);
@@ -115,14 +267,24 @@ function Onboarding() {
     }
   };
 
-  const handleGoogleAuth = async () => {
+  const handleGoogleAuth = () => {
     setError(null);
-    const result = await loginWithGoogle();
-    if (result.ok) {
-      navigate('/dashboard');
-    } else if (result.reason !== 'oauth_started') {
-      setError(authMessageFor(result, isLogin));
+    if (!ensureGoogleAuthOrigin({ step, selectedStruggles, isLogin })) {
+      return;
     }
+
+    if (!GOOGLE_CLIENT_ID) {
+      console.error('[Google Auth] Missing import.meta.env.VITE_GOOGLE_CLIENT_ID.');
+      setError("Google sign-in is missing VITE_GOOGLE_CLIENT_ID. Add it to frontend/.env and restart the app.");
+      return;
+    }
+
+    if (!window.google?.accounts?.id || !googleIdentityInitialized) {
+      setError("Google sign-in is still loading. Please try again in a moment.");
+      return;
+    }
+
+    window.google.accounts.id.prompt();
   };
 
   return (
