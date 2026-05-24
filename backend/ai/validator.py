@@ -43,6 +43,14 @@ COMPANION_ACTION_ROUTES = {
     "none": None,
 }
 
+SAFETY_INTENTS = {
+    "safety",
+    "crisis",
+    "anxiety_grounding",
+    "ground_first",
+    "self_harm",
+}
+
 COMPANION_REPLY_FORMATS = {
     "conversation",
     "structured_plan",
@@ -830,8 +838,7 @@ def validate_life_companion_response(
         result["intent"] = normalize_intent(expected_intent)
 
     normalized_expected_intent = normalize_intent(expected_intent) if expected_intent else ""
-    if normalized_expected_intent in BOOK_RECOMMENDATION_INTENTS or result.get("reply_format") == "book_recommendation":
-        validate_book_recommendation_contract(result, normalized_expected_intent or None)
+    _is_safety_intent = normalized_expected_intent in SAFETY_INTENTS
 
     _direct_output_intents = {
         "peaceful_knowledge_place_recommendation",
@@ -854,11 +861,24 @@ def validate_life_companion_response(
         "spiritual_reflection",
         "general_question",
     }
-    if normalized_expected_intent in _direct_output_intents:
-        validate_direct_output_contract(result, normalized_expected_intent)
 
-    if understanding:
-        _validate_request_satisfaction(result, understanding)
+    # For safety intents, enforce strict contract checks — routing must be correct.
+    # For all other intents, accept any valid-structure response with a non-empty reply;
+    # log mismatches for debugging but never discard a good AI answer over label mismatch.
+    try:
+        if normalized_expected_intent in BOOK_RECOMMENDATION_INTENTS or result.get("reply_format") == "book_recommendation":
+            validate_book_recommendation_contract(result, normalized_expected_intent or None)
+        if normalized_expected_intent in _direct_output_intents:
+            validate_direct_output_contract(result, normalized_expected_intent)
+        if understanding:
+            _validate_request_satisfaction(result, understanding)
+    except LifeCompanionValidationError as _contract_err:
+        if _is_safety_intent:
+            raise
+        print(
+            f"COMPANION_VALIDATION_LENIENT intent={normalized_expected_intent} "
+            f"reason={_contract_err.reason} reply_len={len(result.get('reply', ''))}"
+        )
 
     validate_no_source_leakage(result)
 
@@ -1376,6 +1396,23 @@ def normalize_task_for_insert(
     _raw_kotler_tag = str(task.get("kotler_tag") or "").strip()
     kotler_tag = KOTLER_TAG_LOOKUP.get(_raw_kotler_tag.lower())
 
+    # ── Intelligence fields ───────────────────────────────────────────────────
+    _valid_inner_layers = {"attachment", "anger", "distraction", "ego", "greed", "acceptance", "none"}
+    _raw_inner_layer = str(task.get("inner_work_layer") or "none").strip().lower()
+    inner_work_layer = _raw_inner_layer if _raw_inner_layer in _valid_inner_layers else "none"
+
+    _valid_angles = {"direct", "oblique", "embodied", "reflective"}
+    _raw_angle = str(task.get("approach_angle") or "reflective").strip().lower()
+    approach_angle = _raw_angle if _raw_angle in _valid_angles else "reflective"
+
+    _valid_phases = {"foundation", "recognition", "integration"}
+    _raw_phase = str(task.get("journey_phase") or "foundation").strip().lower()
+    journey_phase = _raw_phase if _raw_phase in _valid_phases else "foundation"
+
+    _valid_quadrants = {"passion", "mission", "vocation", "profession", "none"}
+    _raw_quadrant = str(task.get("ikigai_quadrant") or "none").strip().lower()
+    ikigai_quadrant = _raw_quadrant if _raw_quadrant in _valid_quadrants else "none"
+
     return {
         "user_id": user_id,
         "for_date": local_date,
@@ -1410,4 +1447,9 @@ def normalize_task_for_insert(
         "post_completion_question": post_completion_question or None,
         "framework_key": framework_key,
         "kotler_tag": kotler_tag,
+        # Intelligence fields (gracefully omitted if DB columns not yet migrated)
+        "inner_work_layer": inner_work_layer,
+        "approach_angle": approach_angle,
+        "journey_phase": journey_phase,
+        "ikigai_quadrant": ikigai_quadrant,
     }

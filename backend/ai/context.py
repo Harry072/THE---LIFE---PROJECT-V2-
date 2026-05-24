@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
 from .companion_intents import (
@@ -646,7 +647,12 @@ def fetch_latest_reflection_context(supabase, user_id: str) -> tuple[dict, bool]
 
 
 def fetch_latest_reset_signal(supabase, user_id: str) -> tuple[dict, bool]:
-    """Return safe reset mood summary for the most recent 3 sessions."""
+    """Return safe reset mood summary for the most recent 3 sessions.
+
+    Primary query uses completed_at + next_step_type (added in migrations 035
+    and 032). Falls back to created_at ordering with only migration-031 columns
+    if those columns don't exist yet.
+    """
     rows = table_select_optional(
         supabase,
         "reset_sessions",
@@ -660,6 +666,21 @@ def fetch_latest_reset_signal(supabase, user_id: str) -> tuple[dict, bool]:
             ],
         },
     )
+    if not rows:
+        # Fallback: query only columns that exist from migration 031
+        rows = table_select_optional(
+            supabase,
+            "reset_sessions",
+            "latest_reset_signal_fallback",
+            {
+                "select": "mood_after,reflection_tag,created_at",
+                "ops": [
+                    ("eq", ("user_id", user_id)),
+                    ("order", ("created_at",), {"desc": True}),
+                    ("limit", (3,)),
+                ],
+            },
+        )
     if not rows:
         return {}, False
 
@@ -1830,33 +1851,42 @@ def build_generation_context(
     reset_signal: dict = {}
     context_used = ["streak"]
 
-    if supabase is not None and user_id:
-        tree_data, has_tree = fetch_user_tree_context(supabase, user_id)
-        if has_tree:
-            context_used.append("user_tree")
-        if not cleaned_struggles:
-            db_struggles = fetch_onboarding_struggles_from_db(supabase, user_id)
-            if db_struggles:
-                cleaned_struggles = db_struggles
-                _db_struggles_used = True
-
     journey: dict = {}
-    if supabase is not None and user_id and local_date:
-        task_history, has_task_history = fetch_task_history_context(supabase, user_id, local_date)
-        if has_task_history:
-            context_used.append("task_history")
-        reflection_data, has_reflection = fetch_latest_reflection_context(supabase, user_id)
-        if has_reflection:
-            if reflection_data.get("latest_mood"):
-                context_used.append("latest_mood")
-            if reflection_data.get("prompt_labels"):
-                context_used.append("prompt_labels")
-        reset_signal, has_reset = fetch_latest_reset_signal(supabase, user_id)
-        if has_reset:
-            context_used.append("reset_signal")
-        journey = fetch_journey_context(supabase, user_id, local_date)
-        if journey.get("journey_day", 1) > 1:
-            context_used.append("journey")
+    if supabase is not None and user_id:
+        _need_struggles = not cleaned_struggles
+        with ThreadPoolExecutor(max_workers=6) as _pool:
+            _f_tree       = _pool.submit(fetch_user_tree_context, supabase, user_id)
+            _f_struggles  = _pool.submit(fetch_onboarding_struggles_from_db, supabase, user_id) if _need_struggles else None
+            _f_history    = _pool.submit(fetch_task_history_context, supabase, user_id, local_date) if local_date else None
+            _f_reflection = _pool.submit(fetch_latest_reflection_context, supabase, user_id) if local_date else None
+            _f_reset      = _pool.submit(fetch_latest_reset_signal, supabase, user_id) if local_date else None
+            _f_journey    = _pool.submit(fetch_journey_context, supabase, user_id, local_date) if local_date else None
+
+            tree_data, has_tree = _f_tree.result()
+            if has_tree:
+                context_used.append("user_tree")
+            if _f_struggles is not None:
+                db_struggles = _f_struggles.result()
+                if db_struggles:
+                    cleaned_struggles = db_struggles
+                    _db_struggles_used = True
+
+            if _f_history is not None:
+                task_history, has_task_history = _f_history.result()
+                if has_task_history:
+                    context_used.append("task_history")
+                reflection_data, has_reflection = _f_reflection.result()
+                if has_reflection:
+                    if reflection_data.get("latest_mood"):
+                        context_used.append("latest_mood")
+                    if reflection_data.get("prompt_labels"):
+                        context_used.append("prompt_labels")
+                reset_signal, has_reset = _f_reset.result()
+                if has_reset:
+                    context_used.append("reset_signal")
+                journey = _f_journey.result()
+                if journey.get("journey_day", 1) > 1:
+                    context_used.append("journey")
 
     struggles_summary = (
         ", ".join(cleaned_struggles)

@@ -3,7 +3,7 @@ import json
 
 LOOP_TASKS_PROMPT_VERSION = "loop_tasks_v4"
 WEEKLY_MIRROR_PROMPT_VERSION = "weekly_mirror_v2"
-LIFE_COMPANION_PROMPT_VERSION = "life_companion_v6"
+LIFE_COMPANION_PROMPT_VERSION = "life_companion_v7"
 EXECUTION_ENGINE_PROMPT_VERSION = "execution_engine_v2"
 
 
@@ -662,7 +662,7 @@ COMPANION_MODE_GUIDANCE = {
 }
 
 
-def build_loop_tasks_prompt(context: dict) -> str:
+def build_loop_tasks_prompt(context: dict, intelligence_context: str = "") -> str:
     struggles_summary = context["struggles_summary"]
     current_day = context["current_day"]
     journey_guidance = context["journey_guidance"]
@@ -686,7 +686,7 @@ def build_loop_tasks_prompt(context: dict) -> str:
     all_history_titles = context.get("all_history_titles") or recent_titles
     if all_history_titles:
         history_lines = "\n".join(
-            f"  - {t}" for t in all_history_titles[:90] if t
+            f"  - {t}" for t in all_history_titles[:21] if t
         )
         history_block = history_lines if history_lines else "  (none yet)"
     else:
@@ -829,7 +829,7 @@ Past 30 days — all task titles:
 
 Additionally, do NOT reuse the same core action or concept from these recent fingerprints, even in different words:
 {recent_fingerprint_text}
-
+{intelligence_context}
 ════════════════════════════════════════════════
  TASK GENERATION RULES
 ════════════════════════════════════════════════
@@ -878,6 +878,10 @@ Field rules:
 - "difficulty_level": gentle / normal / deeper
 - "personalization_reason": one internal sentence (max 20 words) for backend logging — do NOT display to user
 - "framework_key": MUST be one of: {framework_keys_list} — choose the framework whose lens most shaped this task
+- "inner_work_layer": MUST be one of: "attachment" | "anger" | "distraction" | "ego" | "greed" | "acceptance" | "none" — which inner force this task quietly addresses; backend-only, never shown to user
+- "approach_angle": MUST be one of: "direct" | "oblique" | "embodied" | "reflective" — HOW the task enters the inner territory; backend-only
+- "journey_phase": MUST be one of: "foundation" | "recognition" | "integration" — current phase based on days active; backend-only
+- "ikigai_quadrant": MUST be one of: "passion" | "mission" | "vocation" | "profession" | "none" — which quadrant this task moves toward; backend-only
 
 ════════════════════════════════════════════════
 OUTPUT — STRICTLY VALID JSON ONLY
@@ -903,7 +907,11 @@ OUTPUT — STRICTLY VALID JSON ONLY
     "post_completion_question": "Did this feel too easy, right-sized, or too heavy?",
     "difficulty_level": "{suggested_intensity}",
     "personalization_reason": "Sized gently based on recent heavy mood signals and low completion pattern.",
-    "framework_key": "morita"
+    "framework_key": "morita",
+    "inner_work_layer": "distraction",
+    "approach_angle": "reflective",
+    "journey_phase": "foundation",
+    "ikigai_quadrant": "passion"
   }},
   {{
     "category": "action",
@@ -924,7 +932,11 @@ OUTPUT — STRICTLY VALID JSON ONLY
     "post_completion_question": "How does your mind feel after this?",
     "difficulty_level": "{suggested_intensity}",
     "personalization_reason": "Action category chosen because it was marked weak in recent history.",
-    "framework_key": "morita"
+    "framework_key": "morita",
+    "inner_work_layer": "ego",
+    "approach_angle": "embodied",
+    "journey_phase": "foundation",
+    "ikigai_quadrant": "profession"
   }},
   {{
     "category": "meaning",
@@ -945,7 +957,11 @@ OUTPUT — STRICTLY VALID JSON ONLY
     "post_completion_question": "Was this too easy, right-sized, or too heavy?",
     "difficulty_level": "{suggested_intensity}",
     "personalization_reason": "Meaning included to reconnect effort to purpose given recent restless mood pattern.",
-    "framework_key": "ikigai"
+    "framework_key": "ikigai",
+    "inner_work_layer": "acceptance",
+    "approach_angle": "direct",
+    "journey_phase": "foundation",
+    "ikigai_quadrant": "mission"
   }}
   ]
 }}
@@ -1017,6 +1033,25 @@ Return ONLY valid JSON in this exact shape:
 """.strip()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  REASONING GUIDE — injected into every companion prompt (Stage 3)
+#  Instructs the model to reason through six questions before writing its
+#  JSON reply.  The reasoning is internal; it never appears in the output.
+# ─────────────────────────────────────────────────────────────────────────────
+
+REASONING_GUIDE_BLOCK = (
+    "[REASONING GUIDE — Apply internally before writing your JSON reply]\n"
+    "Before constructing the reply field, work through these internally:\n"
+    "1. FEELING: What is this person actually feeling right now, beneath the surface?\n"
+    "2. NEED: Do they need validation, a plan, guidance, or just to be heard?\n"
+    "3. HISTORY: From the memory context above, what is most relevant right now?\n"
+    "4. WISDOM: What framework, technique, or insight applies most to this moment?\n"
+    "5. FORMAT: Should the reply be brief and emotional, or detailed and structured?\n"
+    "6. ONE THING: What is the single most important thing to give them right now?\n"
+    "Let this reasoning shape your reply. Do not include the reasoning in output."
+)
+
+
 def build_life_companion_prompt(
     user_message: str,
     rag_context: str = "",
@@ -1025,11 +1060,32 @@ def build_life_companion_prompt(
     session_context: dict = None,
     classification: dict = None,
     web_context: str = "",
+    user_intent=None,
+    formatted_memory: str = "",
+    intent_knowledge: str = "",
 ) -> dict:
-    """Assembles the Pass 2 LLM prompt package. Never logs values."""
+    """
+    Assembles the Pass 2 LLM prompt package.  Never logs values.
+
+    New parameters (Stage 3 pipeline):
+      user_intent      — UserIntent model from companion_classifier
+      formatted_memory — pre-formatted memory block from memory_formatter
+      intent_knowledge — intent-filtered knowledge block from pdf_knowledge
+    """
     context_parts = []
 
-    if classification:
+    # ── Stage 1: Intent classification block ──────────────────────────────────
+    if user_intent is not None:
+        context_parts.append(
+            "[INTENT ANALYSIS]\n"
+            f"Conversation type: {user_intent.intent}\n"
+            f"Emotional tone: {user_intent.emotional_tone}\n"
+            f"What they need: {user_intent.needs}\n"
+            f"Urgency: {user_intent.urgency}\n"
+            f"Approach: {user_intent.suggested_approach}\n"
+            "Respond according to this analysis and the behavioral laws above."
+        )
+    elif classification:
         context_parts.append(
             "[UNDERSTANDING OF LATEST MESSAGE]\n"
             f"Emotional state: {classification.get('emotional_state','none')}\n"
@@ -1040,9 +1096,13 @@ def build_life_companion_prompt(
             "Respond according to this understanding and the behavioral laws."
         )
 
-    if memory_summary:
+    # ── Stage 2a: Memory — prefer pre-formatted block, fall back to raw string ─
+    if formatted_memory and formatted_memory.strip():
+        context_parts.append(formatted_memory)
+    elif memory_summary and memory_summary.strip():
         context_parts.append("[USER MEMORY SUMMARY]\n" + memory_summary)
 
+    # ── Session state ──────────────────────────────────────────────────────────
     if session_context:
         refused = session_context.get("refused_features", [])
         context_parts.append(
@@ -1052,12 +1112,16 @@ def build_life_companion_prompt(
             f"Refused features: {', '.join(refused) if refused else 'none'}"
         )
 
-    if rag_context and rag_context.strip():
+    # ── Stage 2b: Intent-filtered knowledge, then general RAG ─────────────────
+    if intent_knowledge and intent_knowledge.strip():
+        context_parts.append(intent_knowledge)
+    elif rag_context and rag_context.strip():
         context_parts.append(
             "[RELEVANT KNOWLEDGE — support your reply with this, "
             "never cite source or file names]\n" + rag_context
         )
 
+    # ── Web research ───────────────────────────────────────────────────────────
     if web_context and web_context.strip():
         context_parts.append(
             "[CURRENT WEB RESEARCH — use this for factual/current queries]\n"
@@ -1065,6 +1129,9 @@ def build_life_companion_prompt(
             + "\nUse this as evidence, but answer naturally. Do not say you are "
             "using retrieved context or backend search."
         )
+
+    # ── Stage 3: Chain-of-thought reasoning guide ──────────────────────────────
+    context_parts.append(REASONING_GUIDE_BLOCK)
 
     return {
         "system": COMPANION_SYSTEM_PROMPT,

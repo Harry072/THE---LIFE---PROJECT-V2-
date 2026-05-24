@@ -3,11 +3,14 @@ from dataclasses import dataclass, field
 import os
 from time import perf_counter
 
+from ai.companion_classifier import map_from_classification
 from ai.companion_intents import detect_emotional_state, detect_intent, detect_refused_features
 from ai.companion_knowledge import detect_companion_intent, get_rag_filter_tags
 from ai.companion_playbooks.loader import retrieve_playbook_chunks
 from ai.context import get_companion_session, save_companion_session
 from ai.fallbacks import generate_life_companion_fallback
+from ai.memory_formatter import format_memory_for_prompt
+from ai.pdf_knowledge import get_relevant_knowledge
 from ai.prompts import build_life_companion_prompt
 from ai.groq_companion_gateway import (
     GroqCompanionProviderError,
@@ -187,10 +190,6 @@ def _validator_intent_from_classification(classification: dict, user_message: st
         return "anxiety_grounding"
     if intent == "receive_and_reflect":
         return "emotional_talk"
-    if intent == "factual_question":
-        return "general_question"
-    if intent == "conversational":
-        return "general_question"
     if intent == "app_help":
         return "app_guidance"
     if intent == "recommend_list":
@@ -705,6 +704,9 @@ def generate_life_companion_response(
     session.update(emotional_state, refused_this_turn)
     save_companion_session(user_id, session_id, session)
     _rag_tags = get_rag_filter_tags(emotional_state, intent)
+
+    # ── STAGE 1: Classify intent into richer UserIntent model ─────────────
+    user_intent = map_from_classification(classification, latest_message)
     # ───────────────────────────────────────────────────────────────────────
 
     # ── PIPELINE: Playbook RAG retrieval ──────────────────────────────────
@@ -723,17 +725,31 @@ def generate_life_companion_response(
     web_context_string = run_web_research_pass(latest_message, classification)
     # ───────────────────────────────────────────────────────────────────────
 
-    # ── PIPELINE: Build structured prompt ─────────────────────────────────
+    # ── STAGE 2a: Format memory properly (fixes empty-summary bug) ────────
     _safe_memory = (context or {}).get("safe_memory_summary") or {}
-    _memory_summary = str(_safe_memory.get("summary") or "")[:800]
+    _formatted_memory = format_memory_for_prompt(_safe_memory, user_intent.intent)
+    # ───────────────────────────────────────────────────────────────────────
+
+    # ── STAGE 2b: Route knowledge by intent ───────────────────────────────
+    _knowledge_chunks = knowledge_chunks or []
+    _intent_knowledge = get_relevant_knowledge(
+        user_intent.intent,
+        _knowledge_chunks,
+        max_chunks=3,
+    )
+    # ───────────────────────────────────────────────────────────────────────
+
+    # ── PIPELINE: Build structured prompt (Stages 1-3 wired in) ──────────
     prompt_parts = build_life_companion_prompt(
         user_message=latest_message,
         rag_context=rag_context_string,
         conversation_history=conversation_history,
-        memory_summary=_memory_summary,
         session_context=session.to_summary(),
         classification=classification,
         web_context=web_context_string,
+        user_intent=user_intent,
+        formatted_memory=_formatted_memory,
+        intent_knowledge=_intent_knowledge,
     )
     provider_prompt_parts = {
         **prompt_parts,

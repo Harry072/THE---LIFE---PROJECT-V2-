@@ -877,6 +877,19 @@ SUBJECT_TO_INTENT: dict[str, str] = {
     "purpose": "life_clarity",
     "spirituality": "spiritual_reflection",
     "anxiety": "anxiety_grounding",
+    # High-frequency practical subjects
+    "trading": "career_skill_guidance",
+    "wealth": "career_skill_guidance",
+    "finance": "career_skill_guidance",
+    "psychology": "life_clarity",
+    "mental_toughness": "life_clarity",
+    "mindset": "life_clarity",
+    "discipline": "life_clarity",
+    "confidence": "emotional_talk",
+    "focus": "task_help",
+    "procrastination": "task_help",
+    "stress": "anxiety_grounding",
+    "sleep": "routine_plan",
 }
 
 

@@ -1807,7 +1807,7 @@ def generate_life_companion_fallback(
     if deterministic_intent == "general_question":
         return build_life_companion_response(
             reply=(
-                "I can answer that directly. Send the thing you want help with, and I will keep it clear, practical, and focused on your actual question."
+                "That is a thoughtful question. Could you share a bit more about what is on your mind? I want to give you something genuinely useful, not a surface-level answer."
             ),
             action_type="none",
             tone="grounded",

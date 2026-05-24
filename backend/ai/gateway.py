@@ -47,10 +47,50 @@ class LoopTaskPayload(BaseModel):
     smaller_version: str = Field(min_length=5, max_length=180)
     post_completion_question: str = Field(min_length=5, max_length=120)
     framework_key: Literal["ikigai", "morita", "logotherapy", "flow", "symbol"]
+    # ── Intelligence fields with defaults for post-parse validation ───────────
+    inner_work_layer: Literal[
+        "attachment", "anger", "distraction", "ego", "greed", "acceptance", "none"
+    ] = "none"
+    approach_angle: Literal["direct", "oblique", "embodied", "reflective"] = "reflective"
+    journey_phase: Literal["foundation", "recognition", "integration"] = "foundation"
+    ikigai_quadrant: Literal["passion", "mission", "vocation", "profession", "none"] = "none"
 
 
 class LoopTasksPayload(BaseModel):
     tasks: list[LoopTaskPayload] = Field(min_length=3, max_length=3)
+
+
+# Gemini rejects default values in responseSchema. This mirror model has the
+# same shape as LoopTaskPayload but with the 4 intelligence fields as required
+# (no defaults), so the schema sent to Gemini has no 'default' keys.
+class _LoopTaskGeminiSchema(BaseModel):
+    category: Literal["awareness", "action", "meaning"]
+    title: str = Field(min_length=3, max_length=80)
+    subtitle: str = Field(min_length=3, max_length=80)
+    kotler_tag: Literal["Curiosity", "Purpose", "Passion", "Autonomy", "Mastery"]
+    waar_action: str = Field(min_length=10, max_length=260)
+    ikigai_purpose: str = Field(min_length=10, max_length=360)
+    why_this_helps: str = Field(min_length=10, max_length=260)
+    detail_description: str = Field(min_length=10, max_length=420)
+    duration_minutes: int = Field(ge=2, le=30)
+    preferred_time_of_day: str = Field(min_length=3, max_length=24)
+    supportive_line: str = Field(min_length=3, max_length=140)
+    personalization_reason: str = Field(min_length=8, max_length=260)
+    difficulty_level: Literal["gentle", "normal", "deeper"]
+    success_condition: str = Field(min_length=5, max_length=140)
+    smaller_version: str = Field(min_length=5, max_length=180)
+    post_completion_question: str = Field(min_length=5, max_length=120)
+    framework_key: Literal["ikigai", "morita", "logotherapy", "flow", "symbol"]
+    inner_work_layer: Literal[
+        "attachment", "anger", "distraction", "ego", "greed", "acceptance", "none"
+    ]
+    approach_angle: Literal["direct", "oblique", "embodied", "reflective"]
+    journey_phase: Literal["foundation", "recognition", "integration"]
+    ikigai_quadrant: Literal["passion", "mission", "vocation", "profession", "none"]
+
+
+class _LoopTasksGeminiSchema(BaseModel):
+    tasks: list[_LoopTaskGeminiSchema] = Field(min_length=3, max_length=3)
 
 
 def classify_gemini_error(error: Exception) -> str:
@@ -179,7 +219,8 @@ def _call_google_genai_loop_tasks(client, model_name: str, prompt: str) -> str:
         contents=prompt,
         config=types.GenerateContentConfig(
             responseMimeType="application/json",
-            responseSchema=LoopTasksPayload.model_json_schema(),
+            responseSchema=_LoopTasksGeminiSchema,
+            temperature=0.9,
         ),
     )
     # Extract text defensively — response shape varies by SDK version
