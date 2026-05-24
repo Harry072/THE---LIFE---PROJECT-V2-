@@ -68,16 +68,6 @@ export function useEnsureTodayLoopTasks({
   }, []);
 
   useEffect(() => {
-    console.debug("[AutoLoopDebug] Hook mounted/updated.", {
-      userId: user?.id,
-      hasFetched,
-      loading,
-      generating,
-      error,
-      existingCoreTasks,
-      tasksCount: tasks?.length
-    });
-
     if (
       !user?.id ||
       !hasFetched ||
@@ -87,15 +77,6 @@ export function useEnsureTodayLoopTasks({
       existingCoreTasks ||
       typeof generateTasks !== "function"
     ) {
-      console.debug("[AutoLoopDebug] Bailing out early.", {
-        noUserId: !user?.id,
-        notFetched: !hasFetched,
-        loading,
-        generating,
-        error,
-        existingCoreTasks,
-        missingFn: typeof generateTasks !== "function"
-      });
       return;
     }
 
@@ -110,7 +91,6 @@ export function useEnsureTodayLoopTasks({
     if (storage) {
       const pendingRaw = storage.getItem('lifeProject.pendingNeed');
       if (pendingRaw) {
-        console.debug("[AutoLoopDebug] Migrating pendingNeed to selectedNeed.");
         storage.setItem(`lifeProject.selectedNeed.${user.id}`, pendingRaw);
         storage.removeItem('lifeProject.pendingNeed');
       }
@@ -126,9 +106,8 @@ export function useEnsureTodayLoopTasks({
           } else {
             contextStruggles = getMappedStruggles(parsed);
           }
-          console.debug("[AutoLoopDebug] Parsed contextStruggles:", contextStruggles);
-        } catch (e) {
-          console.warn("[AutoLoopDebug] Failed to parse selectedNeed", e);
+        } catch {
+          console.warn("[AutoLoop] Could not read saved onboarding context.");
         }
       }
     }
@@ -141,17 +120,13 @@ export function useEnsureTodayLoopTasks({
         meta.struggle_tags ?? meta.struggles ?? meta.onboarding_answers ?? [];
       if (Array.isArray(metaTags) && metaTags.length > 0) {
         contextStruggles = metaTags.filter(s => typeof s === "string" && s.trim());
-        console.debug("[AutoLoopDebug] Using struggle_tags from auth metadata:", contextStruggles);
       }
     }
 
-    console.debug("[AutoLoopDebug] Guard key check. guardKey:", guardKey, "value:", storage?.getItem(guardKey));
     if (storage?.getItem(guardKey) === "attempted") {
-      console.debug("[AutoLoopDebug] Aborting. Guard key is already 'attempted'.");
       return;
     }
 
-    console.debug("[AutoLoopDebug] Setting guard key to 'attempted' and starting generation.");
     storage?.setItem(guardKey, "attempted");
 
     const prepareTasks = async () => {
@@ -159,22 +134,18 @@ export function useEnsureTodayLoopTasks({
       setAutoGenerationError("");
 
       try {
-        console.debug("[AutoLoopDebug] Calling generateTasks({ auto: true, contextStruggles })");
-        // allowSafeFallback: true — if Gemini is momentarily unavailable, use a
-        // safe static plan so the user always sees tasks on first load.
         const generatedTasks = await generateTasks({
           auto: true,
           contextStruggles,
-          allowSafeFallback: true,
+          allowSafeFallback: false,
         });
-        console.debug("[AutoLoopDebug] generation complete. Tasks count:", generatedTasks?.length);
         if (isMounted.current && !hasTodayCoreTasks(generatedTasks)) {
           // Clear guard so the next page refresh can retry.
           storage?.removeItem(guardKey);
           setAutoGenerationError(AUTO_GENERATION_ERROR);
         }
-      } catch (generationError) {
-        console.warn("[AutoLoopDebug] Automatic Loop task preparation failed:", generationError);
+      } catch {
+        console.warn("[AutoLoop] Automatic Loop task preparation failed.");
         storage?.removeItem(guardKey);
         if (isMounted.current) {
           setAutoGenerationError(AUTO_GENERATION_ERROR);

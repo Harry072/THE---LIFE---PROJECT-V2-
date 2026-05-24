@@ -1,40 +1,44 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import Icon from "../Icon";
-import GuideMeModal from "./GuideMeModal";
 import { useAppState } from "../../contexts/AppStateContext";
-import {
-  FEATURE_PURPOSE,
-  LIFE_PATH_INTRO,
-  LIFE_PATH_STATE_LABELS,
-  LIFE_PATH_STEPS,
-} from "../../data/lifeNavigation";
+import { supabase } from "../../lib/supabase";
+import { getSupabaseOrAppAccessToken } from "../../lib/appAuth";
+import { LIFE_PATH_INTRO, LIFE_PATH_STEPS } from "../../data/lifeNavigation";
 
-const PATH_WHISPERS = {
-  none: "Start with one honest action. The rest can wait.",
-  partial: "You have begun. A reset can help the next step land.",
-  all: "Today's action is complete. Reflect when you are ready.",
-  restless: "Move gently. Reset before forcing more.",
-  weekly: "Your week is pointing toward one quiet theme.",
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+const STEP_SHORT = {
+  act: "Loop",
+  reset: "Reset",
+  learn: "Learn",
+  grow: "Growth",
+  reflect: "Reflect",
+};
+
+const HEADER_STEPS = [
+  { id: "act", label: "Act" },
+  { id: "reset", label: "Reset" },
+  { id: "learn", label: "Learn" },
+  { id: "grow", label: "Grow" },
+  { id: "reflect", label: "Reflect" },
+];
+
+const STEP_WHISPERS = {
+  act: "Your next honest action is waiting.",
+  reset: "Settle your system before forcing action.",
+  learn: "Feed your direction with the right ideas.",
+  grow: "See your consistency becoming visible.",
+  reflect: "Name what today taught you.",
 };
 
 function isTaskComplete(task) {
   return Boolean(task?.completed_at || task?.done);
 }
 
-function getCompletedTaskCount(tasks = []) {
-  if (!Array.isArray(tasks)) return 0;
-  return tasks.filter(isTaskComplete).length;
-}
-
-function hasPositiveNumber(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0;
-}
-
 function readIntroVisible() {
   if (typeof window === "undefined") return false;
-
   try {
     return window.localStorage.getItem(LIFE_PATH_INTRO.storageKey) !== "true";
   } catch {
@@ -42,34 +46,39 @@ function readIntroVisible() {
   }
 }
 
-function getStateLabel(step, state) {
-  if (state === "current" && step.id === "act") {
-    return LIFE_PATH_STATE_LABELS.start;
-  }
-
-  return LIFE_PATH_STATE_LABELS[state];
+function CheckIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+      <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
-export default function TodaysPath({
-  isRestless = false,
-  hasWeeklyMirrorFocus = false,
-}) {
+export default function TodaysPath({ isRestless = false, hasWeeklyMirrorFocus = false }) {
   const navigate = useNavigate();
-  const { tasks, stats } = useAppState();
-  const [guideOpen, setGuideOpen] = useState(false);
-  const [introVisible, setIntroVisible] = useState(readIntroVisible);
+  const { tasks, stats, user } = useAppState();
 
-  const completedTaskCount = useMemo(() => getCompletedTaskCount(tasks), [tasks]);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [guideLoading, setGuideLoading] = useState(false);
+  const [guideMessage, setGuideMessage] = useState("");
+  const [introVisible, setIntroVisible] = useState(readIntroVisible);
+  const dismissTimerRef = useRef(null);
+
+  const completedTaskCount = useMemo(
+    () => (Array.isArray(tasks) ? tasks.filter(isTaskComplete).length : 0),
+    [tasks],
+  );
   const taskCount = Array.isArray(tasks) ? tasks.length : 0;
   const allTasksCompleted = taskCount > 0 && completedTaskCount >= taskCount;
+  const allDoneToday = allTasksCompleted && Number(stats?.reflectionsDone) > 0;
 
-  const pathWhisper = useMemo(() => {
-    if (isRestless) return PATH_WHISPERS.restless;
-    if (hasWeeklyMirrorFocus) return PATH_WHISPERS.weekly;
-    if (allTasksCompleted) return PATH_WHISPERS.all;
-    if (completedTaskCount > 0) return PATH_WHISPERS.partial;
-    return PATH_WHISPERS.none;
-  }, [allTasksCompleted, completedTaskCount, hasWeeklyMirrorFocus, isRestless]);
+  const completedSteps = useMemo(() => ({
+    act: completedTaskCount > 0,
+    reset: false,
+    learn: false,
+    grow: Boolean(stats?.lifeScore && stats.lifeScore !== "-"),
+    reflect: Number(stats?.reflectionsDone) > 0,
+  }), [completedTaskCount, stats?.lifeScore, stats?.reflectionsDone]);
 
   const currentStepId = useMemo(() => {
     if (isRestless) return "reset";
@@ -79,51 +88,165 @@ export default function TodaysPath({
   }, [allTasksCompleted, completedTaskCount, hasWeeklyMirrorFocus, isRestless]);
 
   const currentIndex = Math.max(
-    LIFE_PATH_STEPS.findIndex((step) => step.id === currentStepId),
+    LIFE_PATH_STEPS.findIndex((s) => s.id === currentStepId),
     0,
   );
 
-  const completedSteps = useMemo(() => ({
-    act: completedTaskCount > 0,
-    grow: hasPositiveNumber(stats?.lifeScore),
-    reflect: hasPositiveNumber(stats?.reflectionsDone),
-  }), [completedTaskCount, stats?.lifeScore, stats?.reflectionsDone]);
-
-  const dismissIntro = () => {
-    setIntroVisible(false);
-    try {
-      window.localStorage.setItem(LIFE_PATH_INTRO.storageKey, "true");
-    } catch {
-      // Local storage is optional; the guide can simply disappear for this render.
-    }
-  };
-
-  const handleIntroAction = () => {
-    dismissIntro();
-    navigate("/loop");
-  };
-
-  const getStepState = (step, index) => {
-    if (step.id === currentStepId) return "current";
+  const getStepState = useCallback((step, index) => {
     if (completedSteps[step.id]) return "completed";
+    if (step.id === currentStepId) return "current";
     if (index === currentIndex + 1) return "suggested";
     return "open";
+  }, [completedSteps, currentIndex, currentStepId]);
+
+  const connectorState = useCallback((index) => {
+    if (index === 0) return null;
+    const prevStep = LIFE_PATH_STEPS[index - 1];
+    if (completedSteps[prevStep.id]) return "done";
+    if (prevStep.id === currentStepId) return "active";
+    return "future";
+  }, [completedSteps, currentStepId]);
+
+  // ── Guide Me AI panel ────────────────────────────────────────────────────
+  const clearDismissTimer = useCallback(() => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
+  }, []);
+
+  const closeGuide = useCallback(() => {
+    clearDismissTimer();
+    setGuideOpen(false);
+  }, [clearDismissTimer]);
+
+  const fetchGuideMessage = useCallback(async () => {
+    if (guideOpen && !guideLoading) {
+      closeGuide();
+      return;
+    }
+    setGuideOpen(true);
+    setGuideLoading(true);
+    setGuideMessage("");
+    clearDismissTimer();
+
+    const doneList = Object.entries(completedSteps)
+      .filter(([, done]) => done)
+      .map(([id]) => STEP_SHORT[id])
+      .join(", ") || "none yet";
+    const meta = user?.user_metadata ?? {};
+    const focuses = (meta.struggle_tags ?? meta.struggles ?? []).slice(0, 3).join(", ") || "clarity";
+    const streak = stats?.streak ?? 0;
+    const hr = new Date().getHours();
+    const tod = hr < 12 ? "morning" : hr < 17 ? "afternoon" : "evening";
+    const cur = STEP_SHORT[currentStepId] ?? currentStepId;
+
+    const msg =
+      `Guide me on my path. Current step: ${cur}. Steps done today: ${doneList}. ` +
+      `Focus areas: ${focuses}. Streak: ${streak} days. Time of day: ${tod}. ` +
+      `Give me 2-3 warm, specific sentences on what to do next and why it matters for my journey.`;
+
+    try {
+      const token = await getSupabaseOrAppAccessToken(supabase);
+      if (!token) throw new Error("no token");
+      const res = await fetch(`${API_BASE_URL}/api/life-companion/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ mode: "understand_me", message: msg }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setGuideMessage(data?.reply || "Keep going. One honest step is enough.");
+    } catch {
+      setGuideMessage("Keep going. One honest step is enough.");
+    } finally {
+      setGuideLoading(false);
+      dismissTimerRef.current = setTimeout(closeGuide, 15000);
+    }
+  }, [clearDismissTimer, closeGuide, completedSteps, currentStepId, guideLoading, guideOpen, stats?.streak, user?.user_metadata]);
+
+  useEffect(() => () => clearDismissTimer(), [clearDismissTimer]);
+
+  // ── Intro banner ─────────────────────────────────────────────────────────
+  const dismissIntro = () => {
+    setIntroVisible(false);
+    try { window.localStorage.setItem(LIFE_PATH_INTRO.storageKey, "true"); } catch { /* ignore */ }
   };
+  const handleIntroAction = () => { dismissIntro(); navigate("/loop"); };
+
+  const whisper = STEP_WHISPERS[currentStepId] ?? STEP_WHISPERS.act;
 
   return (
     <section className="todays-path-card" aria-labelledby="todays-path-title">
+
+      {/* ── PART 3: Alive Header ─────────────────────────────────────────── */}
       <div className="todays-path-heading">
-        <div>
-          <p>Today&apos;s Path</p>
-          <h2 id="todays-path-title">Act → Reset → Learn → Grow → Reflect</h2>
-          <span>{FEATURE_PURPOSE.dashboard}</span>
+        <div className="tp-header-left">
+          <p className="tp-eyebrow">Today&apos;s Path</p>
+          <h2 id="todays-path-title" className={`tp-path-line${allDoneToday ? " tp-path-line--all-done" : ""}`}>
+            {HEADER_STEPS.map((hs, i) => {
+              const done = completedSteps[hs.id];
+              const curr = hs.id === currentStepId;
+              const cls = done
+                ? "ph-step ph-step--done"
+                : curr
+                  ? "ph-step ph-step--current"
+                  : "ph-step ph-step--future";
+              const arrowDone = done || (i < currentIndex);
+              return (
+                <span key={hs.id} className="ph-group">
+                  <span className={cls}>{hs.label}</span>
+                  {i < HEADER_STEPS.length - 1 && (
+                    <span className={`ph-arrow${arrowDone ? " ph-arrow--done" : ""}`}>→</span>
+                  )}
+                </span>
+              );
+            })}
+          </h2>
         </div>
-        <button type="button" onClick={() => setGuideOpen(true)}>
-          <Icon name="sparkle" size={15} />
+        <button
+          type="button"
+          className="guide-me-btn"
+          onClick={fetchGuideMessage}
+          aria-expanded={guideOpen}
+          aria-controls="guide-me-panel"
+        >
+          <Icon name="sparkle" size={13} />
           Guide Me
         </button>
       </div>
 
+      {/* ── PART 2: AI Guide Me slide-down panel ─────────────────────────── */}
+      <AnimatePresence>
+        {guideOpen && (
+          <motion.div
+            id="guide-me-panel"
+            className="gm-panel"
+            role="status"
+            aria-live="polite"
+            initial={{ opacity: 0, y: -8, height: 0, marginBottom: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto", marginBottom: 14 }}
+            exit={{ opacity: 0, y: -6, height: 0, marginBottom: 0 }}
+            transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="gm-panel-inner">
+              {guideLoading ? (
+                <div className="gm-shimmer">
+                  <div className="gm-shimmer-line gm-shimmer-line--a" />
+                  <div className="gm-shimmer-line gm-shimmer-line--b" />
+                  <div className="gm-shimmer-line gm-shimmer-line--c" />
+                </div>
+              ) : (
+                <p className="gm-message">{guideMessage}</p>
+              )}
+              <button type="button" className="gm-close" onClick={closeGuide} aria-label="Dismiss guidance">
+                ✕
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── PART 4: One-time intro banner ────────────────────────────────── */}
       {introVisible && (
         <div className="life-path-intro" role="note">
           <div>
@@ -143,60 +266,72 @@ export default function TodaysPath({
         </div>
       )}
 
-      <div className="path-whisper" aria-live="polite">
-        <span>
-          <Icon name="leaf" size={15} />
-        </span>
-        <p>{pathWhisper}</p>
-      </div>
-
-      <div className="todays-path-steps">
+      {/* ── PART 1: Living Path Stepper ──────────────────────────────────── */}
+      <nav className="lp-track" aria-label="Life path steps">
         {LIFE_PATH_STEPS.map((step, index) => {
           const state = getStepState(step, index);
           const isCurrent = state === "current";
+          const isDone = state === "completed";
+          const isLocked = state === "open" && index > currentIndex + 1;
+          const cstate = connectorState(index);
 
           return (
-            <article
-              key={step.id}
-              className={`todays-path-step is-${state}${isCurrent ? " is-recommended" : ""}`}
-            >
-              <div className="todays-path-step-top">
-                <span className="todays-path-icon">
-                  <Icon name={step.icon} size={17} />
-                </span>
-                <span className="todays-path-state">
-                  {getStateLabel(step, state)}
-                </span>
+            <div key={step.id} className="lp-segment">
+              {index > 0 && (
+                <div className={`lp-line lp-line--${cstate}`} aria-hidden="true">
+                  <div className="lp-line-fill" />
+                </div>
+              )}
+              <div className="lp-slot">
+                <motion.button
+                  className={`lp-dot lp-dot--${state}`}
+                  onClick={() => !isLocked && navigate(step.path)}
+                  animate={isCurrent ? {
+                    boxShadow: [
+                      "0 0 0 0px rgba(46,204,113,0.0)",
+                      "0 0 0 5px rgba(46,204,113,0.22)",
+                      "0 0 0 0px rgba(46,204,113,0.0)",
+                    ],
+                  } : {}}
+                  transition={isCurrent ? { duration: 2.6, repeat: Infinity, ease: "easeInOut" } : {}}
+                  whileHover={!isLocked ? { scale: 1.12 } : {}}
+                  whileTap={!isLocked ? { scale: 0.9 } : {}}
+                  aria-label={`${STEP_SHORT[step.id]}: ${state}`}
+                  aria-current={isCurrent ? "step" : undefined}
+                  disabled={isLocked}
+                >
+                  {isDone ? <CheckIcon /> : null}
+                </motion.button>
+                <span className={`lp-label lp-label--${state}`}>{STEP_SHORT[step.id]}</span>
+                {(isCurrent || isDone || state === "suggested") && (
+                  <span className="lp-tag">
+                    {isDone ? "✓" : isCurrent ? "Now" : "Next"}
+                  </span>
+                )}
               </div>
-              <div className="todays-path-step-copy">
-                <p>{step.title}</p>
-                <h3>{step.feature}</h3>
-                <strong>{step.microcopy}</strong>
-                <span>{step.purpose}</span>
-              </div>
-              <button type="button" onClick={() => navigate(step.path)}>
-                {isCurrent ? step.actionLabel : `Open ${step.feature}`}
-                <Icon name="arrow" size={13} />
-              </button>
-            </article>
+            </div>
           );
         })}
+      </nav>
+
+      {/* Contextual whisper */}
+      <div className="path-whisper" aria-live="polite">
+        <span aria-hidden="true"><Icon name="leaf" size={14} /></span>
+        <p>{whisper}</p>
       </div>
 
-      <GuideMeModal isOpen={guideOpen} onClose={() => setGuideOpen(false)} />
-
       <style>{`
+        /* ── Card shell ────────────────────────────────────────────────── */
         .todays-path-card {
           position: relative;
           overflow: hidden;
-          min-width: 0;
           margin: 0 0 24px;
           padding: 22px;
-          border: 1px solid rgba(126, 217, 154, 0.16);
+          border: 1px solid rgba(126,217,154,0.16);
           border-radius: var(--r-md);
           background:
-            radial-gradient(circle at 90% 10%, rgba(46, 204, 113, 0.12), transparent 35%),
-            linear-gradient(145deg, rgba(16, 26, 20, 0.82), rgba(7, 12, 10, 0.72));
+            radial-gradient(circle at 90% 10%, rgba(46,204,113,0.12), transparent 35%),
+            linear-gradient(145deg, rgba(16,26,20,0.82), rgba(7,12,10,0.72));
           box-shadow: var(--shadow-soft);
           backdrop-filter: blur(24px);
           user-select: none;
@@ -209,70 +344,242 @@ export default function TodaysPath({
           inset: 0;
           pointer-events: none;
           background:
-            linear-gradient(90deg, rgba(4, 10, 8, 0.45), transparent 52%),
-            radial-gradient(circle at 12% 90%, rgba(240, 165, 0, 0.08), transparent 30%);
+            linear-gradient(90deg, rgba(4,10,8,0.45), transparent 52%),
+            radial-gradient(circle at 12% 90%, rgba(240,165,0,0.08), transparent 30%);
         }
 
-        .todays-path-heading,
-        .life-path-intro,
-        .path-whisper,
-        .todays-path-steps {
+        /* ── Header ────────────────────────────────────────────────────── */
+        .todays-path-heading {
           position: relative;
           z-index: 1;
-        }
-
-        .todays-path-heading {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
-          gap: 18px;
-          margin-bottom: 16px;
+          gap: 16px;
+          margin-bottom: 14px;
         }
 
-        .todays-path-heading p,
-        .life-path-intro p {
+        .tp-eyebrow {
           margin: 0 0 8px;
-          color: rgba(126, 217, 154, 0.76);
+          color: rgba(126,217,154,0.76);
           font-size: 11px;
           font-weight: 800;
           letter-spacing: 2px;
           text-transform: uppercase;
         }
 
-        .todays-path-heading h2 {
+        /* ── PART 3: Alive path-line header ─────────────────────────── */
+        .tp-path-line {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 2px;
           margin: 0;
-          color: var(--text);
           font-family: var(--font-display);
-          font-size: clamp(24px, 4vw, 34px);
+          font-size: clamp(18px, 3.2vw, 28px);
           font-weight: 500;
-          line-height: 1.1;
+          line-height: 1.15;
           letter-spacing: 0;
         }
 
-        .todays-path-heading span {
-          display: block;
-          margin-top: 8px;
-          color: var(--text-dim);
-          font-size: 13px;
-          line-height: 1.5;
+        .ph-group {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
         }
 
-        .life-path-intro {
+        .ph-step {
+          transition: color 0.4s ease, text-shadow 0.4s ease;
+        }
+
+        .ph-step--done {
+          color: var(--green-bright);
+          text-shadow: 0 0 16px rgba(46,204,113,0.35);
+        }
+
+        .ph-step--current {
+          color: var(--text);
+          font-weight: 600;
+          position: relative;
+          background: linear-gradient(
+            90deg,
+            var(--text) 0%,
+            rgba(46,204,113,0.9) 50%,
+            var(--text) 100%
+          );
+          background-size: 200% auto;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+          animation: headerShimmer 3s linear infinite;
+        }
+
+        .ph-step--future {
+          color: var(--text-faint);
+        }
+
+        .ph-arrow {
+          color: var(--text-faint);
+          font-size: 0.8em;
+          transition: color 0.4s ease, text-shadow 0.4s ease;
+        }
+
+        .ph-arrow--done {
+          color: var(--green-bright);
+          text-shadow: 0 0 8px rgba(46,204,113,0.5);
+        }
+
+        /* All done: golden */
+        .tp-path-line--all-done .ph-step,
+        .tp-path-line--all-done .ph-arrow {
+          color: #F0C060;
+          -webkit-text-fill-color: #F0C060;
+          background: none;
+          text-shadow: 0 0 18px rgba(240,192,96,0.4);
+          animation: goldGlow 2.4s ease-in-out infinite;
+        }
+
+        @keyframes headerShimmer {
+          0% { background-position: 200% center; }
+          100% { background-position: -200% center; }
+        }
+
+        @keyframes goldGlow {
+          0%, 100% { text-shadow: 0 0 14px rgba(240,192,96,0.35); }
+          50%       { text-shadow: 0 0 28px rgba(240,192,96,0.65); }
+        }
+
+        /* ── Guide Me button ─────────────────────────────────────────── */
+        .guide-me-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          flex-shrink: 0;
+          border: 1px solid rgba(46,204,113,0.3);
+          border-radius: 999px;
+          background: rgba(46,204,113,0.1);
+          color: rgba(178,255,209,0.96);
+          cursor: pointer;
+          font-family: var(--font-body);
+          font-size: 12px;
+          font-weight: 800;
+          line-height: 1;
+          min-height: 36px;
+          padding: 9px 14px;
+          white-space: nowrap;
+          transition: background 0.2s ease, border-color 0.2s ease;
+        }
+
+        .guide-me-btn:hover {
+          background: rgba(46,204,113,0.18);
+          border-color: rgba(46,204,113,0.5);
+        }
+
+        /* ── PART 2: AI Guide Me slide-down panel ───────────────────── */
+        .gm-panel {
+          position: relative;
+          z-index: 1;
+          overflow: hidden;
+        }
+
+        .gm-panel-inner {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-columns: minmax(0,1fr) 28px;
+          gap: 12px;
+          align-items: start;
+          padding: 14px 16px;
+          border: 1px solid rgba(46,204,113,0.22);
+          border-radius: var(--r-sm);
+          background:
+            linear-gradient(135deg, rgba(14,28,20,0.92), rgba(8,16,12,0.88));
+          backdrop-filter: blur(20px);
+          box-shadow: 0 4px 20px rgba(0,0,0,0.28), inset 0 1px 0 rgba(46,204,113,0.1);
+        }
+
+        .gm-message {
+          margin: 0;
+          color: var(--text);
+          font-family: var(--font-display);
+          font-size: 15px;
+          font-weight: 400;
+          line-height: 1.65;
+          letter-spacing: 0.01em;
+        }
+
+        .gm-close {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 26px;
+          height: 26px;
+          border: 1px solid rgba(126,217,154,0.15);
+          border-radius: 50%;
+          background: rgba(255,255,255,0.04);
+          color: var(--text-faint);
+          cursor: pointer;
+          font-size: 12px;
+          padding: 0;
+          margin-top: 1px;
+          flex-shrink: 0;
+          transition: background 0.18s ease, color 0.18s ease;
+        }
+
+        .gm-close:hover {
+          background: rgba(255,255,255,0.08);
+          color: var(--text-dim);
+        }
+
+        /* Shimmer loader */
+        .gm-shimmer {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 2px 0;
+        }
+
+        .gm-shimmer-line {
+          border-radius: 4px;
+          background: linear-gradient(
+            90deg,
+            rgba(46,204,113,0.06) 0%,
+            rgba(46,204,113,0.14) 40%,
+            rgba(46,204,113,0.06) 100%
+          );
+          background-size: 200% 100%;
+          animation: shimmerSlide 1.6s ease-in-out infinite;
+        }
+
+        .gm-shimmer-line--a { height: 14px; width: 92%; }
+        .gm-shimmer-line--b { height: 14px; width: 78%; animation-delay: 0.15s; }
+        .gm-shimmer-line--c { height: 14px; width: 55%; animation-delay: 0.3s; }
+
+        @keyframes shimmerSlide {
+          0%   { background-position: 200% center; }
+          100% { background-position: -200% center; }
+        }
+
+        /* ── One-time intro banner ───────────────────────────────────── */
+        .life-path-intro {
+          position: relative;
+          z-index: 1;
+          display: grid;
+          grid-template-columns: minmax(0,1fr) auto;
           gap: 16px;
           align-items: center;
           margin: 0 0 14px;
           padding: 14px 16px;
-          border: 1px solid rgba(126, 217, 154, 0.15);
+          border: 1px solid rgba(126,217,154,0.15);
           border-radius: var(--r-sm);
-          background: rgba(255, 255, 255, 0.032);
+          background: rgba(255,255,255,0.032);
         }
 
         .life-path-intro p {
-          margin-bottom: 4px;
+          margin: 0 0 4px;
+          color: rgba(126,217,154,0.76);
           font-size: 10px;
+          font-weight: 800;
           letter-spacing: 1.8px;
+          text-transform: uppercase;
         }
 
         .life-path-intro strong {
@@ -299,285 +606,230 @@ export default function TodaysPath({
           flex-wrap: wrap;
         }
 
-        .path-whisper {
-          display: grid;
-          grid-template-columns: 34px minmax(0, 1fr);
-          align-items: center;
-          gap: 12px;
-          margin: 0 0 14px;
-          padding: 12px 14px;
-          border: 1px solid rgba(126, 217, 154, 0.13);
-          border-radius: var(--r-sm);
-          background:
-            linear-gradient(90deg, rgba(46, 204, 113, 0.07), rgba(255, 255, 255, 0.026));
-        }
-
-        .path-whisper span {
-          width: 34px;
-          height: 34px;
+        .life-path-intro-actions button {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          border: 1px solid rgba(46, 204, 113, 0.2);
+          gap: 7px;
+          border: 1px solid rgba(46,204,113,0.3);
+          border-radius: 999px;
+          background: rgba(46,204,113,0.1);
+          color: rgba(178,255,209,0.96);
+          cursor: pointer;
+          font-family: var(--font-body);
+          font-size: 12px;
+          font-weight: 800;
+          line-height: 1;
+          min-height: 38px;
+          padding: 10px 14px;
+          white-space: nowrap;
+        }
+
+        .life-path-intro-actions button:last-child {
+          background: transparent;
+          border-color: rgba(126,217,154,0.14);
+          color: var(--text-dim);
+        }
+
+        /* ── PART 1: Living Path Stepper ─────────────────────────────── */
+        .lp-track {
+          position: relative;
+          z-index: 1;
+          display: flex;
+          align-items: flex-start;
+          padding: 14px 0 6px;
+          min-width: 0;
+        }
+
+        /* Each segment = optional connector + node-column */
+        .lp-segment {
+          display: contents;
+        }
+
+        /* Connector line between nodes */
+        .lp-line {
+          flex: 1;
+          min-width: 8px;
+          height: 2px;
+          margin-top: 14px; /* centers on the 28px dot */
+          border-radius: 2px;
+          overflow: visible;
+          position: relative;
+        }
+
+        .lp-line-fill {
+          width: 100%;
+          height: 100%;
+          border-radius: inherit;
+        }
+
+        .lp-line--done .lp-line-fill {
+          background: linear-gradient(90deg, var(--green), var(--green-bright));
+          box-shadow: 0 0 6px rgba(46,204,113,0.5);
+        }
+
+        .lp-line--active .lp-line-fill {
+          background: linear-gradient(
+            90deg,
+            rgba(46,204,113,0.25),
+            rgba(46,204,113,0.85),
+            rgba(46,204,113,0.25)
+          );
+          background-size: 200% 100%;
+          animation: lineFlow 2.2s ease-in-out infinite;
+          box-shadow: 0 0 4px rgba(46,204,113,0.3);
+        }
+
+        .lp-line--future .lp-line-fill {
+          background: rgba(126,217,154,0.12);
+          border-top: 1px dashed rgba(126,217,154,0.2);
+          height: 0;
+          margin-top: 1px;
+        }
+
+        @keyframes lineFlow {
+          0%   { background-position: 200% center; }
+          100% { background-position: -200% center; }
+        }
+
+        /* Node column */
+        .lp-slot {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 5px;
+          min-width: 44px;
+        }
+
+        /* Dot (the circle node) */
+        .lp-dot {
+          width: 28px;
+          height: 28px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          border: 2px solid rgba(126,217,154,0.2);
+          background: rgba(255,255,255,0.03);
+          color: var(--green-bright);
+          cursor: pointer;
+          padding: 0;
+          flex-shrink: 0;
+          transition: border-color 0.3s ease, background 0.3s ease;
+        }
+
+        .lp-dot:disabled {
+          cursor: default;
+          opacity: 0.55;
+        }
+
+        .lp-dot--completed {
+          background: linear-gradient(135deg, var(--green), var(--green-bright));
+          border-color: var(--green-bright);
+          color: #042810;
+          box-shadow: 0 0 10px rgba(46,204,113,0.35);
+        }
+
+        .lp-dot--current {
+          width: 34px;
+          height: 34px;
+          border: 2px solid var(--green-bright);
+          background: rgba(46,204,113,0.12);
+          box-shadow: 0 0 14px rgba(46,204,113,0.28);
+          margin-top: -3px; /* compensate for larger size to keep label alignment */
+        }
+
+        .lp-dot--suggested {
+          border-color: rgba(240,165,0,0.45);
+          background: rgba(240,165,0,0.06);
+          color: rgba(240,165,0,0.9);
+        }
+
+        .lp-dot--open {
+          border-color: rgba(126,217,154,0.12);
+          background: transparent;
+          opacity: 0.45;
+        }
+
+        /* Step label */
+        .lp-label {
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.3px;
+          text-align: center;
+          white-space: nowrap;
+          line-height: 1;
+        }
+
+        .lp-label--completed { color: rgba(126,217,154,0.9); }
+        .lp-label--current   { color: var(--text); }
+        .lp-label--suggested { color: rgba(240,165,0,0.8); }
+        .lp-label--open      { color: var(--text-faint); }
+
+        /* State tag (✓ / Now / Next) */
+        .lp-tag {
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.8px;
+          text-transform: uppercase;
+          color: var(--text-faint);
+          line-height: 1;
+        }
+
+        .lp-dot--completed + .lp-label + .lp-tag,
+        .lp-dot--completed ~ .lp-tag { color: rgba(126,217,154,0.7); }
+        .lp-dot--current   ~ .lp-tag { color: var(--green-bright); }
+        .lp-dot--suggested ~ .lp-tag { color: rgba(240,165,0,0.65); }
+
+        /* ── Contextual whisper ──────────────────────────────────────── */
+        .path-whisper {
+          position: relative;
+          z-index: 1;
+          display: grid;
+          grid-template-columns: 30px minmax(0,1fr);
+          align-items: center;
+          gap: 10px;
+          margin-top: 10px;
+          padding: 10px 12px;
+          border: 1px solid rgba(126,217,154,0.12);
+          border-radius: var(--r-sm);
+          background: linear-gradient(90deg, rgba(46,204,113,0.06), rgba(255,255,255,0.02));
+        }
+
+        .path-whisper span {
+          width: 30px;
+          height: 30px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(46,204,113,0.18);
           border-radius: 50%;
           color: var(--green-bright);
-          background: rgba(46, 204, 113, 0.055);
+          background: rgba(46,204,113,0.05);
         }
 
         .path-whisper p {
-          min-width: 0;
           margin: 0;
-          color: rgba(236, 241, 232, 0.88);
+          color: rgba(236,241,232,0.88);
           font-size: 13px;
           font-weight: 600;
           line-height: 1.45;
           overflow-wrap: anywhere;
         }
 
-        .todays-path-heading > button,
-        .todays-path-step button,
-        .life-path-intro-actions button {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 7px;
-          border: 1px solid rgba(46, 204, 113, 0.3);
-          border-radius: 999px;
-          background: rgba(46, 204, 113, 0.1);
-          color: rgba(178, 255, 209, 0.96);
-          cursor: pointer;
-          font-family: var(--font-body);
-          font-size: 12px;
-          font-weight: 800;
-          line-height: 1;
-          min-height: 40px;
-          padding: 11px 14px;
-          white-space: nowrap;
-          user-select: none;
-        }
-
-        .life-path-intro-actions button:last-child {
-          background: transparent;
-          border-color: rgba(126, 217, 154, 0.14);
-          color: var(--text-dim);
-        }
-
-        .todays-path-steps {
-          display: grid;
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-          gap: 10px;
-          min-width: 0;
-          overflow: visible;
-        }
-
-        .todays-path-step {
-          position: relative;
-          min-width: 0;
-          min-height: 190px;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          gap: 14px;
-          padding: 15px;
-          border: 1px solid rgba(126, 217, 154, 0.12);
-          border-radius: var(--r-sm);
-          background: rgba(255, 255, 255, 0.03);
-          overflow: hidden;
-        }
-
-        .todays-path-step.is-current {
-          border-color: rgba(46, 204, 113, 0.46);
-          background:
-            radial-gradient(circle at 80% 8%, rgba(46, 204, 113, 0.12), transparent 38%),
-            rgba(46, 204, 113, 0.055);
-          box-shadow:
-            0 0 0 1px rgba(46, 204, 113, 0.08),
-            0 0 30px rgba(46, 204, 113, 0.13),
-            inset 0 0 26px rgba(46, 204, 113, 0.045);
-          animation: pathCurrentPulse 3.8s ease-in-out infinite;
-        }
-
-        .todays-path-step.is-completed {
-          border-color: rgba(126, 217, 154, 0.22);
-          background: rgba(126, 217, 154, 0.04);
-        }
-
-        .todays-path-step.is-suggested {
-          border-color: rgba(240, 165, 0, 0.23);
-          background: rgba(240, 165, 0, 0.035);
-        }
-
-        .todays-path-step-top {
-          display: flex;
-          justify-content: space-between;
-          gap: 10px;
-          align-items: center;
-        }
-
-        .todays-path-icon {
-          width: 34px;
-          height: 34px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          flex: 0 0 auto;
-          border-radius: 50%;
-          border: 1px solid rgba(46, 204, 113, 0.2);
-          color: var(--green-bright);
-          background: rgba(46, 204, 113, 0.055);
-        }
-
-        .todays-path-state {
-          min-width: 0;
-          color: var(--text-faint);
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 1.2px;
-          text-transform: uppercase;
-          text-align: right;
-          line-height: 1.25;
-        }
-
-        .todays-path-step.is-current .todays-path-state {
-          color: var(--green-bright);
-        }
-
-        .todays-path-step.is-completed .todays-path-state {
-          color: rgba(126, 217, 154, 0.86);
-        }
-
-        .todays-path-step.is-suggested .todays-path-state {
-          color: rgba(240, 165, 0, 0.78);
-        }
-
-        .todays-path-step-copy {
-          min-width: 0;
-        }
-
-        .todays-path-step-copy p {
-          margin: 0 0 6px;
-          color: var(--text-faint);
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: 1.4px;
-          text-transform: uppercase;
-          overflow-wrap: anywhere;
-        }
-
-        .todays-path-step-copy h3 {
-          margin: 0;
-          color: var(--text);
-          font-family: var(--font-display);
-          font-size: 20px;
-          font-weight: 500;
-          line-height: 1.08;
-          letter-spacing: 0;
-          overflow-wrap: anywhere;
-        }
-
-        .todays-path-step-copy strong {
-          display: block;
-          margin-top: 9px;
-          color: rgba(236, 241, 232, 0.84);
-          font-size: 13px;
-          font-weight: 700;
-          line-height: 1.4;
-          overflow-wrap: anywhere;
-        }
-
-        .todays-path-step-copy span {
-          display: block;
-          margin-top: 7px;
-          color: var(--text-dim);
-          font-size: 12px;
-          line-height: 1.45;
-          overflow-wrap: anywhere;
-        }
-
-        .todays-path-step button {
-          width: 100%;
-          min-height: 38px;
-          background: rgba(255, 255, 255, 0.035);
-          border-color: rgba(126, 217, 154, 0.16);
-          color: var(--text-dim);
-          white-space: normal;
-        }
-
-        .todays-path-step.is-current button {
-          min-height: 42px;
-          background: linear-gradient(135deg, var(--green), var(--green-bright));
-          color: #06110a;
-          border-color: rgba(46, 204, 113, 0.35);
-          box-shadow: 0 14px 30px rgba(46, 204, 113, 0.18);
-        }
-
-        @keyframes pathCurrentPulse {
-          0%, 100% {
-            box-shadow:
-              0 0 0 1px rgba(46, 204, 113, 0.08),
-              0 0 26px rgba(46, 204, 113, 0.1),
-              inset 0 0 26px rgba(46, 204, 113, 0.045);
-          }
-          50% {
-            box-shadow:
-              0 0 0 1px rgba(46, 204, 113, 0.14),
-              0 0 42px rgba(46, 204, 113, 0.18),
-              inset 0 0 30px rgba(46, 204, 113, 0.065);
-          }
-        }
-
-        @keyframes pathConnectorFlow {
-          0% { opacity: 0.35; transform: scaleX(0.7); }
-          50% { opacity: 0.95; transform: scaleX(1); }
-          100% { opacity: 0.35; transform: scaleX(0.7); }
-        }
-
-        @keyframes pathConnectorFlowVertical {
-          0% { opacity: 0.35; transform: scaleY(0.7); }
-          50% { opacity: 0.95; transform: scaleY(1); }
-          100% { opacity: 0.35; transform: scaleY(0.7); }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .todays-path-step.is-current,
-          .todays-path-step.is-current::after {
-            animation: none !important;
-          }
-        }
-
-        @media (min-width: 1101px) {
-          .todays-path-step:not(:last-child)::after {
-            content: "";
-            position: absolute;
-            top: 31px;
-            right: -11px;
-            width: 12px;
-            height: 1px;
-            background: linear-gradient(90deg, rgba(126, 217, 154, 0.32), transparent);
-            transform-origin: left center;
-            pointer-events: none;
-          }
-
-          .todays-path-step.is-current:not(:last-child)::after {
-            height: 2px;
-            background: linear-gradient(90deg, rgba(46, 204, 113, 0.95), rgba(46, 204, 113, 0.08));
-            animation: pathConnectorFlow 2.6s ease-in-out infinite;
-          }
-        }
-
-        @media (max-width: 1100px) {
-          .todays-path-steps {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-        }
-
+        /* ── Mobile ──────────────────────────────────────────────────── */
         @media (max-width: 767px) {
-          .todays-path-card {
-            padding: 18px;
-          }
+          .todays-path-card { padding: 18px; }
 
           .todays-path-heading {
             flex-direction: column;
+            gap: 12px;
+          }
+
+          .guide-me-btn {
+            width: 100%;
+            min-height: 44px;
+            justify-content: center;
           }
 
           .life-path-intro {
@@ -585,58 +837,53 @@ export default function TodaysPath({
           }
 
           .life-path-intro-actions {
-            justify-content: stretch;
+            flex-direction: column;
           }
 
           .life-path-intro-actions button {
-            flex: 1 1 150px;
+            width: 100%;
             min-height: 44px;
           }
 
+          .lp-track {
+            padding: 10px 0 4px;
+          }
+
+          .lp-slot {
+            min-width: 34px;
+          }
+
+          .lp-dot { width: 24px; height: 24px; }
+          .lp-dot--current { width: 28px; height: 28px; margin-top: -2px; }
+          .lp-line { margin-top: 11px; }
+
+          .lp-label { font-size: 9px; }
+          .lp-tag   { display: none; }
+
           .path-whisper {
-            grid-template-columns: 32px minmax(0, 1fr);
-            padding: 12px;
+            grid-template-columns: 28px minmax(0,1fr);
+            padding: 10px;
           }
 
           .path-whisper span {
-            width: 32px;
-            height: 32px;
+            width: 28px;
+            height: 28px;
           }
+        }
 
-          .todays-path-heading > button {
-            width: 100%;
-            min-height: 46px;
-          }
+        @media (max-width: 400px) {
+          .lp-slot { min-width: 28px; }
+          .lp-dot  { width: 20px; height: 20px; }
+          .lp-dot--current { width: 24px; height: 24px; margin-top: -2px; }
+          .lp-line { margin-top: 9px; }
+          .lp-label { font-size: 8px; letter-spacing: 0; }
+        }
 
-          .todays-path-steps {
-            grid-template-columns: 1fr;
-          }
-
-          .todays-path-step {
-            min-height: auto;
-          }
-
-          .todays-path-step:not(:last-child)::after {
-            content: "";
-            position: absolute;
-            left: 31px;
-            bottom: -11px;
-            width: 1px;
-            height: 12px;
-            background: linear-gradient(180deg, rgba(126, 217, 154, 0.3), transparent);
-            transform-origin: center top;
-            pointer-events: none;
-          }
-
-          .todays-path-step.is-current:not(:last-child)::after {
-            width: 2px;
-            background: linear-gradient(180deg, rgba(46, 204, 113, 0.95), rgba(46, 204, 113, 0.08));
-            animation: pathConnectorFlowVertical 2.6s ease-in-out infinite;
-          }
-
-          .todays-path-step button {
-            min-height: 44px;
-          }
+        @media (prefers-reduced-motion: reduce) {
+          .lp-dot--current,
+          .gm-shimmer-line,
+          .lp-line--active .lp-line-fill,
+          .ph-step--current { animation: none !important; }
         }
       `}</style>
     </section>

@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import { queryClient } from '../lib/queryClient';
 import {
@@ -8,10 +7,6 @@ import {
   getStoredAppUser,
   setStoredAppAuth,
 } from '../lib/appAuth';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const GOOGLE_AUTH_ORIGIN = import.meta.env.VITE_GOOGLE_AUTH_ORIGIN ?? 'http://localhost:5173';
 
 type AuthFailureReason =
   | 'invalid_credentials'
@@ -36,7 +31,7 @@ interface UserState {
   fetchUser: () => Promise<boolean>;
   login: (email: string, password: string) => Promise<AuthResult>;
   register: (email: string, password: string, struggles: string[], username: string) => Promise<AuthResult>;
-  loginWithGoogle: () => Promise<AuthResult>;
+  completeGoogleLogin: (authData: any) => AuthResult;
   logout: () => Promise<void>;
 }
 
@@ -81,109 +76,6 @@ const getAuthFailureReason = (error: any): AuthFailureReason => {
     return 'invalid_credentials';
   }
   return 'unknown';
-};
-
-const loadGoogleIdentityScript = () => new Promise<void>((resolve, reject) => {
-  if (typeof window === 'undefined') {
-    reject(new Error('Google sign-in is only available in the browser.'));
-    return;
-  }
-  if ((window as any).google?.accounts?.id) {
-    resolve();
-    return;
-  }
-
-  const existingScript = document.querySelector<HTMLScriptElement>(
-    'script[src="https://accounts.google.com/gsi/client"]'
-  );
-  if (existingScript) {
-    existingScript.addEventListener('load', () => resolve(), { once: true });
-    existingScript.addEventListener('error', () => reject(new Error('Google Identity Services failed to load.')), { once: true });
-    return;
-  }
-
-  const script = document.createElement('script');
-  script.src = 'https://accounts.google.com/gsi/client';
-  script.async = true;
-  script.defer = true;
-  script.onload = () => resolve();
-  script.onerror = () => reject(new Error('Google Identity Services failed to load.'));
-  document.head.appendChild(script);
-});
-
-const normalizeOrigin = (origin: string) => origin.replace(/\/+$/, '');
-
-const ensureGoogleAuthOrigin = () => {
-  if (typeof window === 'undefined') return true;
-
-  const expectedOrigin = normalizeOrigin(GOOGLE_AUTH_ORIGIN);
-  if (!expectedOrigin || window.location.origin === expectedOrigin) {
-    return true;
-  }
-
-  const isLocalhostAlias =
-    ['localhost', '127.0.0.1'].includes(window.location.hostname)
-    && ['localhost', '127.0.0.1'].includes(new URL(expectedOrigin).hostname);
-
-  if (!isLocalhostAlias) {
-    return true;
-  }
-
-  const nextUrl = `${expectedOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`;
-  window.location.replace(nextUrl);
-  return false;
-};
-
-const getGoogleCredential = async () => {
-  if (!GOOGLE_CLIENT_ID) {
-    throw new Error('VITE_GOOGLE_CLIENT_ID is not configured.');
-  }
-  if (!ensureGoogleAuthOrigin()) {
-    throw new Error('Opening the Google-approved local origin. Please click Continue with Google again.');
-  }
-  await loadGoogleIdentityScript();
-
-  return new Promise<string>((resolve, reject) => {
-    let settled = false;
-    const timeoutId = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error('Google sign-in timed out. Please try again.'));
-    }, 60000);
-
-    (window as any).google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: (response: any) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeoutId);
-        if (response?.credential) {
-          resolve(response.credential);
-        } else {
-          reject(new Error('Google did not return an ID token.'));
-        }
-      },
-      auto_select: false,
-      cancel_on_tap_outside: true,
-      use_fedcm_for_prompt: true,
-    });
-
-    (window as any).google.accounts.id.prompt((notification: any) => {
-      if (settled) return;
-      if (
-        notification?.isNotDisplayed?.()
-        || notification?.isSkippedMoment?.()
-        || notification?.isDismissedMoment?.()
-      ) {
-        settled = true;
-        window.clearTimeout(timeoutId);
-        reject(new Error(
-          'Google sign-in could not open. Make sure your Google OAuth Client has this Authorized JavaScript origin: '
-          + window.location.origin
-        ));
-      }
-    });
-  });
 };
 
 // Build a profile-shaped object from Supabase Auth user_metadata.
@@ -394,46 +286,29 @@ export const useUserStore = create<UserState>((set, get) => ({
     }
   },
 
-  loginWithGoogle: async () => {
-    try {
-      set({ loading: true });
-      const credential = await getGoogleCredential();
-      const response = await axios.post(`${API_BASE_URL}/api/v1/auth/google`, {
-        token: credential,
-      });
-
-      const accessToken = response.data?.access_token;
-      const appUser = response.data?.user;
-      if (!accessToken || !appUser?.id) {
-        set({ ...clearedAuthState, loading: false });
-        return { ok: false, reason: 'oauth_error', message: 'Google sign-in did not return a valid app session.' };
-      }
-
-      clearStoredAppAuth();
-      setStoredAppAuth(accessToken, appUser);
-      const profile = buildProfileFromMetadata(appUser);
-      set({
-        user: appUser,
-        session: {
-          access_token: accessToken,
-          provider: 'app_google',
-          user: appUser,
-        },
-        profile: { ...(profile || {}), growth_tree: null },
-        isVerified: true,
-        loading: false,
-      });
-      return { ok: true };
-    } catch (error) {
-      console.error("Google Login Error:", error);
+  completeGoogleLogin: (authData) => {
+    const accessToken = authData?.access_token;
+    const appUser = authData?.user;
+    if (!accessToken || !appUser?.id) {
       set({ ...clearedAuthState, loading: false });
-      const message = error instanceof Error ? error.message : undefined;
-      return {
-        ok: false,
-        reason: message?.includes('VITE_GOOGLE_CLIENT_ID') ? 'oauth_not_configured' : 'oauth_error',
-        message,
-      };
+      return { ok: false, reason: 'oauth_error', message: 'Google sign-in did not return a valid app session.' };
     }
+
+    clearStoredAppAuth();
+    setStoredAppAuth(accessToken, appUser);
+    const profile = buildProfileFromMetadata(appUser);
+    set({
+      user: appUser,
+      session: {
+        access_token: accessToken,
+        provider: 'app_google',
+        user: appUser,
+      },
+      profile: { ...(profile || {}), growth_tree: null },
+      isVerified: true,
+      loading: false,
+    });
+    return { ok: true };
   },
 
   logout: async () => {

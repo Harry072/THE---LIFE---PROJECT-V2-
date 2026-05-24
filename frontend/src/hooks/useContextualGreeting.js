@@ -152,9 +152,9 @@ export function useContextualGreeting(userId, streak = 0) {
           .limit(30),
         supabase
           .from("reset_sessions")
-          .select("mood_after,reflection_tag,next_step_type,completed_at,created_at")
+          .select("mood_after,reflection_tag,created_at")
           .eq("user_id", userId)
-          .order("completed_at", { ascending: false })
+          .order("created_at", { ascending: false })
           .limit(8),
         supabase
           .from("weekly_syntheses")

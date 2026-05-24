@@ -417,6 +417,7 @@ textarea,
 .loop-task-check,
 .loop-task-summary,
 .loop-task-primary,
+.loop-task-skip,
 .loop-funnel-empty button,
 .loop-funnel-error button {
   font: inherit;
@@ -581,6 +582,14 @@ textarea,
   line-height: 1.5;
 }
 
+.loop-task-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
 .loop-task-primary {
   width: min(420px, 100%);
   min-height: 62px;
@@ -588,7 +597,7 @@ textarea,
   align-items: center;
   justify-content: center;
   gap: 14px;
-  margin: 20px auto 0;
+  margin: 0 auto;
   padding: 0 24px;
   border: 1px solid rgba(147, 245, 178, 0.38);
   border-radius: 18px;
@@ -602,6 +611,20 @@ textarea,
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
+}
+
+.loop-task-skip {
+  border: 0;
+  color: rgba(226, 232, 240, 0.68);
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.loop-task-skip:hover {
+  color: rgba(226, 232, 240, 0.88);
 }
 
 .loop-funnel-error,
@@ -702,6 +725,7 @@ textarea,
 .loop-task-check:focus-visible,
 .loop-task-summary:focus-visible,
 .loop-task-primary:focus-visible,
+.loop-task-skip:focus-visible,
 .loop-intro-replay-button:focus-visible,
 .loop-funnel-empty button:focus-visible,
 .loop-funnel-error button:focus-visible {

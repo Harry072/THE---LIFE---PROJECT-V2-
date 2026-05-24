@@ -7,6 +7,7 @@ import LoopIntroVideo from "../components/loop/LoopIntroVideo";
 import LoopNotificationToast from "../components/loop/LoopNotificationToast";
 import PostActionFeedbackModal from "../components/loop/PostActionFeedbackModal";
 import { useContextualGreeting } from "../hooks/useContextualGreeting";
+import { useEnsureTodayLoopTasks } from "../hooks/useEnsureTodayLoopTasks";
 import Icon from "../components/Icon";
 
 const LOOP_TOAST_MESSAGES = {
@@ -60,6 +61,15 @@ export default function TheLoopPage() {
   const { whisper } = useContextualGreeting(user?.id, user_tree?.streak ?? 0);
 
   const tasks = useMemo(() => loopData?.tasks || [], [loopData?.tasks]);
+  const { preparingTodayPlan, autoGenerationError } = useEnsureTodayLoopTasks({
+    user,
+    tasks,
+    hasFetched,
+    loading,
+    error,
+    generating,
+    generateTasks,
+  });
   const sorted = useMemo(() => (
     [...tasks].sort((a, b) => {
       if (a.done !== b.done) return a.done ? 1 : -1;
@@ -218,7 +228,7 @@ export default function TheLoopPage() {
     setShowIntroVideo(true);
   }, []);
 
-  const isBusy = loading || generating;
+  const isBusy = loading || generating || preparingTodayPlan;
 
   return (
     <main className="loop-funnel-page">
@@ -274,9 +284,9 @@ export default function TheLoopPage() {
               />
             ))}
           </div>
-        ) : hasFetched ? (
+        ) : hasFetched && autoGenerationError ? (
           <div className="loop-funnel-empty">
-            <p>No tasks are prepared yet.</p>
+            <p>Couldn&apos;t prepare today&apos;s tasks automatically.</p>
             <button type="button" onClick={handlePrepareLoop}>
               Prepare Today&apos;s Loop
             </button>

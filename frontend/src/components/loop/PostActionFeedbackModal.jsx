@@ -23,7 +23,6 @@ const SKIP_REASON_OPTIONS = [
 ];
 
 export default function PostActionFeedbackModal({
-  task,
   isSkip = false,
   isSaving = false,
   error = "",

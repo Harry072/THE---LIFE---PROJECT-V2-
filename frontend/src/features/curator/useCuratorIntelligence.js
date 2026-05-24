@@ -64,9 +64,9 @@ export default function useCuratorIntelligence(user, activeBookIds = []) {
           .limit(40)),
         readRows(() => supabase
           .from("reset_sessions")
-          .select("mood_after,reflection_tag,next_step_type,completed_at,created_at")
+          .select("mood_after,reflection_tag,created_at")
           .eq("user_id", user.id)
-          .order("completed_at", { ascending: false })
+          .order("created_at", { ascending: false })
           .limit(8)),
         readRows(() => supabase
           .from("weekly_syntheses")

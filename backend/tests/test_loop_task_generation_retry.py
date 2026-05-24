@@ -155,6 +155,84 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         save_fallback.assert_not_called()
         insert_rows.assert_not_called()
 
+    def test_provider_unavailable_first_attempt_returns_retryable_without_saving(self):
+        request = main.TaskRequest(
+            user_id=USER_ID,
+            local_date=LOCAL_DATE,
+            struggles=["scrolling"],
+            current_streak=0,
+            allow_safe_fallback=False,
+        )
+
+        patches = self._base_patches()
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patch.object(main, "loop_gemini_client", None),
+            patch.object(main, "save_fallback_tasks") as save_fallback,
+            patch.object(main, "insert_task_rows") as insert_rows,
+        ):
+            response = run_async(main.generate_tasks(request, authorization="Bearer token"))
+
+        self.assertEqual(response["status"], "retryable_ai_failure")
+        self.assertEqual(response["data"], [])
+        self.assertEqual(response["meta"]["error_reason"], "provider_unavailable")
+        save_fallback.assert_not_called()
+        insert_rows.assert_not_called()
+
+    def test_invalid_local_date_is_rejected_before_generation(self):
+        request = main.TaskRequest(
+            user_id=USER_ID,
+            local_date="2026/05/14",
+            struggles=["scrolling"],
+            current_streak=0,
+        )
+
+        with patch.object(main, "validate_supabase_access_token", return_value=USER_ID):
+            with self.assertRaises(main.HTTPException) as raised:
+                run_async(main.generate_tasks(request, authorization="Bearer token"))
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("local_date", raised.exception.detail)
+
+    def test_safe_fallback_rows_are_not_marked_ai_generated(self):
+        captured = {}
+
+        def fake_insert(user_id, local_date, rows, *, source):
+            captured["source"] = source
+            captured["rows"] = rows
+            return "inserted", rows
+
+        with (
+            patch.object(main, "generate_fallback_tasks", return_value=AI_TASKS),
+            patch.object(main, "insert_task_rows", side_effect=fake_insert),
+        ):
+            status, rows = main.save_fallback_tasks(
+                {
+                    "struggles_summary": "scrolling",
+                    "current_day": 1,
+                    "suggested_intensity": "gentle",
+                },
+                USER_ID,
+                LOCAL_DATE,
+                generation_provider="safe_fallback",
+                generation_failure_reason="provider_timeout",
+                force_insert_all=True,
+            )
+
+        self.assertEqual(status, "fallback")
+        self.assertEqual(captured["source"], "safe_fallback")
+        self.assertEqual(rows, captured["rows"])
+        self.assertTrue(all(row["ai_generated"] is False for row in rows))
+        self.assertTrue(all(row["generation_provider"] == "safe_fallback" for row in rows))
+        self.assertTrue(all(row["generation_failure_reason"] == "provider_timeout" for row in rows))
+
+    def test_string_optional_rows_are_not_treated_as_core_tasks(self):
+        self.assertTrue(main.is_core_task({"category": "awareness", "is_optional": "false"}))
+        self.assertFalse(main.is_core_task({"category": "awareness", "is_optional": "true"}))
+
     def test_retry_failure_tries_gemini_then_saves_safe_fallback(self):
         request = main.TaskRequest(
             user_id=USER_ID,

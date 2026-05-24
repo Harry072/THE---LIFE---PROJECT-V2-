@@ -23,6 +23,10 @@ from ai.context import (
     build_weekly_mirror_context,
     normalize_category,
 )
+from ai.task_intelligence import (
+    build_task_intelligence_context,
+    build_intelligence_context_block,
+)
 from ai.companion_knowledge import (
     detect_companion_intent,
     extract_request_slots,
@@ -239,6 +243,11 @@ LOOP_TASK_OPTIONAL_INSERT_COLUMNS: set[str] = {
     "post_completion_question",
     "framework_key",
     "kotler_tag",
+    # Intelligence fields — added by task_intelligence upgrade
+    "inner_work_layer",
+    "approach_angle",
+    "journey_phase",
+    "ikigai_quadrant",
 }
 _loop_task_missing_optional_insert_columns: set[str] | None = None
 
@@ -359,9 +368,10 @@ def is_completed_task(row: dict) -> bool:
 
 def is_core_task(row: dict) -> bool:
     category = normalize_category(row.get("category"))
+    is_optional = row.get("is_optional")
     return (
         category in ALLOWED_LOOP_CATEGORIES
-        and not bool(row.get("is_optional"))
+        and is_optional not in {True, "true", "True", "1", 1}
     )
 
 
@@ -530,6 +540,7 @@ SAFE_MOOD_LABELS = {
     "restless",
     "grateful",
     "hopeful",
+    "neutral",
     "numb",
     "low",
     "tired",
@@ -1466,6 +1477,7 @@ async def save_loop_task_feedback(
         }
         # When completion_state is "skipped", mark the task skipped boolean so
         # the adaptation engine (context.py) can count it correctly.
+        # NOTE: skipped_at does NOT exist in loop_tasks — never add it.
         if completion_state == "skipped":
             payload["skipped"] = True
         payload = {key: value for key, value in payload.items() if value is not None}
@@ -2015,6 +2027,7 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
         token_user_id = validate_supabase_access_token(authorization)
         if token_user_id != request.user_id:
             raise HTTPException(status_code=403, detail="Session user does not match request user")
+        local_date = parse_iso_date_strict(request.local_date, "local_date").isoformat()
 
         # Three-tier struggle fallback:
         # Tier 1: request.struggles (from frontend / onboarding session)
@@ -2050,7 +2063,7 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
             except Exception:
                 pass  # Non-critical; do not block task generation
 
-        existing_tasks = fetch_today_core_tasks(request.user_id, request.local_date)
+        existing_tasks = fetch_today_core_tasks(request.user_id, local_date)
         existing_categories = {normalize_category(t.get("category", "")) for t in existing_tasks}
         missing_categories = [c for c in CORE_CATEGORY_ORDER if c not in existing_categories]
         repair_mode = bool(existing_tasks and missing_categories and not request.regenerate)
@@ -2071,26 +2084,49 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
         if request.regenerate and existing_tasks:
             if any(is_completed_task(task) for task in existing_tasks):
                 return build_task_response("locked", existing_tasks, cached=True)
-            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
+            delete_uncompleted_generated_core_tasks(request.user_id, local_date)
             repair_mode = False
             missing_categories = list(CORE_CATEGORY_ORDER)
 
+        _t0 = perf_counter()
         context = build_generation_context(
             resolved_struggles,
             request.current_streak,
             supabase=supabase,
             user_id=request.user_id,
-            local_date=request.local_date,
+            local_date=local_date,
             existing_tasks=existing_tasks,
         )
         context["auth_user_id"] = token_user_id
+        _ctx_ms = int((perf_counter() - _t0) * 1000)
 
         tag = request.recalibrate_tag
         if tag and tag in RECALIBRATE_TAG_OVERRIDES and request.regenerate:
             context.update(RECALIBRATE_TAG_OVERRIDES[tag])
             print(f"AI_TASK_GENERATION recalibrate_tag={tag} overrides_applied=true")
 
-        prompt = build_loop_tasks_prompt(context)
+        # ── INTELLIGENCE LAYER: build per-user reasoning context ─────────────
+        _t1 = perf_counter()
+        try:
+            intel_ctx = build_task_intelligence_context(
+                supabase,
+                request.user_id,
+                local_date,
+                resolved_struggles,
+                current_streak=request.current_streak,
+            )
+            intel_block = build_intelligence_context_block(intel_ctx)
+        except Exception as _intel_err:
+            intel_block = ""
+            print(
+                "AI_TASK_GENERATION "
+                "status=intelligence_context_warn "
+                f"error_type={type(_intel_err).__name__}"
+            )
+        _intel_ms = int((perf_counter() - _t1) * 1000)
+        print(f"AI_TASK_GENERATION stage_timing context_ms={_ctx_ms} intel_ms={_intel_ms}")
+
+        prompt = build_loop_tasks_prompt(context, intelligence_context=intel_block)
         gemini_diagnosis_context = {
             "key_source": effective_gemini_key_source,
             "gemini_api_key_present": bool(gemini_api_key),
@@ -2103,184 +2139,162 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
                 "provider_unavailable",
                 **gemini_diagnosis_context,
             )
-            if not request.allow_safe_fallback:
-                log_generation_event(
-                    status="retryable_ai_failure",
-                    provider="gemini",
-                    error_reason="provider_unavailable",
-                    diagnosis=diagnosis,
-                    context=context,
-                )
-                return build_retryable_task_failure_response(
-                    context=context,
-                    reason="provider_unavailable",
-                    diagnosis=diagnosis,
-                )
-
-            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
-            fallback_status, fallback_rows = save_fallback_tasks(
-                context,
-                request.user_id,
-                request.local_date,
-                generation_provider="safe_fallback",
-                generation_failure_reason="provider_unavailable",
-                force_insert_all=True,
-            )
             log_generation_event(
-                status=fallback_status,
-                provider="safe_fallback",
+                status="retryable_ai_failure",
+                provider="gemini",
                 error_reason="provider_unavailable",
                 diagnosis=diagnosis,
                 context=context,
             )
-            return build_task_response(
-                fallback_status,
-                fallback_rows,
-                context,
-                meta_extra={
-                    "provider": "safe_fallback",
-                    "fallback_used": True,
-                    "fallback_reason": "provider_unavailable",
-                    "diagnosis": diagnosis,
-                },
+            return build_retryable_task_failure_response(
+                context=context,
+                reason="provider_unavailable",
+                diagnosis=diagnosis,
             )
 
-        try:
-            provider_response = generate_loop_tasks_with_gemini(
-                loop_gemini_client,
-                gemini_model_name,
-                prompt,
-                prompt_version=LOOP_TASKS_PROMPT_VERSION,
-                timeout_seconds=25,
-                diagnosis_context=gemini_diagnosis_context,
+        # ── GENERATION with retry on JSON parse failure ───────────────────────
+        _MAX_RETRIES = 2
+        _last_validation_error: TaskValidationError | None = None
+        _last_ai_error: AIGenerationError | None = None
+        _succeeded = False
+
+        for _attempt in range(_MAX_RETRIES + 1):
+            _retry_prefix = (
+                "CRITICAL: The previous response was not valid JSON. "
+                "Respond ONLY with the JSON object. "
+                "No text before or after it. No markdown. No code fences.\n\n"
+                if _attempt > 0 else ""
             )
-            category_tasks = validate_ai_tasks(provider_response.text, context)
-            formatted_tasks = build_insert_rows(
-                category_tasks,
-                user_id=request.user_id,
-                local_date=request.local_date,
-                ai_generated=True,
-                generation_provider="gemini",
-                generation_model=gemini_model_name,
-                generation_prompt_version=provider_response.prompt_version,
-            )
-            if repair_mode:
-                insert_status, rows = insert_repair_rows(
-                    request.user_id,
-                    request.local_date,
-                    formatted_tasks,
-                    missing_categories,
+            _current_prompt = _retry_prefix + prompt
+
+            try:
+                provider_response = generate_loop_tasks_with_gemini(
+                    loop_gemini_client,
+                    gemini_model_name,
+                    _current_prompt,
+                    prompt_version=LOOP_TASKS_PROMPT_VERSION,
+                    timeout_seconds=25,
+                    diagnosis_context=gemini_diagnosis_context,
                 )
-            else:
-                insert_status, rows = insert_task_rows(
-                    request.user_id,
-                    request.local_date,
-                    formatted_tasks,
-                    source="ai_success",
+                category_tasks = validate_ai_tasks(provider_response.text, context)
+                formatted_tasks = build_insert_rows(
+                    category_tasks,
+                    user_id=request.user_id,
+                    local_date=local_date,
+                    ai_generated=True,
+                    generation_provider="gemini",
+                    generation_model=gemini_model_name,
+                    generation_prompt_version=provider_response.prompt_version,
                 )
-            status = "existing" if insert_status == "existing" else (insert_status or "success")
+                if repair_mode:
+                    insert_status, rows = insert_repair_rows(
+                        request.user_id,
+                        local_date,
+                        formatted_tasks,
+                        missing_categories,
+                    )
+                else:
+                    insert_status, rows = insert_task_rows(
+                        request.user_id,
+                        local_date,
+                        formatted_tasks,
+                        source="ai_success",
+                    )
+                status = "existing" if insert_status == "existing" else (insert_status or "success")
+                log_generation_event(
+                    status=status,
+                    provider=provider_response.provider,
+                    prompt_version=provider_response.prompt_version,
+                    latency_ms=provider_response.latency_ms,
+                    context=context,
+                )
+                _succeeded = True
+                return build_task_response(status, rows, context)
+
+            except TaskValidationError as _ve:
+                _last_validation_error = _ve
+                if _attempt < _MAX_RETRIES:
+                    print(
+                        "AI_TASK_GENERATION "
+                        f"status=validation_retry "
+                        f"attempt={_attempt + 1} "
+                        f"reason={_ve.reason}"
+                    )
+                    continue
+                # All validation retries exhausted — log loudly, never use templates
+                print(
+                    "AI_TASK_GENERATION "
+                    "status=all_retries_exhausted "
+                    f"final_reason={_ve.reason} "
+                    f"attempts={_MAX_RETRIES + 1}"
+                )
+                break
+
+            except AIGenerationError as _ae:
+                _last_ai_error = _ae
+                # Transient errors (timeout, empty) get one retry; hard errors do not
+                if _attempt < _MAX_RETRIES and _ae.reason in {
+                    "provider_timeout", "empty_provider_response"
+                }:
+                    print(
+                        "AI_TASK_GENERATION "
+                        f"status=provider_retry "
+                        f"attempt={_attempt + 1} "
+                        f"reason={_ae.reason}"
+                    )
+                    continue
+                print(
+                    "AI_TASK_GENERATION "
+                    "status=provider_error_final "
+                    f"reason={_ae.reason} "
+                    f"attempts={_attempt + 1}"
+                )
+                break
+
+        if _succeeded:
+            # Should not reach here, but guard against logic errors
+            raise HTTPException(status_code=500, detail="Failed to generate tasks")
+
+        # ── Retries exhausted — determine failure path ────────────────────────
+        if _last_validation_error is not None:
+            _fail_reason = f"validation_failed:{_last_validation_error.reason}"
+            _diagnosis = build_gemini_diagnosis(_fail_reason, **gemini_diagnosis_context)
             log_generation_event(
-                status=status,
-                provider=provider_response.provider,
-                prompt_version=provider_response.prompt_version,
-                latency_ms=provider_response.latency_ms,
+                status="retryable_ai_failure",
+                validation_failure_reason=_last_validation_error.reason,
+                diagnosis=_diagnosis,
                 context=context,
             )
-            return build_task_response(status, rows, context)
-        except TaskValidationError as validation_error:
-            diagnosis = build_gemini_diagnosis(
-                f"validation_failed:{validation_error.reason}",
+            return build_retryable_task_failure_response(
+                context=context,
+                reason=_fail_reason,
+                diagnosis=_diagnosis,
+            )
+
+        # AIGenerationError path
+        _ai_err = _last_ai_error
+        diagnosis = (
+            (_ai_err.diagnosis if _ai_err else None)
+            or build_gemini_diagnosis(
+                _ai_err.reason if _ai_err else "provider_unavailable",
                 **gemini_diagnosis_context,
             )
-            if not request.allow_safe_fallback:
-                log_generation_event(
-                    status="retryable_ai_failure",
-                    validation_failure_reason=validation_error.reason,
-                    diagnosis=diagnosis,
-                    context=context,
-                )
-                return build_retryable_task_failure_response(
-                    context=context,
-                    reason=f"validation_failed:{validation_error.reason}",
-                    diagnosis=diagnosis,
-                )
+        )
+        log_generation_event(
+            status="retryable_ai_failure",
+            latency_ms=_ai_err.latency_ms if _ai_err else None,
+            error_reason=_ai_err.reason if _ai_err else "provider_unavailable",
+            diagnosis=diagnosis,
+            context=context,
+        )
+        return build_retryable_task_failure_response(
+            context=context,
+            reason=_ai_err.reason if _ai_err else "provider_unavailable",
+            diagnosis=diagnosis,
+            latency_ms=_ai_err.latency_ms if _ai_err else None,
+        )
+        # ─── end of generation block ─────────────────────────────────────────
 
-            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
-            fallback_status, fallback_rows = save_fallback_tasks(
-                context,
-                request.user_id,
-                request.local_date,
-                generation_provider="safe_fallback",
-                generation_failure_reason=f"validation_failed:{validation_error.reason}",
-                force_insert_all=True,
-            )
-            log_generation_event(
-                status=fallback_status,
-                provider="safe_fallback",
-                validation_failure_reason=validation_error.reason,
-                diagnosis=diagnosis,
-                context=context,
-            )
-            return build_task_response(
-                fallback_status,
-                fallback_rows,
-                context,
-                meta_extra={
-                    "provider": "safe_fallback",
-                    "fallback_used": True,
-                    "fallback_reason": f"validation_failed:{validation_error.reason}",
-                    "diagnosis": diagnosis,
-                },
-            )
-        except AIGenerationError as ai_error:
-            diagnosis = ai_error.diagnosis or build_gemini_diagnosis(
-                ai_error.reason,
-                **gemini_diagnosis_context,
-            )
-            if not request.allow_safe_fallback:
-                log_generation_event(
-                    status="retryable_ai_failure",
-                    latency_ms=ai_error.latency_ms,
-                    error_reason=ai_error.reason,
-                    diagnosis=diagnosis,
-                    context=context,
-                )
-                return build_retryable_task_failure_response(
-                    context=context,
-                    reason=ai_error.reason,
-                    diagnosis=diagnosis,
-                    latency_ms=ai_error.latency_ms,
-                )
-
-            delete_uncompleted_generated_core_tasks(request.user_id, request.local_date)
-            fallback_status, fallback_rows = save_fallback_tasks(
-                context,
-                request.user_id,
-                request.local_date,
-                generation_provider="safe_fallback",
-                generation_failure_reason=ai_error.reason,
-                force_insert_all=True,
-            )
-            log_generation_event(
-                status=fallback_status,
-                provider="safe_fallback",
-                latency_ms=ai_error.latency_ms,
-                error_reason=ai_error.reason,
-                diagnosis=diagnosis,
-                context=context,
-            )
-            return build_task_response(
-                fallback_status,
-                fallback_rows,
-                context,
-                meta_extra={
-                    "provider": "safe_fallback",
-                    "fallback_used": True,
-                    "fallback_reason": ai_error.reason,
-                    "diagnosis": diagnosis,
-                },
-            )
-        
     except HTTPException:
         raise
     except Exception as e:

@@ -27,7 +27,7 @@ function DetailRow({ icon, label, children }) {
   );
 }
 
-export default function LoopTaskCard({ task, onToggle }) {
+export default function LoopTaskCard({ task, onToggle, onSkip }) {
   const [expanded, setExpanded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDone, setIsDone] = useState(Boolean(task.done ?? task.completed_at));
@@ -84,6 +84,11 @@ export default function LoopTaskCard({ task, onToggle }) {
 
   const handleBegin = () => {
     setHasBegun(true);
+  };
+
+  const handleSkip = () => {
+    if (isDone || task.skipped || !task.id) return;
+    onSkip?.(task.id);
   };
 
   return (
@@ -147,10 +152,15 @@ export default function LoopTaskCard({ task, onToggle }) {
           </DetailRow>
 
           {!isDone && (
-            <button type="button" className="loop-task-primary" onClick={handleBegin}>
-              {hasBegun ? "Continue task" : "Begin this step"}
-              <Icon name="arrow" size={20} strokeWidth={1.8} />
-            </button>
+            <div className="loop-task-actions">
+              <button type="button" className="loop-task-primary" onClick={handleBegin}>
+                {hasBegun ? "Continue task" : "Begin this step"}
+                <Icon name="arrow" size={20} strokeWidth={1.8} />
+              </button>
+              <button type="button" className="loop-task-skip" onClick={handleSkip}>
+                Too much today
+              </button>
+            </div>
           )}
         </div>
       )}

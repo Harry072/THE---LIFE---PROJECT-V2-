@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
@@ -79,6 +79,12 @@ const sortTasks = (rows) => [...rows].sort((a, b) => {
   return String(a.id ?? "").localeCompare(String(b.id ?? ""));
 });
 
+const isCoreLoopTask = (task = {}) => {
+  const category = String(task?.category || "").toLowerCase();
+  const isOptional = [true, "true", "True", "1", 1].includes(task?.is_optional);
+  return ["awareness", "action", "meaning"].includes(category) && !isOptional;
+};
+
 const sentenceBeforeAction = (value = "") => (
   String(value).split(/\bAction:\s*/i)[0]?.trim() || ""
 );
@@ -123,7 +129,13 @@ export function useLoopTasks() {
   const [hasFetched, setHasFetched] = useState(false);
   const [error, setError] = useState(null);
   const [retryWithSafeFallback, setRetryWithSafeFallback] = useState(false);
+  const generationInFlightRef = useRef(false);
+  const latestTasksRef = useRef([]);
   const insight = "";
+
+  useEffect(() => {
+    latestTasksRef.current = tasks;
+  }, [tasks]);
 
   const fetchTasks = useCallback(async () => {
     if (!user?.id) {
@@ -148,7 +160,7 @@ export function useLoopTasks() {
         throw queryError;
       }
 
-      const normalizedTasks = sortTasks((data ?? []).map(normalizeTask));
+      const normalizedTasks = sortTasks((data ?? []).map(normalizeTask).filter(isCoreLoopTask));
       setTasks(normalizedTasks);
       if (normalizedTasks.length > 0) {
         setRetryWithSafeFallback(false);
@@ -166,6 +178,9 @@ export function useLoopTasks() {
 
   const generateTasks = useCallback(async (options = {}) => {
     if (!user?.id) return [];
+    if (generationInFlightRef.current) {
+      return latestTasksRef.current;
+    }
 
     const {
       regenerate,
@@ -175,6 +190,7 @@ export function useLoopTasks() {
       allowSafeFallback,
     } = normalizeGenerateOptions(options);
 
+    generationInFlightRef.current = true;
     setGenerating(true);
     setError(null);
 
@@ -245,6 +261,7 @@ export function useLoopTasks() {
       setError(getGenerationErrorMessage(err, auto));
       return [];
     } finally {
+      generationInFlightRef.current = false;
       setGenerating(false);
     }
   }, [
@@ -253,7 +270,6 @@ export function useLoopTasks() {
     loadTasks,
     retryWithSafeFallback,
     user?.id,
-    user?.onboarding_answers,
     user?.user_metadata,
     user?.user_tree?.streak,
   ]);
