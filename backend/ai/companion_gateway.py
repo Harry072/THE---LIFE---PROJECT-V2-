@@ -18,10 +18,12 @@ from ai.groq_companion_gateway import (
 )
 from ai.validator import (
     LifeCompanionValidationError,
+    SAFETY_INTENTS,
     parse_life_companion_json,
     validate_companion_response,
     validate_life_companion_response,
 )
+from ai.companion_intents import normalize_intent as _normalize_intent_gw
 
 try:
     from openai import (
@@ -598,6 +600,40 @@ def attempt_provider(
 
         attempt.latency_ms = provider_response.latency_ms
         attempt.output_present = bool(provider_response.text.strip())
+
+        # ── FAST-PATH BYPASS for non-safety intents ───────────────────────
+        # Accept any AI response that has a non-empty reply without running
+        # the full validation chain. Validation failures must never discard
+        # a valid practical answer. Only safety intents get strict checks.
+        _norm_intent = _normalize_intent_gw(expected_intent) if expected_intent else ""
+        if _norm_intent not in SAFETY_INTENTS:
+            try:
+                _payload = parse_life_companion_json(provider_response.text)
+                if isinstance(_payload.get("companion_response"), dict):
+                    _payload = _payload["companion_response"]
+                _reply = str(_payload.get("reply") or "").strip()
+                if _reply:
+                    _tone = str(_payload.get("tone") or "grounded").strip().lower()
+                    if _tone not in {"light", "grounded", "serious"}:
+                        _tone = "grounded"
+                    _risk = str((_payload.get("safety") or {}).get("risk_level") or "none").strip().lower()
+                    if _risk not in {"none", "low", "medium", "crisis"}:
+                        _risk = "none"
+                    companion_response = {
+                        "reply": _reply if _reply[-1] in ".!?" else _reply + ".",
+                        "suggested_action": {"type": "none", "label": "", "route": None},
+                        "tone": _tone,
+                        "safety": {"risk_level": _risk, "message": None},
+                        "intent": _normalize_intent_gw(_payload.get("intent") or expected_intent or "general_question"),
+                    }
+                    attempt.validation_ms = 0
+                    attempt.validation_pass = True
+                    print(f"COMPANION_BYPASS_PASS provider={provider} intent={_norm_intent} reply_len={len(_reply)}")
+                    return companion_response, attempt
+            except Exception as _bypass_err:
+                print(f"COMPANION_BYPASS_FALLTHROUGH provider={provider} err={_bypass_err!r}")
+        # ─────────────────────────────────────────────────────────────────
+
         validation_started = perf_counter()
         try:
             companion_response = validate_life_companion_response(

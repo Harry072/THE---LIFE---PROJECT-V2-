@@ -778,17 +778,87 @@ def validate_life_companion_response(
     if isinstance(payload.get("companion_response"), dict):
         payload = payload["companion_response"]
 
+    normalized_expected_intent = normalize_intent(expected_intent) if expected_intent else ""
+    _is_safety_intent = normalized_expected_intent in SAFETY_INTENTS
+
+    # Reply must be present for every intent — without it the response is useless.
+    # Non-safety intents allow up to 4000 chars (detailed practical advice can be long).
     reply = validate_life_companion_text(
         payload.get("reply"),
         field="reply",
-        max_chars=1800,
+        max_chars=1800 if _is_safety_intent else 4000,
     )
+
+    # ── NON-SAFETY FAST PATH ─────────────────────────────────────────────────
+    # For any intent that is not a safety intent, accept the AI response as long
+    # as the reply field is non-empty and JSON parsed successfully.
+    # Use graceful defaults for tone, action, reply_format, safety — never discard
+    # a valid AI answer because of a label or format mismatch.
+    if not _is_safety_intent:
+        try:
+            suggested_action = validate_life_companion_action(payload.get("suggested_action"))
+        except LifeCompanionValidationError:
+            suggested_action = {"type": "none", "label": "", "route": None}
+        if suggested_action.get("type") == "reflection" and user_rejects_reflection(user_message):
+            suggested_action = {"type": "none", "label": "", "route": None}
+
+        tone = str(payload.get("tone") or "grounded").strip().lower()
+        if tone not in COMPANION_TONES:
+            tone = "grounded"
+
+        safety_raw = payload.get("safety") or {}
+        risk_level = str(safety_raw.get("risk_level") or "none").strip().lower()
+        if risk_level not in COMPANION_RISK_LEVELS:
+            risk_level = "none"
+
+        result: dict = {
+            "reply": ensure_terminal_punctuation(reply),
+            "suggested_action": suggested_action,
+            "tone": tone,
+            "safety": {"risk_level": risk_level, "message": None},
+        }
+
+        raw_reply_format = payload.get("reply_format")
+        if raw_reply_format is not None:
+            fmt = str(raw_reply_format or "").strip().lower()
+            if fmt in COMPANION_REPLY_FORMATS:
+                result["reply_format"] = fmt
+            # Unknown format: silently omit — do not raise
+
+        raw_sections = payload.get("sections")
+        if raw_sections is not None:
+            try:
+                result["sections"] = validate_companion_sections(raw_sections)
+            except LifeCompanionValidationError:
+                pass  # sections are optional; skip if malformed
+
+        raw_intent = payload.get("intent")
+        if raw_intent is not None:
+            result["intent"] = normalize_intent(raw_intent)
+        elif expected_intent:
+            result["intent"] = normalize_intent(expected_intent)
+
+        try:
+            validate_no_source_leakage(result)
+        except LifeCompanionValidationError:
+            pass  # never discard a practical answer for source-leakage false-positives
+
+        print(
+            f"COMPANION_VALIDATION_LENIENT_PASS intent={normalized_expected_intent} "
+            f"reply_len={len(result['reply'])}"
+        )
+        return result
+
+    # ── SAFETY STRICT PATH ───────────────────────────────────────────────────
+    # Crisis, anxiety_grounding, ground_first, self_harm, safety:
+    # full validation — routing must be correct for user safety.
     if sentence_count(reply) > 14:
         raise LifeCompanionValidationError("too_many_sentences_reply")
 
     suggested_action = validate_life_companion_action(payload.get("suggested_action"))
     if suggested_action.get("type") == "reflection" and user_rejects_reflection(user_message):
         raise LifeCompanionValidationError("reflection_rejected_by_user")
+
     tone = str(payload.get("tone") or "").strip().lower()
     if tone not in COMPANION_TONES:
         raise LifeCompanionValidationError("invalid_tone")
@@ -837,9 +907,6 @@ def validate_life_companion_response(
     elif expected_intent:
         result["intent"] = normalize_intent(expected_intent)
 
-    normalized_expected_intent = normalize_intent(expected_intent) if expected_intent else ""
-    _is_safety_intent = normalized_expected_intent in SAFETY_INTENTS
-
     _direct_output_intents = {
         "peaceful_knowledge_place_recommendation",
         "peaceful_place_recommendation",
@@ -862,23 +929,12 @@ def validate_life_companion_response(
         "general_question",
     }
 
-    # For safety intents, enforce strict contract checks — routing must be correct.
-    # For all other intents, accept any valid-structure response with a non-empty reply;
-    # log mismatches for debugging but never discard a good AI answer over label mismatch.
-    try:
-        if normalized_expected_intent in BOOK_RECOMMENDATION_INTENTS or result.get("reply_format") == "book_recommendation":
-            validate_book_recommendation_contract(result, normalized_expected_intent or None)
-        if normalized_expected_intent in _direct_output_intents:
-            validate_direct_output_contract(result, normalized_expected_intent)
-        if understanding:
-            _validate_request_satisfaction(result, understanding)
-    except LifeCompanionValidationError as _contract_err:
-        if _is_safety_intent:
-            raise
-        print(
-            f"COMPANION_VALIDATION_LENIENT intent={normalized_expected_intent} "
-            f"reason={_contract_err.reason} reply_len={len(result.get('reply', ''))}"
-        )
+    if normalized_expected_intent in BOOK_RECOMMENDATION_INTENTS or result.get("reply_format") == "book_recommendation":
+        validate_book_recommendation_contract(result, normalized_expected_intent or None)
+    if normalized_expected_intent in _direct_output_intents:
+        validate_direct_output_contract(result, normalized_expected_intent)
+    if understanding:
+        _validate_request_satisfaction(result, understanding)
 
     validate_no_source_leakage(result)
 

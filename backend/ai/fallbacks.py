@@ -1805,9 +1805,31 @@ def generate_life_companion_fallback(
         )
 
     if deterministic_intent == "general_question":
+        # Last-resort: one lightweight Groq call before returning static text.
+        try:
+            from .groq_companion_gateway import generate_life_companion_with_groq
+            import json as _fb_json
+            _mini = (
+                f'The user asked: "{(user_message or "a question")[:300]}". '
+                "Reply warmly and practically in 2-3 sentences. "
+                'Return ONLY valid JSON: {"reply": "your answer here"}'
+            )
+            _gr = generate_life_companion_with_groq(_mini, prompt_version="fallback_mini", timeout_seconds=8)
+            _rd = _fb_json.loads(_gr.text)
+            _mini_reply = str(_rd.get("reply") or "").strip()
+            if len(_mini_reply) > 15:
+                return build_life_companion_response(
+                    reply=_mini_reply if _mini_reply[-1] in ".!?" else _mini_reply + ".",
+                    action_type="none",
+                    tone="grounded",
+                    reply_format="conversation",
+                    intent="general_question",
+                )
+        except Exception:
+            pass
         return build_life_companion_response(
             reply=(
-                "That is a thoughtful question. Could you share a bit more about what is on your mind? I want to give you something genuinely useful, not a surface-level answer."
+                "I hear you. Tell me more about what you are working through and I will help you take the next step."
             ),
             action_type="none",
             tone="grounded",
