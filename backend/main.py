@@ -80,27 +80,34 @@ from ai.validator import (
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 
+_ALWAYS_ALLOWED_ORIGINS = [
+    "https://the-life-project.vercel.app",
+    "https://www.the-life-project.vercel.app",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+]
+
+
 def get_cors_origins() -> list[str]:
     configured_origins = os.environ.get("CORS_ORIGINS")
     if not configured_origins:
-        return [
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:5174",
-            "http://127.0.0.1:5174",
-        ]
+        return _ALWAYS_ALLOWED_ORIGINS
 
-    origins = [
+    extra = [
         origin.strip()
         for origin in configured_origins.split(",")
         if origin.strip()
     ]
-    return origins or [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ]
+    # Merge so the Vercel URL is always present regardless of env config
+    seen = set()
+    merged = []
+    for o in _ALWAYS_ALLOWED_ORIGINS + extra:
+        if o not in seen:
+            seen.add(o)
+            merged.append(o)
+    return merged
 
 
 app = FastAPI()
