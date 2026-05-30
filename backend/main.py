@@ -992,6 +992,38 @@ def persist_companion_exchange(
     )
 
 
+def fetch_companion_conversation_history(
+    *,
+    user_id: str,
+    conversation_id: str | None,
+    limit: int = 10,
+) -> list[dict]:
+    if not conversation_id:
+        return []
+
+    rows = table_select_optional(
+        supabase,
+        "companion_messages",
+        "life_companion_conversation_history",
+        {
+            "select": "role,content,created_at",
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("eq", ("conversation_id", conversation_id)),
+                ("order", ("created_at",), {"desc": True}),
+                ("limit", (limit,)),
+            ],
+        },
+    )
+    history: list[dict] = []
+    for row in reversed(rows):
+        role = str(row.get("role") or "").strip().lower()
+        content = compact_companion_text(row.get("content"), max_chars=1200)
+        if role in {"user", "assistant"} and content:
+            history.append({"role": role, "content": content})
+    return history[-limit:]
+
+
 def log_weekly_mirror_event(
     *,
     status: str,
@@ -1693,6 +1725,12 @@ async def life_companion_chat(
                 user_id=token_user_id,
             )
 
+        conversation_history = fetch_companion_conversation_history(
+            user_id=token_user_id,
+            conversation_id=conversation.get("id") if conversation else None,
+            limit=10,
+        )
+
         context_started = perf_counter()
         context = build_life_companion_context(
             supabase,
@@ -1791,6 +1829,7 @@ async def life_companion_chat(
             user_message=user_message,
             knowledge_chunks=knowledge_chunks,
             understanding=understanding,
+            conversation_history=conversation_history,
         )
         prompt_build_ms = gateway_result.prompt_build_ms or 0
         log_life_companion_event(
@@ -2146,6 +2185,28 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
                 "provider_unavailable",
                 **gemini_diagnosis_context,
             )
+            if request.allow_safe_fallback:
+                delete_uncompleted_generated_core_tasks(request.user_id, local_date)
+                fallback_status, fallback_rows = save_fallback_tasks(
+                    context,
+                    request.user_id,
+                    local_date,
+                    missing_categories if repair_mode else None,
+                    generation_provider="safe_fallback",
+                    generation_failure_reason="provider_unavailable",
+                    force_insert_all=True,
+                )
+                return build_task_response(
+                    fallback_status,
+                    fallback_rows,
+                    context,
+                    meta_extra={
+                        "provider": "safe_fallback",
+                        "fallback_used": True,
+                        "error_reason": "provider_unavailable",
+                        "diagnosis": diagnosis,
+                    },
+                )
             log_generation_event(
                 status="retryable_ai_failure",
                 provider="gemini",
@@ -2266,6 +2327,35 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
         if _last_validation_error is not None:
             _fail_reason = f"validation_failed:{_last_validation_error.reason}"
             _diagnosis = build_gemini_diagnosis(_fail_reason, **gemini_diagnosis_context)
+            if request.allow_safe_fallback:
+                delete_uncompleted_generated_core_tasks(request.user_id, local_date)
+                fallback_status, fallback_rows = save_fallback_tasks(
+                    context,
+                    request.user_id,
+                    local_date,
+                    missing_categories if repair_mode else None,
+                    generation_provider="safe_fallback",
+                    generation_failure_reason=_fail_reason,
+                    force_insert_all=True,
+                )
+                log_generation_event(
+                    status="fallback",
+                    provider="safe_fallback",
+                    validation_failure_reason=_last_validation_error.reason,
+                    diagnosis=_diagnosis,
+                    context=context,
+                )
+                return build_task_response(
+                    fallback_status,
+                    fallback_rows,
+                    context,
+                    meta_extra={
+                        "provider": "safe_fallback",
+                        "fallback_used": True,
+                        "error_reason": _fail_reason,
+                        "diagnosis": _diagnosis,
+                    },
+                )
             log_generation_event(
                 status="retryable_ai_failure",
                 validation_failure_reason=_last_validation_error.reason,
@@ -2287,16 +2377,48 @@ async def generate_tasks(request: TaskRequest, authorization: str | None = Heade
                 **gemini_diagnosis_context,
             )
         )
+        _ai_reason = _ai_err.reason if _ai_err else "provider_unavailable"
+        if request.allow_safe_fallback:
+            delete_uncompleted_generated_core_tasks(request.user_id, local_date)
+            fallback_status, fallback_rows = save_fallback_tasks(
+                context,
+                request.user_id,
+                local_date,
+                missing_categories if repair_mode else None,
+                generation_provider="safe_fallback",
+                generation_failure_reason=_ai_reason,
+                force_insert_all=True,
+            )
+            log_generation_event(
+                status="fallback",
+                provider="safe_fallback",
+                latency_ms=_ai_err.latency_ms if _ai_err else None,
+                error_reason=_ai_reason,
+                diagnosis=diagnosis,
+                context=context,
+            )
+            return build_task_response(
+                fallback_status,
+                fallback_rows,
+                context,
+                meta_extra={
+                    "provider": "safe_fallback",
+                    "fallback_used": True,
+                    "error_reason": _ai_reason,
+                    "diagnosis": diagnosis,
+                    "latency_ms": _ai_err.latency_ms if _ai_err else None,
+                },
+            )
         log_generation_event(
             status="retryable_ai_failure",
             latency_ms=_ai_err.latency_ms if _ai_err else None,
-            error_reason=_ai_err.reason if _ai_err else "provider_unavailable",
+            error_reason=_ai_reason,
             diagnosis=diagnosis,
             context=context,
         )
         return build_retryable_task_failure_response(
             context=context,
-            reason=_ai_err.reason if _ai_err else "provider_unavailable",
+            reason=_ai_reason,
             diagnosis=diagnosis,
             latency_ms=_ai_err.latency_ms if _ai_err else None,
         )

@@ -93,6 +93,22 @@ class _LoopTasksGeminiSchema(BaseModel):
     tasks: list[_LoopTaskGeminiSchema] = Field(min_length=3, max_length=3)
 
 
+def _strip_schema_defaults(value):
+    if isinstance(value, dict):
+        return {
+            key: _strip_schema_defaults(item)
+            for key, item in value.items()
+            if key != "default"
+        }
+    if isinstance(value, list):
+        return [_strip_schema_defaults(item) for item in value]
+    return value
+
+
+def loop_tasks_response_schema() -> dict:
+    return _strip_schema_defaults(LoopTasksPayload.model_json_schema())
+
+
 def classify_gemini_error(error: Exception) -> str:
     raw = " ".join(
         str(part or "")
@@ -219,7 +235,7 @@ def _call_google_genai_loop_tasks(client, model_name: str, prompt: str) -> str:
         contents=prompt,
         config=types.GenerateContentConfig(
             responseMimeType="application/json",
-            responseSchema=_LoopTasksGeminiSchema,
+            responseSchema=loop_tasks_response_schema(),
             temperature=0.9,
         ),
     )

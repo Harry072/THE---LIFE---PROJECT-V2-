@@ -800,7 +800,7 @@ def validate_life_companion_response(
         except LifeCompanionValidationError:
             suggested_action = {"type": "none", "label": "", "route": None}
         if suggested_action.get("type") == "reflection" and user_rejects_reflection(user_message):
-            suggested_action = {"type": "none", "label": "", "route": None}
+            raise LifeCompanionValidationError("reflection_rejected_by_user")
 
         tone = str(payload.get("tone") or "grounded").strip().lower()
         if tone not in COMPANION_TONES:
@@ -838,10 +838,10 @@ def validate_life_companion_response(
         elif expected_intent:
             result["intent"] = normalize_intent(expected_intent)
 
-        try:
-            validate_no_source_leakage(result)
-        except LifeCompanionValidationError:
-            pass  # never discard a practical answer for source-leakage false-positives
+        if normalized_expected_intent in BOOK_RECOMMENDATION_INTENTS or result.get("reply_format") == "book_recommendation":
+            validate_book_recommendation_contract(result, normalized_expected_intent or None)
+
+        validate_no_source_leakage(result)
 
         print(
             f"COMPANION_VALIDATION_LENIENT_PASS intent={normalized_expected_intent} "

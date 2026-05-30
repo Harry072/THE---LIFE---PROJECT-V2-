@@ -23,7 +23,8 @@ EMOTIONAL_STATE_SIGNALS = {
         "feel numb", "feeling numb", "feel empty", "feel hollow",
         "can't hold this", "feel heavy", "this is heavy",
         "can't take it", "i can't do this", "it hurts so much",
-        "i'm breaking", "i feel broken",
+        "i'm breaking", "i feel broken", "feel like giving up",
+        "i am giving up", "giving up",
         # Anxiety / Panic
         "heart is racing", "can't breathe", "panicking",
         "panic attack", "shaking", "so anxious", "i'm scared",
@@ -362,6 +363,18 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
     if has_pattern(text, [r"\b(novels?|fiction|books?|reads?)\b", r"\bwhat should i read\b", r"\bi want to read\b"]):
         return "book_recommendation"
 
+    if has_any(text, ["scrolling", "screen time", "phone addiction", "doomscroll", "doom scrolling"]):
+        return "scrolling_distraction"
+
+    if has_any(text, ["mental toughness", "discipline", "willpower", "procrastination", "procrastinating", "procrastinate", "laziness", "productivity"]):
+        return "productivity"
+
+    if has_any(text, ["psychology", "mindset", "self improvement", "wealth", "money mindset", "financial"]):
+        return "life_clarity"
+
+    if has_any(text, ["confidence", "self esteem", "self worth"]):
+        return "emotional_talk"
+
     if has_any(
         text,
         [
@@ -445,6 +458,9 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
 
     if has_any(text, ["anxious", "anxiety", "panic", "panicking", "overwhelmed", "overthinking", "spiral", "restless", "mentally crowded", "too much in my mind"]):
         return "anxiety_grounding"
+
+    if has_any(text, ["worry", "rumination", "loneliness", "isolation", "connection"]):
+        return "emotional_talk"
 
     if has_any(text, ["i feel", "i am feeling", "sad", "heavy", "lonely", "alone", "empty", "hurt", "low", "tired", "vent", "talk to me", "can we talk", "need to talk"]):
         return "emotional_talk"

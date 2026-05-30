@@ -397,6 +397,28 @@ def has_any(text: str, phrases: list[str]) -> bool:
     return any(phrase in lowered for phrase in phrases)
 
 
+def is_prompt_injection_message(message: str) -> bool:
+    lowered = str(message or "").lower().replace("’", "'")
+    return has_any(
+        lowered,
+        [
+            "ignore rules",
+            "ignore previous instructions",
+            "ignore prior instructions",
+            "show prompt",
+            "show your prompt",
+            "reveal prompt",
+            "reveal your prompt",
+            "system prompt",
+            "hidden instructions",
+            "developer message",
+            "api key",
+            "service role",
+            "jailbreak",
+        ],
+    )
+
+
 def is_memory_followup(message: str) -> bool:
     lowered = str(message or "").lower().replace("’", "'")
     return has_any(
@@ -695,8 +717,10 @@ def build_life_companion_response(
 def generate_life_companion_crisis_response() -> dict:
     return build_life_companion_response(
         reply=(
-            "I am really glad you said this here. If you might hurt yourself or you are in immediate danger, "
-            "please contact local emergency services now or reach a trusted person who can stay with you. "
+            "What you shared is serious, and I am here with you right now. "
+            "Put both feet on the floor and take one slow breath. Are you safe from harming yourself in the next few minutes? "
+            "Please contact local emergency services, a crisis helpline, or a mental health professional now. "
+            "If you can, reach a trusted person who can stay with you. "
             "Do not stay alone with this if the danger feels close."
         ),
         action_type="none",
@@ -946,7 +970,7 @@ def generate_life_companion_fallback(
         deterministic_intent = SUBJECT_TO_INTENT[_subj]
     safe_memory = safe_context.get("safe_memory_summary") or {}
 
-    if prompt_injection or deterministic_intent == "prompt_injection":
+    if prompt_injection or is_prompt_injection_message(user_message):
         return build_life_companion_response(
             reply=(
                 "I cannot help with that request. I can still help with what is happening for you right now, in ordinary words."
@@ -960,17 +984,15 @@ def generate_life_companion_fallback(
         )
 
     if deterministic_intent == "safety":
+        return generate_life_companion_crisis_response()
+
+    if str(user_message or "").strip().lower() in {"hi", "hey", "hello", "yo"}:
         return build_life_companion_response(
-            reply=(
-                "I cannot help with private instruction content, unsafe directions, or emergency-like requests in a normal coaching flow. "
-                "If this is about immediate safety, contact local emergency help or a trusted person now."
-            ),
+            reply="Hey. I am here. What has been on your mind today?",
             action_type="none",
-            tone="serious",
-            risk_level="low",
-            safety_message="This request stays inside safety boundaries.",
-            reply_format="safety",
-            intent="safety",
+            tone="light",
+            reply_format="conversation",
+            intent="general_question",
         )
 
     if is_memory_followup(user_message):
@@ -1053,9 +1075,14 @@ def generate_life_companion_fallback(
     if deterministic_intent == "routine_plan":
         lowered = str(user_message or "").lower()
         if has_any(lowered, ["study", "studies", "exam", "academic", "focus", "concentrate"]):
+            wants_study_routine = has_any(
+                lowered,
+                ["study routine", "routine", "schedule", "timetable", "time table", "create", "make"],
+            )
             return build_life_companion_response(
-                reply="If studies are not holding your attention, make the next session smaller and more protected. Do not wait to feel focused first.",
-                action_type="none",
+                reply="Here is a study routine you can start today: make the next session smaller and more protected. Do not wait to feel focused first.",
+                action_type="loop" if wants_study_routine else "none",
+                label="Open The Loop" if wants_study_routine else None,
                 tone="grounded",
                 reply_format="structured_plan",
                 intent="routine_plan",

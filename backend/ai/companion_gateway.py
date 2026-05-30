@@ -8,15 +8,17 @@ from ai.companion_intents import detect_emotional_state, detect_intent, detect_r
 from ai.companion_knowledge import detect_companion_intent, get_rag_filter_tags
 from ai.companion_playbooks.loader import retrieve_playbook_chunks
 from ai.context import get_companion_session, save_companion_session
-from ai.fallbacks import generate_life_companion_fallback
+from ai.fallbacks import generate_life_companion_crisis_response, generate_life_companion_fallback
 from ai.memory_formatter import format_memory_for_prompt
 from ai.pdf_knowledge import get_relevant_knowledge
 from ai.prompts import build_life_companion_prompt
 from ai.groq_companion_gateway import (
     GroqCompanionProviderError,
     generate_life_companion_with_groq,
+    generate_life_companion_with_groq_messages,
 )
 from ai.validator import (
+    BOOK_RECOMMENDATION_INTENTS,
     LifeCompanionValidationError,
     SAFETY_INTENTS,
     parse_life_companion_json,
@@ -87,6 +89,226 @@ SEVERITY_ORDER = {
     "crisis": 4,
 }
 
+LIFE_TOPIC_OVERRIDES = [
+    {
+        "phrases": ("scrolling", "screen time", "phone addiction"),
+        "intent": "emotional_support",
+        "subject": "scrolling",
+        "emotional_state": "mild",
+        "user_goal": "break digital addiction and regain awareness.",
+    },
+    {
+        "phrases": ("anxious", "anxiety", "panic", "panicking"),
+        "intent": "emotional_support",
+        "subject": "anxiety",
+        "emotional_state": "moderate",
+        "user_goal": "ground anxiety and re-enter the present moment.",
+    },
+    {
+        "phrases": ("mental toughness", "discipline", "willpower"),
+        "intent": "motivation",
+        "subject": "discipline",
+        "emotional_state": "none",
+        "user_goal": "build inner resilience and disciplined action.",
+    },
+    {
+        "phrases": ("procrastination", "procrastinating", "procrastinate", "laziness", "productivity"),
+        "intent": "motivation",
+        "subject": "procrastination",
+        "emotional_state": "mild",
+        "user_goal": "move through resistance and take action.",
+    },
+    {
+        "phrases": ("wealth", "money mindset", "financial"),
+        "intent": "advice",
+        "subject": "wealth",
+        "emotional_state": "none",
+        "user_goal": "build financial discipline and a healthier money mindset.",
+    },
+    {
+        "phrases": ("psychology", "mindset", "self improvement"),
+        "intent": "advice",
+        "subject": "mindset",
+        "emotional_state": "none",
+        "user_goal": "understand personal patterns and improve self-awareness.",
+    },
+    {
+        "phrases": ("purpose", "meaning", "direction"),
+        "intent": "life_planning",
+        "subject": "purpose",
+        "emotional_state": "mild",
+        "user_goal": "find direction and connect actions to meaning.",
+    },
+    {
+        "phrases": ("confidence", "self esteem", "self worth"),
+        "intent": "emotional_support",
+        "subject": "confidence",
+        "emotional_state": "mild",
+        "user_goal": "rebuild self-trust and inner worth.",
+    },
+    {
+        "phrases": ("habits", "routine", "morning routine"),
+        "intent": "advice",
+        "subject": "habits",
+        "emotional_state": "none",
+        "user_goal": "shape habits and routine around growth.",
+    },
+    {
+        "phrases": ("overthinking", "worry", "rumination"),
+        "intent": "emotional_support",
+        "subject": "overthinking",
+        "emotional_state": "moderate",
+        "user_goal": "calm rumination and regain perspective.",
+    },
+    {
+        "phrases": ("loneliness", "isolation", "connection"),
+        "intent": "emotional_support",
+        "subject": "loneliness",
+        "emotional_state": "moderate",
+        "user_goal": "understand loneliness and move toward real connection.",
+    },
+    {
+        "phrases": ("giving up", "give up"),
+        "intent": "emotional_support",
+        "subject": "giving_up",
+        "emotional_state": "active_pain",
+        "user_goal": "stay with the pain without surrendering the whole future to it.",
+    },
+]
+
+LIFE_TOPIC_FALLBACK_REPLIES = {
+    "scrolling": (
+        "Your phone is not the real enemy; it is the easiest escape from discomfort. "
+        "Break the loop physically first: put it across the room, stand up, and do one "
+        "two-minute action before you decide whether to pick it up again."
+    ),
+    "anxiety": (
+        "Put both feet on the floor and let your shoulders drop. Breathe in for four, "
+        "out for six, twice. Anxiety wants you to solve the whole future; right now, "
+        "come back to the next minute."
+    ),
+    "discipline": (
+        "Mental toughness is not feeling hard all the time. It is keeping a small promise "
+        "while your mood argues with you. Choose one uncomfortable action today and finish it without negotiation."
+    ),
+    "mindset": (
+        "Start with this: your patterns are more honest than your intentions. Watch what you avoid, "
+        "what you repeat, and what you defend; that is where self-awareness begins."
+    ),
+    "procrastination": (
+        "Procrastination is often resistance wearing a productivity mask. Do not try to feel ready; "
+        "make the first step so small that your nervous system has no dramatic story to tell about it."
+    ),
+    "wealth": (
+        "Wealth starts as behavior before it becomes money. Track what leaks your attention and cash, "
+        "then build one rule you can keep even when you feel impulsive."
+    ),
+    "purpose": (
+        "Purpose rarely arrives as a perfect answer. It becomes visible when you take responsibility "
+        "for one direction long enough to be changed by it."
+    ),
+    "confidence": (
+        "Confidence grows when your actions become evidence. Keep one promise small enough to complete today; "
+        "self-trust is built by proof, not self-hype."
+    ),
+    "habits": (
+        "A habit is not a personality test; it is an environment plus a repeatable cue. Make the first move visible, "
+        "easy, and tied to a moment that already happens."
+    ),
+    "overthinking": (
+        "Overthinking tries to create certainty before action. Give the mind a smaller job: write the decision, "
+        "name what you control, and take one reversible step."
+    ),
+    "loneliness": (
+        "Loneliness is not just the absence of people; it is the absence of being met. Start with one honest reach-out, "
+        "not a performance: one sentence that says what is real."
+    ),
+    "giving_up": (
+        "Part of you wants to stop because carrying this has become too heavy. "
+        "Do not decide your whole future from this state. Sit down, breathe once, drink water, "
+        "and name the one thing that feels impossible right now."
+    ),
+}
+
+WEAK_COMPANION_REPLY_MARKERS = (
+    "it can be tough",
+    "it can be really tough",
+    "it's great that",
+    "it takes courage",
+    "it takes a lot of courage",
+    "one thing that might help",
+    "one valuable psychology tip",
+    "building mental toughness is about",
+    "procrastination can be a tough habit",
+)
+
+
+def _normalize_topic_text(value: str) -> str:
+    return " ".join(str(value or "").lower().replace("-", " ").replace("_", " ").split())
+
+
+def life_topic_override_for_message(latest_message: str) -> dict | None:
+    text = _normalize_topic_text(latest_message)
+    if not text:
+        return None
+    for rule in LIFE_TOPIC_OVERRIDES:
+        if any(phrase in text for phrase in rule["phrases"]):
+            return dict(rule)
+    return None
+
+
+def apply_life_topic_override(classification: dict, latest_message: str) -> dict:
+    rule = life_topic_override_for_message(latest_message)
+    if not rule:
+        return _complete_understanding_classification(classification)
+
+    updated = _complete_understanding_classification(dict(classification or {}))
+    updated["intent"] = rule["intent"]
+    updated["subject"] = rule["subject"]
+    updated["user_goal"] = rule["user_goal"]
+    updated["answer_posture"] = rule["intent"]
+    updated["life_topic_route"] = rule["intent"]
+    try:
+        confidence = float(updated.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    updated["confidence"] = max(confidence, 0.9)
+
+    current_state = str(updated.get("emotional_state") or "none")
+    override_state = rule["emotional_state"]
+    if SEVERITY_ORDER.get(override_state, 0) > SEVERITY_ORDER.get(current_state, 0):
+        updated["emotional_state"] = override_state
+    return updated
+
+
+def apply_life_topic_response_floor(response: dict, latest_message: str) -> dict:
+    rule = life_topic_override_for_message(latest_message)
+    if not rule:
+        return response
+
+    subject = rule["subject"]
+    floor_reply = LIFE_TOPIC_FALLBACK_REPLIES.get(subject)
+    if not floor_reply:
+        return response
+
+    reply = str(response.get("reply") or "").strip()
+    reply_lower = reply.lower()
+    should_replace = (
+        not reply
+        or len(reply) > 360
+        or any(marker in reply_lower for marker in WEAK_COMPANION_REPLY_MARKERS)
+    )
+    if not should_replace:
+        return response
+
+    updated = dict(response)
+    updated["reply"] = floor_reply
+    updated["suggested_action"] = {"type": "none", "label": "", "route": None}
+    updated["tone"] = "serious" if rule["emotional_state"] == "active_pain" else "grounded"
+    updated["safety"] = {"risk_level": "none", "message": None}
+    updated.setdefault("reply_format", "conversation")
+    return updated
+
 
 def _fallback_understanding_classification(latest_message: str) -> dict:
     es = detect_emotional_state(latest_message)
@@ -150,11 +372,14 @@ def run_understanding_pass(
         )
         classification = parse_life_companion_json(provider_response.text)
         if classification and "emotional_state" in classification and "intent" in classification:
-            return _complete_understanding_classification(classification)
+            return apply_life_topic_override(classification, latest_message)
     except Exception:
         pass
 
-    return _fallback_understanding_classification(latest_message)
+    return apply_life_topic_override(
+        _fallback_understanding_classification(latest_message),
+        latest_message,
+    )
 
 
 def merge_with_safety_net(classification: dict, latest_message: str) -> dict:
@@ -162,7 +387,7 @@ def merge_with_safety_net(classification: dict, latest_message: str) -> dict:
     Merges LLM understanding with keyword crisis safety net.
     Always takes the MORE SEVERE emotional state. Keyword crisis forces safety.
     """
-    classification = _complete_understanding_classification(dict(classification or {}))
+    classification = apply_life_topic_override(classification or {}, latest_message)
     keyword_state = detect_emotional_state(latest_message)
     llm_state = classification.get("emotional_state", "none")
 
@@ -471,6 +696,25 @@ def _prompt_parts_to_string(prompt_parts: dict) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
+def _prompt_parts_to_messages(prompt_parts: dict) -> list[dict]:
+    messages: list[dict] = [{"role": "system", "content": prompt_parts["system"]}]
+    ctx = prompt_parts.get("context", "")
+    if ctx:
+        messages.append({"role": "system", "content": ctx})
+    for turn in (prompt_parts.get("history") or [])[-10:]:
+        if not isinstance(turn, dict):
+            continue
+        role = str(turn.get("role") or "").strip().lower()
+        content = str(turn.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        messages.append({"role": role, "content": content})
+    user_msg = prompt_parts.get("user_message", "")
+    if user_msg:
+        messages.append({"role": "user", "content": user_msg})
+    return messages
+
+
 def _call_openai(prompt_parts: dict, timeout_seconds: int) -> str:
     api_key, model = get_openai_companion_config()
     client = OpenAI(api_key=api_key, timeout=timeout_seconds, max_retries=0)
@@ -513,6 +757,10 @@ def normalize_life_companion_validation_failure(reason: str) -> str:
     cleaned = str(reason or "").strip().lower()
     if cleaned.startswith(REASON_INVALID_JSON):
         return REASON_INVALID_JSON
+    if cleaned == "book_intent_loop_action":
+        return cleaned
+    if cleaned == "reflection_rejected_by_user":
+        return cleaned
     if cleaned == REASON_INVALID_ACTION_TYPE:
         return REASON_INVALID_ACTION_TYPE
     if cleaned == REASON_INVALID_ACTION_ROUTE:
@@ -584,11 +832,12 @@ def attempt_provider(
                 prompt_version=prompt_version,
             )
         elif provider == PROVIDER_GROQ:
-            log_companion_provider_call(provider=provider, timeout_seconds=10)
+            log_companion_provider_call(provider=provider, timeout_seconds=14)
             try:
-                provider_response = generate_life_companion_with_groq(
-                    _prompt_parts_to_string(prompt_parts),
+                provider_response = generate_life_companion_with_groq_messages(
+                    _prompt_parts_to_messages(prompt_parts),
                     prompt_version=prompt_version,
+                    timeout_seconds=14,
                 )
             except GroqCompanionProviderError as error:
                 raise CompanionProviderError(
@@ -606,7 +855,7 @@ def attempt_provider(
         # the full validation chain. Validation failures must never discard
         # a valid practical answer. Only safety intents get strict checks.
         _norm_intent = _normalize_intent_gw(expected_intent) if expected_intent else ""
-        if _norm_intent not in SAFETY_INTENTS:
+        if _norm_intent not in SAFETY_INTENTS and _norm_intent not in BOOK_RECOMMENDATION_INTENTS:
             try:
                 _payload = parse_life_companion_json(provider_response.text)
                 if isinstance(_payload.get("companion_response"), dict):
@@ -798,6 +1047,21 @@ def generate_life_companion_response(
     attempts: list[CompanionProviderAttempt] = []
     expected_intent = _validator_intent_from_classification(classification, user_message, mode)
 
+    if expected_intent == "safety" or emotional_state == "crisis":
+        companion_response = generate_life_companion_crisis_response()
+        latency_ms = int((perf_counter() - started) * 1000)
+        return CompanionGatewayResult(
+            status="safety",
+            companion_response=companion_response,
+            provider="deterministic",
+            final_response_mode="safety",
+            latency_ms=latency_ms,
+            provider_ms=0,
+            validation_ms=0,
+            attempts=[],
+            prompt_build_ms=_prompt_build_ms,
+        )
+
     for provider in provider_order:
         if provider == PROVIDER_GROQ and attempts:
             openai_attempt = attempts[-1]
@@ -821,6 +1085,11 @@ def generate_life_companion_response(
             if session.should_suppress_action(_action_type):
                 companion_response["suggested_action"] = {"type": "none", "label": "", "reason": ""}
                 companion_response["route_locked"] = True
+
+            companion_response = apply_life_topic_response_floor(
+                companion_response,
+                latest_message,
+            )
 
             # ── PIPELINE: Semantic response validation ────────────────────
             _validation = validate_companion_response(
@@ -860,12 +1129,26 @@ def generate_life_companion_response(
                 prompt_build_ms=_prompt_build_ms,
             )
 
-    fallback_response = generate_life_companion_fallback(
-        mode,
-        context,
-        user_message=user_message,
-        knowledge_chunks=knowledge_chunks,
-    )
+    topic_rule = life_topic_override_for_message(latest_message)
+    if expected_intent == "safety" or emotional_state == "crisis":
+        fallback_response = generate_life_companion_crisis_response()
+    elif topic_rule and topic_rule["subject"] in LIFE_TOPIC_FALLBACK_REPLIES:
+        fallback_response = {
+            "reply": LIFE_TOPIC_FALLBACK_REPLIES[topic_rule["subject"]],
+            "reply_format": "conversation",
+            "sections": [],
+            "suggested_action": {"type": "none", "label": "", "route": None},
+            "tone": "grounded",
+            "safety": {"risk_level": "none", "message": None},
+            "intent": expected_intent or "general_question",
+        }
+    else:
+        fallback_response = generate_life_companion_fallback(
+            mode,
+            context,
+            user_message=user_message,
+            knowledge_chunks=knowledge_chunks,
+        )
     if expected_intent:
         fallback_response.setdefault("intent", expected_intent)
     latency_ms = int((perf_counter() - started) * 1000)

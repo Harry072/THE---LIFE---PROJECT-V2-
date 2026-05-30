@@ -332,6 +332,12 @@ supabase.auth.onAuthStateChange((event, session) => {
   if (session) {
     useUserStore.getState().fetchUser();
   } else {
+    const appAccessToken = getStoredAppAccessToken();
+    const appUser = getStoredAppUser();
+    if (appAccessToken && appUser?.id) {
+      useUserStore.getState().fetchUser();
+      return;
+    }
     useUserStore.setState({ ...clearedAuthState, loading: false });
   }
 });

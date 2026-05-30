@@ -23,6 +23,8 @@ except ImportError:  # pragma: no cover - exercised when dependency is not insta
 
 PROVIDER_GROQ = "groq"
 GROQ_OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_FAST_COMPANION_MODEL = "llama-3.1-8b-instant"
+GROQ_QUALITY_COMPANION_MODEL = "llama-3.3-70b-versatile"
 
 REASON_AUTH_FAILED = "authentication_failed"
 REASON_DEPENDENCY_MISSING = "provider_dependency_missing"
@@ -33,6 +35,16 @@ REASON_RATE_LIMITED = "provider_rate_limited"
 REASON_QUOTA = "provider_quota_exceeded"
 REASON_EMPTY_OUTPUT = "empty_provider_response"
 REASON_PROVIDER_EXCEPTION = "provider_exception"
+
+GROQ_MODEL_FALLBACK_REASONS = {
+    REASON_MODEL_UNAVAILABLE,
+    REASON_TIMEOUT,
+    REASON_UNAVAILABLE,
+    REASON_RATE_LIMITED,
+    REASON_QUOTA,
+    REASON_EMPTY_OUTPUT,
+    REASON_PROVIDER_EXCEPTION,
+}
 
 
 class GroqCompanionProviderError(Exception):
@@ -62,9 +74,44 @@ def get_env_value(name: str) -> str | None:
     return value.strip().strip("\"").strip("'") or None
 
 
-def get_groq_companion_config() -> tuple[str, str]:
+def is_8b_model(model: str) -> bool:
+    cleaned = str(model or "").lower()
+    return "8b" in cleaned
+
+
+def unique_model_order(models: list[str]) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for model in models:
+        cleaned = str(model or "").strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        ordered.append(cleaned)
+    return ordered
+
+
+def get_groq_companion_model_order(*, prefer_quality: bool = False) -> list[str]:
+    explicit_order = get_env_value("GROQ_COMPANION_MODEL_ORDER")
+    if explicit_order:
+        return unique_model_order([part.strip() for part in explicit_order.split(",")])
+
+    configured_model = get_env_value("GROQ_COMPANION_MODEL") or GROQ_FAST_COMPANION_MODEL
+    if not prefer_quality:
+        return [configured_model]
+
+    fallback_model = get_env_value("GROQ_COMPANION_FALLBACK_MODEL") or configured_model
+    if not is_8b_model(configured_model):
+        primary_model = get_env_value("GROQ_COMPANION_PRIMARY_MODEL") or configured_model
+    else:
+        primary_model = get_env_value("GROQ_COMPANION_PRIMARY_MODEL") or GROQ_QUALITY_COMPANION_MODEL
+
+    return unique_model_order([primary_model, fallback_model])
+
+
+def get_groq_companion_config(*, prefer_quality: bool = False) -> tuple[str, list[str]]:
     api_key = get_env_value("GROQ_API_KEY")
-    model = get_env_value("GROQ_COMPANION_MODEL") or "llama-3.1-8b-instant"
+    models = get_groq_companion_model_order(prefer_quality=prefer_quality)
     if OpenAI is None:
         raise GroqCompanionProviderError(
             REASON_DEPENDENCY_MISSING,
@@ -75,7 +122,7 @@ def get_groq_companion_config() -> tuple[str, str]:
             REASON_UNAVAILABLE,
             "Groq API key is not configured.",
         )
-    return api_key, model
+    return api_key, models
 
 
 def get_value(item, name: str):
@@ -138,58 +185,113 @@ def classify_groq_error(error: Exception) -> str:
     return REASON_PROVIDER_EXCEPTION
 
 
-def create_groq_chat_completion(client, *, model: str, prompt: str, json_mode: bool):
+def create_groq_chat_completion(client, *, model: str, messages: list[dict], json_mode: bool):
     kwargs = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "max_tokens": 600,
-        "temperature": 0.7,
+        "temperature": 0.9,
     }
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
     return client.chat.completions.create(**kwargs)
 
 
-def _call_groq(prompt: str, timeout_seconds: int) -> str:
-    api_key, model = get_groq_companion_config()
-    client = OpenAI(
-        api_key=api_key,
-        base_url=GROQ_OPENAI_BASE_URL,
-        timeout=timeout_seconds,
-        max_retries=0,
-    )
+def create_completion_for_model(client, *, model: str, messages: list[dict]):
     try:
-        response = create_groq_chat_completion(
+        return create_groq_chat_completion(
             client,
             model=model,
-            prompt=prompt,
+            messages=messages,
             json_mode=True,
         )
     except TypeError:
-        response = create_groq_chat_completion(
+        return create_groq_chat_completion(
             client,
             model=model,
-            prompt=prompt,
+            messages=messages,
             json_mode=False,
         )
     except Exception as error:
         if BadRequestError is not None and isinstance(error, BadRequestError):
-            response = create_groq_chat_completion(
+            return create_groq_chat_completion(
                 client,
                 model=model,
-                prompt=prompt,
+                messages=messages,
                 json_mode=False,
             )
-        else:
+        raise
+
+
+def _call_groq_messages(
+    messages: list[dict],
+    timeout_seconds: int,
+    *,
+    prefer_quality: bool = False,
+    fallback_timeout_seconds: int = 8,
+) -> str:
+    api_key, model_order = get_groq_companion_config(prefer_quality=prefer_quality)
+
+    last_error: Exception | None = None
+    for index, model in enumerate(model_order):
+        # Use shorter timeout for fallback (8B) models to stay under Render's 30s limit
+        is_fallback_model = index > 0 or is_8b_model(model)
+        effective_timeout = fallback_timeout_seconds if is_fallback_model else timeout_seconds
+        client = OpenAI(
+            api_key=api_key,
+            base_url=GROQ_OPENAI_BASE_URL,
+            timeout=effective_timeout,
+            max_retries=0,
+        )
+        call_started = perf_counter()
+        try:
+            response = create_completion_for_model(
+                client,
+                model=model,
+                messages=messages,
+            )
+            text = extract_groq_output_text(response)
+            if not text:
+                raise GroqCompanionProviderError(
+                    REASON_EMPTY_OUTPUT,
+                    "Groq returned an empty response.",
+                )
+            latency_ms = int((perf_counter() - call_started) * 1000)
+            print(f"COMPANION_RESPONSE model={model} latency_ms={latency_ms}")
+            return text
+        except GroqCompanionProviderError as error:
+            last_error = error
+            should_fallback = (
+                index < len(model_order) - 1
+                and error.reason in GROQ_MODEL_FALLBACK_REASONS
+            )
+            if should_fallback:
+                print(f"COMPANION_70B_FAILED reason={error.reason} falling_back_to_8b")
+                continue
+            raise
+        except Exception as error:
+            last_error = error
+            reason = classify_groq_error(error)
+            should_fallback = (
+                index < len(model_order) - 1
+                and reason in GROQ_MODEL_FALLBACK_REASONS
+            )
+            if should_fallback:
+                print(f"COMPANION_70B_FAILED reason={reason} falling_back_to_8b")
+                continue
             raise
 
-    text = extract_groq_output_text(response)
-    if not text:
-        raise GroqCompanionProviderError(
-            REASON_EMPTY_OUTPUT,
-            "Groq returned an empty response.",
-        )
-    return text
+    if last_error:
+        raise last_error
+    raise GroqCompanionProviderError(REASON_UNAVAILABLE)
+
+
+def _call_groq(prompt: str, timeout_seconds: int) -> str:
+    return _call_groq_messages(
+        [{"role": "user", "content": prompt}],
+        timeout_seconds,
+        prefer_quality=False,
+    )
 
 
 def call_groq_with_timeout(
@@ -238,4 +340,20 @@ def generate_life_companion_with_groq(
         lambda: _call_groq(prompt, timeout_seconds),
         prompt_version=prompt_version,
         timeout_seconds=timeout_seconds,
+    )
+
+
+def generate_life_companion_with_groq_messages(
+    messages: list[dict],
+    prompt_version: str,
+    timeout_seconds: int = 15,
+) -> GroqCompanionProviderResponse:
+    return call_groq_with_timeout(
+        lambda: _call_groq_messages(
+            messages,
+            timeout_seconds,
+            prefer_quality=True,
+        ),
+        prompt_version=prompt_version,
+        timeout_seconds=(timeout_seconds * 2) + 2,
     )

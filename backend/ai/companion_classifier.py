@@ -81,6 +81,10 @@ _RAW_INTENT_TO_COMPANION_INTENT: dict[str, str] = {
     "factual_question":    "practical",
     "conversational":      "casual_chat",
     "app_help":            "practical",
+    "emotional_support":   "emotional_support",
+    "motivation":          "life_planning",
+    "advice":              "practical",
+    "life_planning":       "life_planning",
 }
 
 _COMPANION_INTENT_TO_NEEDS: dict[str, str] = {

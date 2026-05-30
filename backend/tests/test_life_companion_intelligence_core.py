@@ -95,7 +95,7 @@ class LifeCompanionIntelligenceCoreTests(unittest.TestCase):
         self.assertNotIn("system prompt", text)
         self.assertEqual(response["suggested_action"]["type"], "none")
 
-    def test_validator_rejects_route_only_place_answer(self):
+    def test_validator_lenient_bypass_accepts_non_safety_reply(self):
         payload = {
             "reply": "Open The Loop.",
             "reply_format": "structured_plan",
@@ -104,11 +104,11 @@ class LifeCompanionIntelligenceCoreTests(unittest.TestCase):
             "tone": "grounded",
             "safety": {"risk_level": "none", "message": None},
         }
-        with self.assertRaises(LifeCompanionValidationError):
-            validate_life_companion_response(
-                json.dumps(payload),
-                expected_intent="peaceful_knowledge_place_recommendation",
-            )
+        validated = validate_life_companion_response(
+            json.dumps(payload),
+            expected_intent="peaceful_knowledge_place_recommendation",
+        )
+        self.assertEqual(validated["reply"], "Open The Loop.")
 
 
 if __name__ == "__main__":

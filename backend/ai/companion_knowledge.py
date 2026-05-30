@@ -40,6 +40,13 @@ INTENT_RAG_TAGS = {
         "emotional_support", "validation", "empathy",
         "breakup", "grief", "loneliness",
     ],
+    "emotional_support": [
+        "emotional_support", "validation", "empathy",
+        "anxiety", "loneliness", "grounding", "inner_weather",
+    ],
+    "motivation": ["motivation", "discipline", "habits", "routine", "practical", "focus"],
+    "advice": ["practical", "habits", "routine", "mindset", "motivation"],
+    "life_planning": ["purpose", "meaning", "direction", "values", "identity"],
     "solve_directly": [],  # no tag restriction
 }
 
@@ -890,6 +897,18 @@ SUBJECT_TO_INTENT: dict[str, str] = {
     "procrastination": "task_help",
     "stress": "anxiety_grounding",
     "sleep": "routine_plan",
+    # Behavioral and emotional growth subjects
+    "scrolling": "emotional_talk",
+    "screen_time": "emotional_talk",
+    "phone_addiction": "emotional_talk",
+    "toughness": "life_clarity",
+    "productivity": "task_help",
+    "self_esteem": "emotional_talk",
+    "overthinking": "emotional_talk",
+    "loneliness": "emotional_talk",
+    "habits": "routine_plan",
+    "anger": "emotional_talk",
+    "forgiveness": "emotional_talk",
 }
 
 

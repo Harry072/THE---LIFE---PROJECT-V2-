@@ -119,6 +119,31 @@ _PEACE_MEDITATION = [
     "quiet", "serene", "tranquil",
 ]
 
+_LIFE_TOPIC_REQUEST_ROUTES = [
+    (["scrolling", "screen time", "phone addiction"], "emotional_support"),
+    (["mental toughness", "discipline", "willpower"], "motivation"),
+    (["procrastination", "procrastinating", "procrastinate", "laziness", "productivity"], "motivation"),
+    (["wealth", "money mindset", "financial"], "advice"),
+    (["psychology", "mindset", "self improvement"], "advice"),
+    (["purpose", "meaning", "direction"], "life_planning"),
+    (["confidence", "self esteem", "self worth"], "emotional_support"),
+    (["habits", "routine", "morning routine"], "advice"),
+    (["overthinking", "worry", "rumination"], "emotional_support"),
+    (["loneliness", "isolation", "connection"], "emotional_support"),
+]
+
+_LIFE_TOPIC_SUBJECTS = {
+    "scrolling": ["scrolling", "screen time", "phone addiction"],
+    "discipline": ["mental toughness", "discipline", "willpower"],
+    "procrastination": ["procrastination", "procrastinating", "procrastinate", "laziness", "productivity"],
+    "wealth": ["wealth", "money mindset", "financial"],
+    "mindset": ["psychology", "mindset", "self improvement"],
+    "confidence": ["confidence", "self esteem", "self worth"],
+    "habits": ["habits", "routine", "morning routine"],
+    "overthinking": ["overthinking", "worry", "rumination"],
+    "loneliness": ["loneliness", "isolation", "connection"],
+}
+
 # ── Country/location constraints ──────────────────────────────────────────────
 
 _COUNTRIES = {
@@ -135,6 +160,8 @@ _COUNTRIES = {
 _DIRECT_ANSWER_SUBJECTS = {
     "places", "fitness", "books", "empathy", "career",
     "purpose", "study", "spiritual", "relationship",
+    "scrolling", "discipline", "mindset", "procrastination",
+    "wealth", "confidence", "habits", "overthinking", "loneliness",
 }
 
 # ── Safety and injection patterns ────────────────────────────────────────────
@@ -193,6 +220,9 @@ def _request_type(text: str) -> str:
         text, _ROUTINE + _STUDY + _FITNESS + ["plan", "schedule", "structure", "timetable", "routine"]
     ):
         return "plan"
+    for phrases, route in _LIFE_TOPIC_REQUEST_ROUTES:
+        if _any(text, phrases):
+            return route
     # Recommendation: explicit suggestion verb (before emotional check)
     if _any(text, _SUGGESTION_VERBS):
         return "recommendation"
@@ -214,6 +244,9 @@ def _subject(text: str, request_type: str) -> str:
     # App usage takes priority
     if _any(text, _APP):
         return "app_usage"
+    for subject, phrases in _LIFE_TOPIC_SUBJECTS.items():
+        if _any(text, phrases):
+            return subject
     # Anxiety without spatial context → pure anxiety subject
     if _any(text, _ANXIETY) and not _any(text, _PLACES) and not (
         _any(text, _PEACE_MEDITATION) and _any(text, ["go", "visit", "where", "location", "spot", "somewhere"])
@@ -279,6 +312,8 @@ def _style(request_type: str, subject: str) -> str:
         return "direct_list"
     if request_type == "plan":
         return "structured_plan"
+    if request_type in {"motivation", "advice", "life_planning"}:
+        return "structured_plan"
     if request_type == "explanation":
         if subject in {"fitness", "empathy", "career", "study"}:
             return "step_by_step"
@@ -299,6 +334,8 @@ def _route(request_type: str, subject: str) -> str:
         return "hybrid"
     if request_type == "correction":
         return "hybrid"
+    if request_type in {"motivation", "advice", "life_planning"}:
+        return "direct_answer"
     if subject in _DIRECT_ANSWER_SUBJECTS:
         return "direct_answer"
     if request_type in {"recommendation", "list", "explanation", "factual_question", "plan"}:
@@ -327,6 +364,15 @@ def _goal(request_type: str, subject: str, constraints: list[str]) -> str:
         "spirituality": "explore a spiritual or philosophical question",
         "anxiety": "feel calmer or less overwhelmed",
         "app_usage": "get help with a Life Project feature",
+        "scrolling": "break digital addiction and regain awareness",
+        "discipline": "build discipline, willpower, or mental toughness",
+        "mindset": "understand personal psychology and mindset patterns",
+        "procrastination": "move through resistance and take action",
+        "wealth": "build financial discipline and money mindset",
+        "confidence": "rebuild confidence and self-worth",
+        "habits": "shape habits and routine for growth",
+        "overthinking": "reduce overthinking and regain perspective",
+        "loneliness": "understand loneliness and move toward connection",
     }
     if subject in goals:
         base = goals[subject]
@@ -347,7 +393,8 @@ def understand_companion_message(message: str, mode: str | None = None) -> dict:
     Fields
     ------
     request_type  : recommendation | list | explanation | plan |
-                    emotional_support | factual_question | app_help |
+                    emotional_support | motivation | advice |
+                    life_planning | factual_question | app_help |
                     correction | safety | general
     subject       : places | fitness | study | routine | empathy | books |
                     anxiety | career | purpose | relationship | app_usage |
