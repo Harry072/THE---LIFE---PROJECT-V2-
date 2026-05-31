@@ -1,6 +1,8 @@
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass, field
 import os
+import time
 from time import perf_counter
 
 from ai.companion_classifier import map_from_classification
@@ -12,6 +14,11 @@ from ai.fallbacks import generate_life_companion_crisis_response, generate_life_
 from ai.memory_formatter import format_memory_for_prompt
 from ai.pdf_knowledge import get_relevant_knowledge
 from ai.prompts import build_life_companion_prompt
+from ai.gemini_companion_gateway import (
+    GeminiCompanionProviderError,
+    GEMINI_FALLBACK_REASONS as _GEMINI_FALLBACK_REASONS,
+    generate_life_companion_with_gemini,
+)
 from ai.groq_companion_gateway import (
     GroqCompanionProviderError,
     generate_life_companion_with_groq,
@@ -45,9 +52,43 @@ except ImportError:  # pragma: no cover - exercised when dependency is not insta
     APITimeoutError = APIConnectionError = APIStatusError = None
 
 
+PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENAI = "openai"
 PROVIDER_GROQ = "groq"
 PROVIDER_FALLBACK = "fallback"
+
+# ── Per-user rate limiter (in-memory, resets on server restart) ────────────
+_user_requests: dict[str, list[float]] = defaultdict(list)
+
+def check_rate_limit(user_id: str, max_per_minute: int = 10) -> bool:
+    now = time.time()
+    _user_requests[user_id] = [t for t in _user_requests[user_id] if now - t < 60]
+    if len(_user_requests[user_id]) >= max_per_minute:
+        print(f"COMPANION_RATE_LIMITED user_id={user_id} count={len(_user_requests[user_id])}")
+        return False
+    _user_requests[user_id].append(now)
+    return True
+
+
+# ── Input sanitization ─────────────────────────────────────────────────────
+_INJECTION_PHRASES = {
+    "ignore previous instructions",
+    "ignore your system prompt",
+    "you are now",
+    "new instructions:",
+    "disregard your",
+    "forget your instructions",
+    "override your",
+    "act as if",
+}
+
+def sanitize_user_message(message: str) -> str:
+    truncated = message[:2000]
+    msg_lower = truncated.lower()
+    for phrase in _INJECTION_PHRASES:
+        if phrase in msg_lower:
+            print(f"COMPANION_INJECTION_ATTEMPT phrase='{phrase}' msg_len={len(message)}")
+    return truncated
 
 REASON_AUTH_FAILED = "authentication_failed"
 REASON_DEPENDENCY_MISSING = "provider_dependency_missing"
@@ -600,7 +641,8 @@ def get_env_value(name: str) -> str | None:
 
 
 def get_companion_provider_order() -> list[str]:
-    return [PROVIDER_OPENAI, PROVIDER_GROQ]
+    # Gemini Flash primary → Groq 70B/8B fallback → static fallback
+    return [PROVIDER_GEMINI, PROVIDER_GROQ]
 
 
 def get_env_bool(name: str, default: bool = False) -> bool:
@@ -825,7 +867,21 @@ def attempt_provider(
 ) -> tuple[dict | None, CompanionProviderAttempt]:
     attempt = CompanionProviderAttempt(provider=provider)
     try:
-        if provider == PROVIDER_OPENAI:
+        if provider == PROVIDER_GEMINI:
+            log_companion_provider_call(provider=provider, timeout_seconds=20)
+            try:
+                provider_response = generate_life_companion_with_gemini(
+                    prompt_parts,
+                    prompt_version=prompt_version,
+                    classified_intent=expected_intent,
+                    timeout_seconds=20,
+                )
+            except GeminiCompanionProviderError as error:
+                raise CompanionProviderError(
+                    error.reason,
+                    latency_ms=error.latency_ms,
+                ) from error
+        elif provider == PROVIDER_OPENAI:
             log_companion_provider_call(provider=provider, timeout_seconds=10)
             provider_response = generate_life_companion_with_openai(
                 prompt_parts,
@@ -968,6 +1024,27 @@ def generate_life_companion_response(
 ) -> CompanionGatewayResult:
     started = perf_counter()
 
+    # ── Input sanitization ─────────────────────────────────────────────────
+    user_message = sanitize_user_message(str(user_message or ""))
+
+    # ── Per-user rate limiting ─────────────────────────────────────────────
+    _uid = (context or {}).get("user_id", "anonymous")
+    if not check_rate_limit(_uid):
+        rate_reply = {
+            "reply": "You are sending messages very fast. Take a breath and try again in a moment.",
+            "intent": "rate_limited",
+            "tone": "grounded",
+            "suggested_action": {"type": "none", "label": "", "route": None},
+            "safety": {"risk_level": "none", "message": None},
+        }
+        return CompanionGatewayResult(
+            status="rate_limited",
+            companion_response=rate_reply,
+            provider="rate_limiter",
+            final_response_mode="rate_limited",
+            latency_ms=0,
+        )
+
     # ── PIPELINE: Two-pass understanding and session state ─────────────────
     latest_message = str(user_message or "").strip()
     user_id = (context or {}).get("user_id", "")
@@ -1064,12 +1141,13 @@ def generate_life_companion_response(
 
     for provider in provider_order:
         if provider == PROVIDER_GROQ and attempts:
-            openai_attempt = attempts[-1]
+            prev = attempts[-1]
             if (
-                openai_attempt.provider == PROVIDER_OPENAI
-                and not should_try_groq_after_openai_attempt(openai_attempt)
+                prev.provider == PROVIDER_OPENAI
+                and not should_try_groq_after_openai_attempt(prev)
             ):
                 break
+            # Always try Groq as fallback after Gemini failure
         companion_response, attempt = attempt_provider(
             provider,
             prompt_parts=provider_prompt_parts,

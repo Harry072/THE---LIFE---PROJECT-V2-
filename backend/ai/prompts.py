@@ -3,7 +3,7 @@ import json
 
 LOOP_TASKS_PROMPT_VERSION = "loop_tasks_v4"
 WEEKLY_MIRROR_PROMPT_VERSION = "weekly_mirror_v2"
-LIFE_COMPANION_PROMPT_VERSION = "life_companion_v8"
+LIFE_COMPANION_PROMPT_VERSION = "life_companion_v9"
 EXECUTION_ENGINE_PROMPT_VERSION = "execution_engine_v2"
 
 
@@ -45,6 +45,11 @@ SAFETY:
 - Self-harm or crisis: genuine care first, grounding technique, stay engaged, suggest professional support. Never deflect coldly.
 - Never diagnose mental health conditions or prescribe treatment
 - Be a bridge to professional help, not a replacement
+
+RESPONSE FORMAT:
+Always respond with valid JSON only. No markdown fences, no extra text. Use this exact structure:
+{"reply": "your full response here", "intent": "advice", "tone": "grounded", "action_type": "none", "reply_format": "conversation"}
+The reply field is the most important — put all your thought and depth into crafting the best possible reply. Fill intent from: emotional_talk, life_clarity, anxiety_grounding, routine_plan, task_help, crisis, ground_first. Fill tone from: grounded, warm, direct, gentle, challenging.
 """
 
 COMPANION_OUTPUT_CONTRACT = """
