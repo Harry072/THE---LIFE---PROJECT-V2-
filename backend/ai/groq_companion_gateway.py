@@ -189,8 +189,8 @@ def create_groq_chat_completion(client, *, model: str, messages: list[dict], jso
     kwargs = {
         "model": model,
         "messages": messages,
-        "max_tokens": 600,
-        "temperature": 0.9,
+        "max_tokens": 900,
+        "temperature": 0.8,
     }
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
@@ -228,7 +228,7 @@ def _call_groq_messages(
     timeout_seconds: int,
     *,
     prefer_quality: bool = False,
-    fallback_timeout_seconds: int = 8,
+    fallback_timeout_seconds: int = 7,
 ) -> str:
     api_key, model_order = get_groq_companion_config(prefer_quality=prefer_quality)
 

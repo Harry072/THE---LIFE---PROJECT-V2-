@@ -323,32 +323,9 @@ def apply_life_topic_override(classification: dict, latest_message: str) -> dict
 
 
 def apply_life_topic_response_floor(response: dict, latest_message: str) -> dict:
-    rule = life_topic_override_for_message(latest_message)
-    if not rule:
-        return response
-
-    subject = rule["subject"]
-    floor_reply = LIFE_TOPIC_FALLBACK_REPLIES.get(subject)
-    if not floor_reply:
-        return response
-
-    reply = str(response.get("reply") or "").strip()
-    reply_lower = reply.lower()
-    should_replace = (
-        not reply
-        or len(reply) > 360
-        or any(marker in reply_lower for marker in WEAK_COMPANION_REPLY_MARKERS)
-    )
-    if not should_replace:
-        return response
-
-    updated = dict(response)
-    updated["reply"] = floor_reply
-    updated["suggested_action"] = {"type": "none", "label": "", "route": None}
-    updated["tone"] = "serious" if rule["emotional_state"] == "active_pain" else "grounded"
-    updated["safety"] = {"risk_level": "none", "message": None}
-    updated.setdefault("reply_format", "conversation")
-    return updated
+    # Canned aphorism injection removed — AI replies are never replaced with
+    # pre-written snippets. Return the response unchanged.
+    return response
 
 
 def _fallback_understanding_classification(latest_message: str) -> dict:
@@ -388,35 +365,11 @@ def run_understanding_pass(
     conversation_history: list,
 ) -> dict:
     """
-    PASS 1 - LLM classification for true meaning understanding.
-    Falls back to keyword detection if the LLM call fails.
+    Keyword-based classification only — no separate AI round-trip.
+    The main generation call already returns intent/tone in its JSON response,
+    so a pre-pass AI call adds latency without proportional quality gain.
+    Crisis detection is covered by merge_with_safety_net keyword checks.
     """
-    from ai.prompts import UNDERSTANDING_PROMPT
-
-    recent = (conversation_history or [])[-6:]
-    history_text = "\n".join(
-        f"{t.get('role', 'user')}: {t.get('content', '')}"
-        for t in recent
-        if isinstance(t, dict)
-    )
-    prompt = (
-        f"{UNDERSTANDING_PROMPT}\n\n"
-        f"[RECENT CONVERSATION]\n{history_text}\n\n"
-        f"[LATEST MESSAGE TO CLASSIFY]\n{latest_message}"
-    )
-
-    try:
-        provider_response = generate_life_companion_with_groq(
-            prompt,
-            prompt_version="life_companion_understanding_v1",
-            timeout_seconds=6,
-        )
-        classification = parse_life_companion_json(provider_response.text)
-        if classification and "emotional_state" in classification and "intent" in classification:
-            return apply_life_topic_override(classification, latest_message)
-    except Exception:
-        pass
-
     return apply_life_topic_override(
         _fallback_understanding_classification(latest_message),
         latest_message,
@@ -743,7 +696,7 @@ def _prompt_parts_to_messages(prompt_parts: dict) -> list[dict]:
     ctx = prompt_parts.get("context", "")
     if ctx:
         messages.append({"role": "system", "content": ctx})
-    for turn in (prompt_parts.get("history") or [])[-10:]:
+    for turn in (prompt_parts.get("history") or [])[-8:]:
         if not isinstance(turn, dict):
             continue
         role = str(turn.get("role") or "").strip().lower()
@@ -868,13 +821,13 @@ def attempt_provider(
     attempt = CompanionProviderAttempt(provider=provider)
     try:
         if provider == PROVIDER_GEMINI:
-            log_companion_provider_call(provider=provider, timeout_seconds=20)
+            log_companion_provider_call(provider=provider, timeout_seconds=12)
             try:
                 provider_response = generate_life_companion_with_gemini(
                     prompt_parts,
                     prompt_version=prompt_version,
                     classified_intent=expected_intent,
-                    timeout_seconds=20,
+                    timeout_seconds=12,
                 )
             except GeminiCompanionProviderError as error:
                 raise CompanionProviderError(
@@ -888,12 +841,12 @@ def attempt_provider(
                 prompt_version=prompt_version,
             )
         elif provider == PROVIDER_GROQ:
-            log_companion_provider_call(provider=provider, timeout_seconds=14)
+            log_companion_provider_call(provider=provider, timeout_seconds=10)
             try:
                 provider_response = generate_life_companion_with_groq_messages(
                     _prompt_parts_to_messages(prompt_parts),
                     prompt_version=prompt_version,
-                    timeout_seconds=14,
+                    timeout_seconds=10,
                 )
             except GroqCompanionProviderError as error:
                 raise CompanionProviderError(
@@ -1207,19 +1160,8 @@ def generate_life_companion_response(
                 prompt_build_ms=_prompt_build_ms,
             )
 
-    topic_rule = life_topic_override_for_message(latest_message)
     if expected_intent == "safety" or emotional_state == "crisis":
         fallback_response = generate_life_companion_crisis_response()
-    elif topic_rule and topic_rule["subject"] in LIFE_TOPIC_FALLBACK_REPLIES:
-        fallback_response = {
-            "reply": LIFE_TOPIC_FALLBACK_REPLIES[topic_rule["subject"]],
-            "reply_format": "conversation",
-            "sections": [],
-            "suggested_action": {"type": "none", "label": "", "route": None},
-            "tone": "grounded",
-            "safety": {"risk_level": "none", "message": None},
-            "intent": expected_intent or "general_question",
-        }
     else:
         fallback_response = generate_life_companion_fallback(
             mode,
