@@ -22,6 +22,7 @@ from ai.context import (
     build_life_companion_context,
     build_weekly_mirror_context,
     normalize_category,
+    table_select_optional,
 )
 from ai.task_intelligence import (
     build_task_intelligence_context,
