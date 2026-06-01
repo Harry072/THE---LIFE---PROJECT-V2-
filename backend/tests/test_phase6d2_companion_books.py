@@ -299,12 +299,8 @@ class Phase6D2CompanionBookTests(unittest.TestCase):
         with (
             patch("builtins.print"),
             patch(
-                "ai.companion_gateway.generate_life_companion_with_openai",
+                "ai.companion_gateway.generate_life_companion_with_groq_messages",
                 return_value=provider,
-            ),
-            patch(
-                "ai.companion_gateway.generate_life_companion_with_groq",
-                side_effect=gateway.CompanionProviderError(gateway.REASON_UNAVAILABLE, latency_ms=0),
             ),
         ):
             result = gateway.generate_life_companion_response(

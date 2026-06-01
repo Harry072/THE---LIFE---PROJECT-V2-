@@ -135,8 +135,8 @@ def _call_gemini_companion(
         model_name=model_name,
         system_instruction=system_prompt,
         generation_config=genai.GenerationConfig(  # type: ignore[union-attr]
-            temperature=0.8,
-            max_output_tokens=900,
+            temperature=0.7,
+            max_output_tokens=600,
         ),
     )
     response = model.generate_content(content)

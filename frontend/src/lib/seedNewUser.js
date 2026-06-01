@@ -3,7 +3,9 @@ import { supabase } from "./supabase";
 const DEFAULT_TASKS = [
   { title: "Morning Journaling",   category: "awareness" },
   { title: "Workout & Movement",   category: "action" },
-  { title: "Night Reflection",     category: "meaning" },
+  { title: "Night Reflection",     category: "reflection" },
+  { title: "Five Slow Breaths",    category: "reset" },
+  { title: "One Useful Act",       category: "growth" },
 ];
 
 export async function seedNewUser(userId) {

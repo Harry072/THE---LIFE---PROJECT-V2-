@@ -6,13 +6,16 @@ const CAT_COLORS = {
   focus: "#4DA8FF", discipline: "#FF9A4D",
   "emotional-reset": "#C084FC", reflection: "#7FD99A",
   health: "#FF6B6B", sleep: "#6B8AFF",
-  meaning: "#FFD93D", awareness: "#4ECDC4",
-  action: "#FF8C42", connection: "#FF69B4",
+  meaning: "#FFD93D", growth: "#FFD93D", awareness: "#4ECDC4",
+  action: "#FF8C42", reset: "#C084FC", connection: "#FF69B4",
 };
 
 const WHY_CHOSEN_FALLBACKS = {
   awareness: "This practice helps you notice the inner loop before it controls the day.",
   action: "This practice turns mental noise into one useful movement.",
+  reflection: "This practice helps you name one honest signal without judgment.",
+  reset: "This practice lowers friction before the next step.",
+  growth: "This practice connects the day to something larger than distraction.",
   meaning: "This practice connects the day to something larger than distraction.",
 };
 

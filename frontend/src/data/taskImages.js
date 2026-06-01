@@ -6,8 +6,11 @@ export const TASK_IMAGES = {
   health:          "/media/loop/forest-stretch.jpg",
   sleep:           "/media/loop/moonlit-path.jpg",
   meaning:         "/media/loop/sunrise-valley.jpg",
+  growth:          "/media/loop/sunrise-valley.jpg",
   awareness:       "/media/loop/rain-leaves.jpg",
   action:          "/media/loop/forest-trail.jpg",
+  reflection:      "/media/loop/lantern-dock.jpg",
+  reset:           "/media/loop/rain-window.jpg",
   connection:      "/media/loop/campfire.jpg",
   reading:         "/media/loop/books-candle.jpg",
 };

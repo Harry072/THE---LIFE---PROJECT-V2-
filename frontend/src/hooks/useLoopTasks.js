@@ -4,6 +4,7 @@ import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const CORE_LOOP_CATEGORIES = ["awareness", "action", "reflection", "reset", "growth"];
 const AUTO_GENERATION_ERROR =
   "We couldn't prepare today's plan yet. Open The Loop to try again.";
 const AI_RETRYABLE_ERROR =
@@ -79,10 +80,22 @@ const sortTasks = (rows) => [...rows].sort((a, b) => {
   return String(a.id ?? "").localeCompare(String(b.id ?? ""));
 });
 
+const normalizeLoopCategory = (value, row = {}) => {
+  const subtitle = String(row?.subtitle || "").toLowerCase().replace(/_/g, "-");
+  if (subtitle.includes("reflection") || subtitle.includes("journal")) return "reflection";
+  if (subtitle.includes("reset") || subtitle.includes("breath") || subtitle.includes("ground")) return "reset";
+  if (subtitle.includes("growth") || subtitle.includes("meaning") || subtitle.includes("purpose")) return "growth";
+  const category = String(value || "").toLowerCase().replace(/_/g, "-");
+  if (category === "meaning") return "growth";
+  if (category === "emotional-reset") return "reset";
+  return category;
+};
+
 const isCoreLoopTask = (task = {}) => {
-  const category = String(task?.category || "").toLowerCase();
+  const category = normalizeLoopCategory(task?.category, task);
   const isOptional = [true, "true", "True", "1", 1].includes(task?.is_optional);
-  return ["awareness", "action", "meaning"].includes(category) && !isOptional;
+  const isCompatCore = isOptional && String(task?.subtitle || "").toLowerCase().includes("practice");
+  return CORE_LOOP_CATEGORIES.includes(category) && (!isOptional || isCompatCore);
 };
 
 const sentenceBeforeAction = (value = "") => (
@@ -100,6 +113,7 @@ const normalizeTask = (row = {}) => {
 
   return {
     ...row,
+    category: normalizeLoopCategory(row.category, row),
     completed_at: completedAt,
     done: Boolean(completedAt),
     why: row.why ?? row.why_this_helps ?? "",
@@ -250,11 +264,17 @@ export function useLoopTasks() {
       }
 
       setRetryWithSafeFallback(false);
-      const nextTasks = await fetchTasks();
-      await Promise.allSettled([
+      const responseTasks = sortTasks(
+        (responsePayload?.data ?? []).map(normalizeTask).filter(isCoreLoopTask)
+      );
+      if (responseTasks.length > 0) {
+        setTasks(responseTasks);
+      }
+      const nextTasks = responseTasks.length > 0 ? responseTasks : await fetchTasks();
+      Promise.allSettled([
         loadTasks?.(),
         loadStats?.(),
-      ]);
+      ]).catch(() => {});
       return nextTasks;
     } catch (err) {
       console.error("Error generating tasks:", err);

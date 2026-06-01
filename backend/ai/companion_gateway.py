@@ -14,11 +14,6 @@ from ai.fallbacks import generate_life_companion_crisis_response, generate_life_
 from ai.memory_formatter import format_memory_for_prompt
 from ai.pdf_knowledge import get_relevant_knowledge
 from ai.prompts import build_life_companion_prompt
-from ai.gemini_companion_gateway import (
-    GeminiCompanionProviderError,
-    GEMINI_FALLBACK_REASONS as _GEMINI_FALLBACK_REASONS,
-    generate_life_companion_with_gemini,
-)
 from ai.groq_companion_gateway import (
     GroqCompanionProviderError,
     generate_life_companion_with_groq,
@@ -274,6 +269,9 @@ LIFE_TOPIC_FALLBACK_REPLIES = {
 WEAK_COMPANION_REPLY_MARKERS = (
     "it can be tough",
     "it can be really tough",
+    "can be tough to",
+    "procrastination can be tough",
+    "procrastination can be a tough",
     "it's great that",
     "it takes courage",
     "it takes a lot of courage",
@@ -281,6 +279,9 @@ WEAK_COMPANION_REPLY_MARKERS = (
     "one valuable psychology tip",
     "building mental toughness is about",
     "procrastination can be a tough habit",
+    "break it down into smaller",
+    "manageable tasks",
+    "get you moving again",
 )
 
 
@@ -323,8 +324,32 @@ def apply_life_topic_override(classification: dict, latest_message: str) -> dict
 
 
 def apply_life_topic_response_floor(response: dict, latest_message: str) -> dict:
-    # Canned aphorism injection removed — AI replies are never replaced with
-    # pre-written snippets. Return the response unchanged.
+    reply = str((response or {}).get("reply") or "").strip()
+    reply_lower = reply.lower()
+    if not reply:
+        return response
+
+    rule = life_topic_override_for_message(latest_message)
+    if not rule:
+        return response
+
+    subject = rule.get("subject")
+    weak_reply = any(marker in reply_lower for marker in WEAK_COMPANION_REPLY_MARKERS)
+    procrastination_needs_floor = (
+        subject == "procrastination"
+        and ("?" in reply or len(reply) < 180)
+    )
+    if not weak_reply and not procrastination_needs_floor:
+        return response
+
+    fallback_reply = LIFE_TOPIC_FALLBACK_REPLIES.get(subject)
+    if not fallback_reply:
+        return response
+
+    response = dict(response)
+    response["reply"] = fallback_reply
+    response["suggested_action"] = {"type": "none", "label": "", "route": None}
+    response["tone"] = "grounded"
     return response
 
 
@@ -594,8 +619,8 @@ def get_env_value(name: str) -> str | None:
 
 
 def get_companion_provider_order() -> list[str]:
-    # Gemini Flash primary → Groq 70B/8B fallback → static fallback
-    return [PROVIDER_GEMINI, PROVIDER_GROQ]
+    # Life Companion uses Groq only. Other app features can still use Gemini.
+    return [PROVIDER_GROQ]
 
 
 def get_env_bool(name: str, default: bool = False) -> bool:
@@ -821,6 +846,11 @@ def attempt_provider(
     attempt = CompanionProviderAttempt(provider=provider)
     try:
         if provider == PROVIDER_GEMINI:
+            from ai.gemini_companion_gateway import (
+                GeminiCompanionProviderError,
+                generate_life_companion_with_gemini,
+            )
+
             log_companion_provider_call(provider=provider, timeout_seconds=12)
             try:
                 provider_response = generate_life_companion_with_gemini(
@@ -1065,6 +1095,7 @@ def generate_life_companion_response(
         user_intent=user_intent,
         formatted_memory=_formatted_memory,
         intent_knowledge=_intent_knowledge,
+        safe_memory_summary=(context or {}).get("safe_memory_summary") or {},
     )
     provider_prompt_parts = {
         **prompt_parts,

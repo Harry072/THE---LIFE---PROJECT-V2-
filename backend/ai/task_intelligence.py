@@ -134,7 +134,7 @@ def _fetch_recent_tasks(supabase, user_id: str, days: int = 14) -> list[dict]:
             .eq("is_optional", False)
             .gte("for_date", since)
             .order("for_date", desc=True)
-            .limit(60)
+            .limit(70)
             .execute()
         ).data or []
         return rows
@@ -148,7 +148,7 @@ def _fetch_recent_tasks(supabase, user_id: str, days: int = 14) -> list[dict]:
                 .eq("is_optional", False)
                 .gte("for_date", since)
                 .order("for_date", desc=True)
-                .limit(60)
+                .limit(70)
                 .execute()
             ).data or []
             return rows
@@ -230,13 +230,19 @@ def build_task_intelligence_context(
     last_3_angles       = [v for v in all_angles[:9] if v][:3]
     last_3_frameworks   = [v for v in all_frameworks[:9] if v][:3]
 
-    # Avoidance: which inner layer is skipped most?
+    # Avoidance: which category and inner layer are skipped most?
     skipped_tasks = [t for t in recent_tasks if t.get("skipped") or t.get("completion_state") == "skipped"]
+    skip_category_counts = Counter(
+        str(t.get("category") or "").lower()
+        for t in skipped_tasks
+        if t.get("category")
+    )
     skip_layer_counts = Counter(
         t.get("inner_work_layer")
         for t in skipped_tasks
         if t.get("inner_work_layer") and t.get("inner_work_layer") != "none"
     )
+    avoided_category = skip_category_counts.most_common(1)[0][0] if skip_category_counts else None
     avoided_layer = skip_layer_counts.most_common(1)[0][0] if skip_layer_counts else None
 
     # ── Performance signals ───────────────────────────────────────────────────
@@ -256,6 +262,7 @@ def build_task_intelligence_context(
         "last_3_inner_layers":      last_3_inner_layers,
         "last_3_angles":            last_3_angles,
         "last_3_frameworks":        last_3_frameworks,
+        "avoided_category":         avoided_category,
         "avoided_layer":            avoided_layer,
         "recent_task_names":        all_titles[:7],        # last 7 titles for dedup
         # Pass through for downstream use
@@ -282,6 +289,7 @@ def build_intelligence_context_block(intel: dict) -> str:
     last_angles_str  = ", ".join(intel.get("last_3_angles") or []) or "none"
     task_names       = intel.get("recent_task_names") or []
     task_names_str   = "\n".join(f"  • {name}" for name in task_names[:7]) or "  (no history yet)"
+    avoided_category = intel.get("avoided_category") or "none detected"
     avoided          = intel.get("avoided_layer") or "none detected"
     phase_str        = intel.get("journey_phase") or "foundation"
     days_str         = str(intel.get("days_active") or 0)
@@ -309,7 +317,8 @@ DO NOT REPEAT:
 {task_names_str}
 
 AVOIDANCE SIGNAL:
-The user has been skipping tasks touching: {avoided}
+The user has been skipping category: {avoided_category}
+The user has been skipping inner layer: {avoided}
 This is the territory they most need. Do NOT abandon it.
 Approach it from a DIFFERENT angle than before — if direct didn't work,
 go oblique or embodied. Find the door that is open.
@@ -321,16 +330,14 @@ REASONING STEP — Required before generating any task
 Silently reason through these before producing the JSON.
 Do NOT include this reasoning in the output.
 
-1. WHO is this user today, given their phase ({phase_str}) and focus areas ({focus_str})?
-2. WHICH inner force needs gentle attention right now — especially any being avoided ({avoided})?
-3. WHAT did they do recently, so I generate something genuinely NEW
+1. Who is this person today, given their phase ({phase_str}) and focus areas ({focus_str})?
+2. Where are they in their journey?
+3. What inner force needs attention — especially any being avoided ({avoided})?
+4. What did they do recently, so I avoid repetition
    (different category from {last_cats_str}, different inner layer from {last_layers_str},
    different angle from {last_angles_str})?
-4. WHAT single task would create meaningful friction — not so easy it is ignored,
+5. What single action creates the most meaningful friction — not so easy it is ignored,
    not so hard it is refused?
-5. HOW should this task enter the inner territory — direct, oblique, embodied, or reflective?
-6. Does this task quietly move them toward their Ikigai direction ({quadrant_str})
-   without ever naming philosophy?
 
 Generate tasks FROM this reasoning.
 Never from templates. Never from defaults.

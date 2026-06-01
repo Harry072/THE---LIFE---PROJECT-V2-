@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import google.generativeai as legacy_genai
 from google import genai as google_genai
 from auth import router as auth_router, verify_app_access_token
+from routers.companion import create_companion_router
 
 from ai.context import (
     ALLOWED_LOOP_CATEGORIES,
@@ -353,6 +354,65 @@ def validate_supabase_access_token(authorization: str | None) -> str:
     return str(user_id)
 
 
+def public_loop_category(row: dict) -> str:
+    subtitle = str(row.get("subtitle") or "").strip().lower().replace("_", "-")
+    if subtitle:
+        if "reflection" in subtitle or "journal" in subtitle:
+            return "reflection"
+        if "reset" in subtitle or "breath" in subtitle or "ground" in subtitle:
+            return "reset"
+        if "growth" in subtitle or "meaning" in subtitle or "purpose" in subtitle:
+            return "growth"
+        if "awareness" in subtitle:
+            return "awareness"
+        if "action" in subtitle:
+            return "action"
+    return normalize_category(row.get("category"))
+
+
+def publicize_loop_task_row(row: dict) -> dict:
+    public_row = dict(row)
+    public_row["category"] = public_loop_category(row)
+    return public_row
+
+
+def publicize_loop_task_rows(rows: list[dict]) -> list[dict]:
+    return [publicize_loop_task_row(row) for row in rows]
+
+
+LEGACY_DB_CATEGORY_BY_PUBLIC_CATEGORY = {
+    "awareness": "awareness",
+    "action": "action",
+    "reflection": "awareness",
+    "reset": "action",
+    "growth": "meaning",
+}
+
+
+def to_legacy_category_storage_rows(rows: list[dict]) -> list[dict]:
+    """
+    Compatibility for deployed databases that still constrain category to the
+    old awareness/action/meaning set. The public category stays in subtitle.
+    """
+    converted: list[dict] = []
+    for row in rows:
+        public_category = normalize_category(row.get("category"))
+        legacy_row = dict(row)
+        legacy_row["category"] = LEGACY_DB_CATEGORY_BY_PUBLIC_CATEGORY.get(
+            public_category,
+            "meaning",
+        )
+        # Legacy unique indexes only allow one generated core row per old
+        # category. This keeps all 5 public categories insertable until the DB
+        # category constraint is migrated.
+        legacy_row["ai_generated"] = False
+        legacy_row["is_optional"] = True
+        if not str(legacy_row.get("subtitle") or "").strip():
+            legacy_row["subtitle"] = f"{public_category.title()} Practice"
+        converted.append(legacy_row)
+    return converted
+
+
 def sort_task_rows(rows: list[dict]) -> list[dict]:
     def sort_key(row: dict):
         sort_order = row.get("sort_order")
@@ -375,11 +435,13 @@ def is_completed_task(row: dict) -> bool:
 
 
 def is_core_task(row: dict) -> bool:
-    category = normalize_category(row.get("category"))
+    category = public_loop_category(row)
     is_optional = row.get("is_optional")
+    subtitle = str(row.get("subtitle") or "").lower()
+    is_compat_core = bool(is_optional in {True, "true", "True", "1", 1}) and "practice" in subtitle
     return (
         category in ALLOWED_LOOP_CATEGORIES
-        and is_optional not in {True, "true", "True", "1", 1}
+        and (is_optional not in {True, "true", "True", "1", 1} or is_compat_core)
     )
 
 
@@ -392,13 +454,15 @@ def fetch_today_core_tasks(user_id: str, local_date: str) -> list[dict]:
         .execute()
     )
     return sort_task_rows([
-        row for row in (response.data or [])
+        publicize_loop_task_row(row) for row in (response.data or [])
         if is_core_task(row)
     ])
 
 
 def delete_uncompleted_generated_core_tasks(user_id: str, local_date: str) -> None:
-    for category in CORE_CATEGORY_ORDER:
+    # Include legacy "meaning" rows so regeneration cannot leave a duplicate
+    # old-category task beside the new "growth" task.
+    for category in [*CORE_CATEGORY_ORDER, "meaning"]:
         (
             supabase.table("loop_tasks")
             .delete()
@@ -651,6 +715,15 @@ def clamp_duration_seconds(value: int | None) -> int | None:
 def validate_request_user(token_user_id: str, request_user_id: str | None) -> None:
     if request_user_id and str(request_user_id) != token_user_id:
         raise HTTPException(status_code=403, detail="Session user does not match request user")
+
+
+def validate_companion_chat_user(authorization: str | None, request_user_id: str) -> str:
+    token_user_id = validate_supabase_access_token(authorization)
+    validate_request_user(token_user_id, request_user_id)
+    return token_user_id
+
+
+app.include_router(create_companion_router(validate_user=validate_companion_chat_user))
 
 
 def is_insufficient_weekly_data(context: dict) -> bool:
@@ -1151,6 +1224,15 @@ def is_duplicate_insert_error(error: Exception) -> bool:
     )
 
 
+def is_legacy_category_constraint_error(error: Exception) -> bool:
+    error_code = str(getattr(error, "code", "") or "")
+    error_message = str(error).lower()
+    return error_code == "23514" and (
+        "loop_tasks_category_check" in error_message
+        or ("violates check constraint" in error_message and "category" in error_message)
+    )
+
+
 def is_missing_column_error(error: Exception) -> bool:
     error_code = str(getattr(error, "code", "") or "")
     error_message = str(error).lower()
@@ -1221,19 +1303,26 @@ def insert_repair_rows(
     if not rows_to_insert:
         return "existing", fetch_today_core_tasks(user_id, local_date)
     rows_to_insert = sanitize_loop_task_insert_rows(rows_to_insert)
-    for row in rows_to_insert:
-        try:
-            supabase.table("loop_tasks").insert(row).execute()
-        except Exception as err:
-            if is_duplicate_insert_error(err):
-                print(
-                    "AI_TASK_GENERATION "
-                    f"repair_duplicate_skipped=true "
-                    f"category={normalize_category(row.get('category', ''))} "
-                    f"error_code={getattr(err, 'code', 'n/a') or 'n/a'}"
-                )
-            else:
-                raise
+    try:
+        supabase.table("loop_tasks").insert(rows_to_insert).execute()
+    except Exception as err:
+        if is_legacy_category_constraint_error(err):
+            compat_rows = sanitize_loop_task_insert_rows(
+                to_legacy_category_storage_rows(rows_to_insert)
+            )
+            supabase.table("loop_tasks").insert(compat_rows).execute()
+            print(
+                "AI_TASK_GENERATION "
+                "category_storage_compat=true mode=repair"
+            )
+        elif is_duplicate_insert_error(err):
+            print(
+                "AI_TASK_GENERATION "
+                "repair_duplicate_skipped=true "
+                f"error_code={getattr(err, 'code', 'n/a') or 'n/a'}"
+            )
+        else:
+            raise
     return "repaired", fetch_today_core_tasks(user_id, local_date)
 
 
@@ -1247,8 +1336,18 @@ def insert_task_rows(
     rows_to_insert = sanitize_loop_task_insert_rows(rows)
     try:
         db_response = supabase.table("loop_tasks").insert(rows_to_insert).execute()
-        return "inserted", sort_task_rows(db_response.data or [])
+        return "inserted", sort_task_rows(publicize_loop_task_rows(db_response.data or []))
     except Exception as insert_error:
+        if is_legacy_category_constraint_error(insert_error):
+            compat_rows = sanitize_loop_task_insert_rows(
+                to_legacy_category_storage_rows(rows_to_insert)
+            )
+            db_response = supabase.table("loop_tasks").insert(compat_rows).execute()
+            print(
+                "AI_TASK_GENERATION "
+                f"category_storage_compat=true source={source}"
+            )
+            return "inserted", sort_task_rows(publicize_loop_task_rows(db_response.data or []))
         if is_duplicate_insert_error(insert_error):
             print(
                 "AI_TASK_GENERATION "
@@ -1455,6 +1554,71 @@ async def delete_life_companion_conversation(
             f"error_type={type(error).__name__}"
         )
         raise HTTPException(status_code=500, detail="Failed to delete conversation") from error
+
+
+@app.post("/api/life-companion/session/end")
+async def end_companion_session(
+    request: LifeCompanionRequest,
+    authorization: str | None = Header(default=None),
+):
+    """
+    Called when the user closes the companion chat.
+    Summarizes the session using Groq and returns the structured summary.
+    Updates the conversation title with a human-readable label.
+    """
+    try:
+        from ai.groq_companion_gateway import summarize_companion_session
+        token_user_id = validate_supabase_access_token(authorization)
+
+        conversation_id = request.conversation_id
+        if not conversation_id:
+            return {"status": "skipped", "reason": "no_conversation_id"}
+
+        # Fetch the conversation messages
+        history = fetch_companion_conversation_history(
+            user_id=token_user_id,
+            conversation_id=conversation_id,
+            limit=40,
+        )
+        if not history:
+            return {"status": "skipped", "reason": "empty_session"}
+
+        # Summarize using Groq (low temperature for consistency)
+        summary = summarize_companion_session(history)
+
+        # Update the conversation title with a readable label from the summary
+        topic = summary.get("main_topic") or ""
+        emotion = summary.get("primary_emotion") or ""
+        auto_title = f"{emotion.capitalize()} — {topic}" if emotion and topic else topic or "Session"
+        if len(auto_title) > 60:
+            auto_title = auto_title[:57] + "..."
+
+        try:
+            (
+                supabase.table("companion_conversations")
+                .update({"title": auto_title})
+                .eq("id", conversation_id)
+                .eq("user_id", token_user_id)
+                .execute()
+            )
+        except Exception:
+            pass  # title update is best-effort
+
+        print(
+            f"SESSION_END conv={conversation_id} "
+            f"emotion={summary.get('primary_emotion')} "
+            f"topic={summary.get('main_topic')}"
+        )
+        return {
+            "status": "summarized",
+            "conversation_id": conversation_id,
+            "summary": summary,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(f"SESSION_END error={type(error).__name__}: {error}")
+        return {"status": "error", "reason": str(error)[:120]}
 
 
 @app.post("/api/loop-tasks/{task_id}/feedback")

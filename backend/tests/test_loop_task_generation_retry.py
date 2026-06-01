@@ -23,11 +23,32 @@ def run_async(coro):
 
 
 def task(category: str, title: str) -> dict:
+    kotler_by_category = {
+        "awareness": "Curiosity",
+        "action": "Mastery",
+        "reflection": "Autonomy",
+        "reset": "Autonomy",
+        "growth": "Purpose",
+    }
+    layer_by_category = {
+        "awareness": "distraction",
+        "action": "ego",
+        "reflection": "attachment",
+        "reset": "anger",
+        "growth": "greed",
+    }
+    angle_by_category = {
+        "awareness": "reflective",
+        "action": "embodied",
+        "reflection": "oblique",
+        "reset": "embodied",
+        "growth": "direct",
+    }
     return {
         "category": category,
         "title": title,
         "subtitle": f"{category.title()} Practice",
-        "kotler_tag": "Mastery" if category == "action" else ("Purpose" if category == "meaning" else "Curiosity"),
+        "kotler_tag": kotler_by_category[category],
         "waar_action": "Do the named action once with full attention.",
         "ikigai_purpose": "A clear action gives the mind one visible proof that movement is possible.",
         "why_this_helps": "This practice creates one concrete signal from today's pattern.",
@@ -40,13 +61,19 @@ def task(category: str, title: str) -> dict:
         "smaller_version": "Do the first two minutes only.",
         "post_completion_question": "Was this too easy, right-sized, or too heavy?",
         "framework_key": "morita",
+        "inner_work_layer": layer_by_category[category],
+        "approach_angle": angle_by_category[category],
+        "journey_phase": "foundation",
+        "ikigai_quadrant": "profession",
     }
 
 
 AI_TASKS = [
     task("awareness", "Write 3 Honest Lines"),
     task("action", "Move 1 Visible Step"),
-    task("meaning", "Send 1 Useful Message"),
+    task("reflection", "Name 1 Avoided Feeling"),
+    task("reset", "Take 5 Slow Breaths"),
+    task("growth", "Send 1 Useful Message"),
 ]
 
 
@@ -67,7 +94,7 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
             patch.object(main, "build_loop_tasks_prompt", return_value="safe loop prompt"),
         )
 
-    def test_gemini_success_saves_three_ai_tasks(self):
+    def test_gemini_success_saves_five_ai_tasks(self):
         request = main.TaskRequest(
             user_id=USER_ID,
             local_date=LOCAL_DATE,
@@ -105,7 +132,7 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
 
         self.assertEqual(response["status"], "inserted")
         self.assertEqual(captured["source"], "ai_success")
-        self.assertEqual(len(captured["rows"]), 3)
+        self.assertEqual(len(captured["rows"]), 5)
         self.assertTrue(all(row["ai_generated"] is True for row in captured["rows"]))
         self.assertTrue(all(row["generation_provider"] == "gemini" for row in captured["rows"]))
         self.assertEqual(captured["rows"][0]["kotler_tag"], "Curiosity")
@@ -244,7 +271,9 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         fallback_rows = [
             {"id": "a", "category": "awareness", "ai_generated": False, "generation_provider": "safe_fallback"},
             {"id": "b", "category": "action", "ai_generated": False, "generation_provider": "safe_fallback"},
-            {"id": "c", "category": "meaning", "ai_generated": False, "generation_provider": "safe_fallback"},
+            {"id": "c", "category": "reflection", "ai_generated": False, "generation_provider": "safe_fallback"},
+            {"id": "d", "category": "reset", "ai_generated": False, "generation_provider": "safe_fallback"},
+            {"id": "e", "category": "growth", "ai_generated": False, "generation_provider": "safe_fallback"},
         ]
 
         patches = self._base_patches()
@@ -272,7 +301,7 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         self.assertEqual(kwargs["generation_failure_reason"], "gemini_permission_denied")
         self.assertTrue(kwargs["force_insert_all"])
         self.assertEqual(response["status"], "fallback")
-        self.assertEqual(len(response["data"]), 3)
+        self.assertEqual(len(response["data"]), 5)
         self.assertEqual(response["meta"]["provider"], "safe_fallback")
 
     def test_permission_denied_is_classified_for_key_diagnosis(self):
@@ -301,8 +330,8 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         self.assertEqual(captured["model"], "gemini-2.5-flash")
         self.assertEqual(captured["config"].response_mime_type, "application/json")
         schema = captured["config"].response_schema
-        self.assertEqual(schema["properties"]["tasks"]["minItems"], 3)
-        self.assertEqual(schema["properties"]["tasks"]["maxItems"], 3)
+        self.assertEqual(schema["properties"]["tasks"]["minItems"], 5)
+        self.assertEqual(schema["properties"]["tasks"]["maxItems"], 5)
         task_schema = schema["$defs"]["LoopTaskPayload"]["properties"]
         self.assertIn("kotler_tag", task_schema)
         self.assertIn("waar_action", task_schema)
@@ -312,7 +341,9 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         invalid_tasks = [
             {**task("awareness", "Write 3 Honest Lines"), "kotler_tag": "Discipline"},
             task("action", "Move 1 Visible Step"),
-            task("meaning", "Send 1 Useful Message"),
+            task("reflection", "Name 1 Avoided Feeling"),
+            task("reset", "Take 5 Slow Breaths"),
+            task("growth", "Send 1 Useful Message"),
         ]
 
         with self.assertRaises(TaskValidationError) as raised:

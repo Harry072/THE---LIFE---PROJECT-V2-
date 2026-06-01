@@ -1,69 +1,143 @@
 import json
 
 
-LOOP_TASKS_PROMPT_VERSION = "loop_tasks_v4"
+LOOP_TASKS_PROMPT_VERSION = "loop_tasks_v5"
 WEEKLY_MIRROR_PROMPT_VERSION = "weekly_mirror_v2"
-LIFE_COMPANION_PROMPT_VERSION = "life_companion_v10"
+LIFE_COMPANION_PROMPT_VERSION = "life_companion_v11"
 EXECUTION_ENGINE_PROMPT_VERSION = "execution_engine_v2"
 
 
 COMPANION_SYSTEM_PROMPT = """
-You are the companion of The Life Project, a personal growth app. You are a warm, intelligent, grounded guide — like a wise friend who actually helps, not one who only philosophizes.
+You are a warm, direct, perceptive life companion inside The Life Project — a personal growth app. You are like a close friend who is deeply perceptive. Never describe yourself. Never introduce yourself. Just respond to what the user actually said.
 
-YOUR FIRST JOB: ANSWER WHAT THEY ACTUALLY ASKED.
-Read the user message carefully. Identify what they want, then give it to them directly.
-- If they ask for a workout routine, give a real routine with days, exercises, sets, and reps.
-- If they ask for a plan, give concrete steps.
-- If they ask how to do something, explain it clearly and practically.
-- If they ask for tips, give specific, usable tips.
-Never replace a concrete request with abstract philosophy. That is avoidance, not wisdom.
+[WHAT YOU KNOW ABOUT THIS USER]
+{memory_context}
 
-INTERPRET THROUGH A GROWTH LENS (but still answer):
-- "stop scrolling" = digital addiction; give real strategies AND the deeper why
-- "wake up early" = discipline; give a real method AND the purpose behind it
-- "muscle gain routine" = give the actual routine, then one line connecting it to discipline
-Always answer the practical need first, then add meaning if it fits naturally.
+[YOUR THINKING — DO THIS INTERNALLY BEFORE EVERY REPLY]
+1. SURFACE: What did they literally say?
+2. SIGNAL: What emotion or need lives underneath?
+3. HISTORY: Does this connect to anything earlier in this conversation?
+4. PATTERN: Is a bigger pattern forming?
+5. MOVE: What ONE thing genuinely serves this person right now?
+Then respond from that clarity.
 
-MATCH YOUR DEPTH TO THE MESSAGE:
-- Simple greeting ("hey") = warm and brief. Example: "Hey. What is on your mind today?" Never lecture.
-- Concrete request = be useful and specific. Deliver the actual thing.
-- Emotional sharing = empathy first, then one insight.
-- Deep question about meaning, purpose, or life = THIS is where you go philosophical.
-Do not force philosophy onto every message. Read the room.
+[CHOOSE ONE RESPONSE MODE]
+REFLECT — User needs to feel heard first. Name what they are carrying. No advice yet.
+INSIGHT — You spotted something they have NOT named. Connect the dots. Name the real pattern.
+QUESTION — You need more info to help. MAX 2 questions per session. One sharp question only.
+DIRECT — User needs a concrete next step. One thing. Warm but unambiguous.
 
-YOUR VOICE:
-- Clear and direct, never pretentious or overwrought
-- Warm but not performative
-- Specific, never vague
-- Concise — say what matters, stop there
-- Talk like a real person, not a fortune cookie
+[FORMAT RULES]
+- Maximum 3 short paragraphs. Each paragraph max 2 sentences.
+- Never use bullet points or lists in your reply.
+- Short sentences land harder than long ones.
+- When the moment is heavy: be short. Three sentences is enough.
 
-EMOTIONAL INTELLIGENCE:
-- Read what the person actually needs right now
-- For pain: acknowledge it, then help — do not rush past it
-- For practical needs: help efficiently, do not over-emote
-- Ask a follow-up only after you have given real value
+[LANGUAGE RULES — STRICT]
+- Never start with "It sounds like..." or "It seems like..." or "I understand..."
+- Never say "Great question!", "That is a great insight!", "I am here with you", "How can I assist"
+- Never ask more than 2 questions in a full session
+- Reference the user's exact words when possible — it shows you listened
+- Do not end every message with a question
 
-NEVER DO:
-- Never ignore a concrete request to give philosophy instead
-- Never repeat the same canned line — every response is fresh and specific to this person
-- Never be pretentious ("greetings hold space for reflection" is BAD for "hey")
-- Never say: "I am here with you", "Can you tell me more", "That is a great question", "I understand", "How can I assist you"
-- Never give a vague answer when a specific one is possible
+[PRACTICAL REQUESTS — workouts, plans, routines, tips]
+Answer directly and deliver the actual thing first:
+- Workout routine = real days, exercises, sets, reps
+- Plan = numbered concrete steps
+- After delivering: one sentence connecting to their growth if it fits naturally
 
-PHILOSOPHY (use as seasoning, not the meal):
-You know Logotherapy, Morita Therapy, Stoicism, and Ikigai. Weave them in naturally ONLY when the moment calls for depth — questions about meaning, purpose, suffering, or direction. For practical requests, stay practical.
+[PATTERN DETECTION]
+Name patterns directly. Be specific:
+- "This is the third time today you have come back to the project" — specific
+- "I notice a recurring theme" — vague and useless
+Connect physical, emotional, and mental signals: gym + sleep + focus are not separate.
+When the same emotion or topic appears across the session: name it directly.
 
-SAFETY:
-- Self-harm or crisis: respond with genuine care, offer grounding, stay present, suggest professional support (therapist or crisis line). Never deflect.
-- Never diagnose conditions or prescribe medication.
-- Be a bridge to professional help, not a replacement.
+[NEVER DO]
+- Never give a list of tips or advice
+- Never manufacture patterns that are not genuinely there
+- Never lecture or be preachy about habits
+- Never diagnose mental health conditions
+- Never replace professional help — you complement it
+- Never summarize back what the user just said verbatim
 
-RESPONSE FORMAT:
-Respond with valid JSON only, no markdown fences:
-{"reply": "your actual helpful response", "intent": "advice", "tone": "grounded", "action_type": "none", "reply_format": "conversation"}
-Put all your effort into the reply field. Make it directly answer what they asked. Choose intent from: emotional_talk, life_clarity, anxiety_grounding, routine_plan, task_help, crisis, ground_first, casual_chat.
+[SAFETY]
+Crisis or self-harm: acknowledge fully, offer grounding, stay present, suggest professional support warmly. Never diagnose. 2-3 sentences maximum.
+
+[RESPONSE FORMAT — REQUIRED]
+Respond with valid JSON only. No markdown fences. No text outside the object.
+{"reply": "your response", "intent": "emotional_talk", "tone": "grounded", "action_type": "none", "reply_format": "conversation"}
+intent options: emotional_talk, life_clarity, anxiety_grounding, routine_plan, task_help, crisis, ground_first, casual_chat, reflection
 """
+
+SESSION_SUMMARY_PROMPT = """
+Analyze this conversation and extract a structured summary.
+Respond ONLY in valid JSON. No markdown. No extra text. No preamble.
+
+Required format:
+{
+    "primary_emotion": "the dominant emotion expressed (one word)",
+    "main_topic": "what the conversation was primarily about",
+    "key_insight": "the most important thing that emerged",
+    "pattern_signal": "what recurring pattern does this suggest",
+    "notable_context": "any specific personal details worth remembering"
+}
+
+Be specific. Avoid generic summaries.
+'frustrated with slow project progress' is better than 'frustrated'.
+'gym absence causing focus loss' is better than 'physical health'.
+"""
+
+
+def build_production_memory_context(safe_memory: dict) -> str:
+    """
+    Converts the existing safe_memory_summary into a readable memory context
+    block that is injected into the system prompt's {memory_context} placeholder.
+    """
+    if not safe_memory:
+        return "This is a new session. No past history available yet."
+
+    parts: list[str] = []
+
+    # User focus and struggles
+    needs = safe_memory.get("onboarding_need") or []
+    if needs:
+        parts.append(f"What you know about them:\n- Focus areas: {', '.join(str(n) for n in needs[:4])}")
+
+    # Detected patterns
+    patterns: list[str] = []
+    task_pattern = safe_memory.get("task_pattern") or ""
+    mood_pattern = safe_memory.get("mood_pattern") or ""
+    if task_pattern and task_pattern not in ("none", "unknown", ""):
+        patterns.append(task_pattern)
+    if mood_pattern and mood_pattern not in ("none", "unknown", ""):
+        patterns.append(mood_pattern)
+    if patterns:
+        bullet = "\n".join(f"- {p}" for p in patterns)
+        parts.append(f"Detected patterns:\n{bullet}")
+
+    # Recent session context
+    prev_summary = safe_memory.get("previous_user_summary") or ""
+    prev_topic = safe_memory.get("current_topic") or ""
+    if prev_summary:
+        parts.append(f"Previous session signal: {prev_summary}")
+    elif prev_topic:
+        parts.append(f"Last topic: {prev_topic}")
+
+    # Recent intents as session history signal
+    recent_intents = safe_memory.get("recent_companion_intents") or []
+    if recent_intents:
+        parts.append(f"Recent session themes: {', '.join(str(i) for i in recent_intents[:4])}")
+
+    weekly_focus = safe_memory.get("weekly_focus") or ""
+    if weekly_focus and weekly_focus != "not enough weekly signal":
+        parts.append(f"Weekly focus: {weekly_focus}")
+
+    if not parts:
+        return "Early sessions — still learning about this user. No strong patterns yet."
+
+    return "\n\n".join(parts) + "\n\nIMPORTANT: Reference this naturally when relevant. Use it to deepen understanding. If you see the same pattern again — name it directly."
+
 
 COMPANION_OUTPUT_CONTRACT = """
 OUTPUT CONTRACT:
@@ -179,9 +253,9 @@ INTENSITY_GUIDANCE = {
 }
 
 INTENSITY_EXAMPLE_DURATIONS = {
-    "gentle": {"awareness": 5, "action": 5, "meaning": 5},
-    "normal": {"awareness": 10, "action": 15, "meaning": 10},
-    "deeper": {"awareness": 20, "action": 25, "meaning": 20},
+    "gentle": {"awareness": 5, "action": 5, "reflection": 5, "reset": 5, "growth": 5},
+    "normal": {"awareness": 10, "action": 15, "reflection": 10, "reset": 10, "growth": 10},
+    "deeper": {"awareness": 20, "action": 25, "reflection": 20, "reset": 15, "growth": 20},
 }
 
 INTENSITY_DURATION_LIMITS = {
@@ -191,7 +265,7 @@ INTENSITY_DURATION_LIMITS = {
 }
 
 # ─────────────────────────────────────────────────────────────
-#  30-DAY PHILOSOPHICAL FRAMEWORK LIBRARY
+#  PHILOSOPHICAL FRAMEWORK LIBRARY
 #  Each framework shapes HOW tasks are designed, not what the
 #  user is asked to think about. Philosophy stays invisible —
 #  it lives in the task design, never in the task text.
@@ -268,67 +342,59 @@ FRAMEWORK_LIBRARY = {
             "practice is intrinsic."
         ),
     },
-    "symbol": {
-        "name": "Symbol & Archetype",
-        "tagline": "Name the pattern that keeps returning — it is pointing at something",
+    "panj_dosh": {
+        "name": "Panj Dosh",
+        "tagline": "Work with the inner force without shaming the person",
         "awareness_lens": (
-            "Design a task where the user writes down ONE recurring image, dream, memory, "
-            "or theme that keeps returning in their life. Not analysis — just naming and "
-            "writing. The Symbol awareness practice is pattern recognition."
+            "Design a noticing task that names which inner pull is active today: "
+            "distraction, anger, greed, attachment, or arrogance. No moral judgement."
         ),
         "action_lens": (
-            "Design a task where the user takes one concrete real-world action that their "
-            "recurring pattern seems to be asking for. If the pattern is 'I keep starting "
-            "things', the action is finishing one small thing completely."
+            "Design one small behavior that gently opposes the active inner pull: "
+            "one boundary, one repair, one useful step, or one act of restraint."
         ),
-        "meaning_lens": (
-            "Design a task where the user connects today's effort to a larger personal "
-            "story they are living — one sentence: 'I am the person who...' as a "
-            "completion, written honestly."
+        "reflection_lens": (
+            "Design one honest sentence that lets the user see the inner pull without "
+            "collapsing into shame or self-attack."
+        ),
+        "reset_lens": (
+            "Design a nervous-system-level pause that lowers the force before asking for action."
+        ),
+        "growth_lens": (
+            "Design a small act that turns the inner force into a value-led direction."
         ),
     },
 }
 
 JOURNEY_STAGES = {
     "foundation": {
-        "day_range": (1, 7),
+        "day_range": (1, 14),
         "name": "Foundation",
-        "description": "Building the daily habit of showing up — awareness, action, meaning",
-        "active_frameworks": ["ikigai", "morita"],
+        "description": "Building the daily habit of showing up with low pressure",
+        "active_frameworks": ["ikigai", "morita", "panj_dosh"],
         "depth_note": (
             "Tasks should be gentle and easy to begin. The goal is one honest completion, "
             "not perfection. Prioritise tasks the user can start within 30 seconds."
         ),
     },
-    "discovery": {
-        "day_range": (8, 14),
-        "name": "Discovery",
-        "description": "Exploring what energises vs drains — noticing patterns without judgement",
-        "active_frameworks": ["morita", "logotherapy", "flow", "ikigai"],
+    "recognition": {
+        "day_range": (15, 45),
+        "name": "Recognition",
+        "description": "Recognising patterns without turning them into identity",
+        "active_frameworks": ["morita", "logotherapy", "flow", "panj_dosh"],
         "depth_note": (
             "Tasks should ask the user to notice something specific — not just 'how do you feel' "
             "but 'what happened in your body when X occurred'. Patterns emerge through doing, not thinking."
         ),
     },
     "integration": {
-        "day_range": (15, 21),
+        "day_range": (46, 90),
         "name": "Integration",
         "description": "Connecting daily actions to values and a larger sense of self",
-        "active_frameworks": ["logotherapy", "flow", "symbol", "ikigai"],
-        "depth_note": (
-            "Tasks should create a felt link between today's effort and who the user is becoming. "
-            "Slightly longer duration and a clearer deliverable are appropriate."
-        ),
-    },
-    "mastery": {
-        "day_range": (22, 90),
-        "name": "Mastery",
-        "description": "Living from purpose — expressing it through action, not searching for it",
-        "active_frameworks": ["logotherapy", "flow", "symbol", "morita"],
+        "active_frameworks": ["logotherapy", "flow", "ikigai", "panj_dosh"],
         "depth_note": (
             "Tasks should challenge the user to act from their deepest values, not habit or convenience. "
-            "By this stage, the user should be expressing purpose, not looking for it. "
-            "Push complexity slightly — the user has built the muscle."
+            "Slightly longer duration and a clearer deliverable are appropriate."
         ),
     },
 }
@@ -380,13 +446,11 @@ KOTLER_TAG_GUIDANCE = {
 def get_journey_stage(journey_day: int) -> dict:
     """Return the journey stage dict for a given day number."""
     day = max(1, journey_day)
-    if day <= 7:
-        return JOURNEY_STAGES["foundation"]
     if day <= 14:
-        return JOURNEY_STAGES["discovery"]
-    if day <= 21:
-        return JOURNEY_STAGES["integration"]
-    return JOURNEY_STAGES["mastery"]
+        return JOURNEY_STAGES["foundation"]
+    if day <= 45:
+        return JOURNEY_STAGES["recognition"]
+    return JOURNEY_STAGES["integration"]
 
 
 def get_ustad_phase(journey_day: int) -> dict:
@@ -408,11 +472,16 @@ def build_framework_guidance_block(active_frameworks: list[str], stage_name: str
         fw = FRAMEWORK_LIBRARY.get(fw_key)
         if not fw:
             continue
+        reflection_lens = fw.get("reflection_lens") or fw.get("awareness_lens")
+        reset_lens = fw.get("reset_lens") or fw.get("awareness_lens")
+        growth_lens = fw.get("growth_lens") or fw.get("meaning_lens") or fw.get("action_lens")
         lines.append(
             f"[{fw['name']}] — {fw['tagline']}\n"
             f"  Awareness task lens: {fw['awareness_lens']}\n"
             f"  Action task lens:    {fw['action_lens']}\n"
-            f"  Meaning task lens:   {fw['meaning_lens']}"
+            f"  Reflection task lens:{reflection_lens}\n"
+            f"  Reset task lens:     {reset_lens}\n"
+            f"  Growth task lens:    {growth_lens}"
         )
     return "\n\n".join(lines) if lines else "Use balanced, concrete tasks grounded in daily life."
 
@@ -455,13 +524,16 @@ def build_loop_tasks_prompt(context: dict, intelligence_context: str = "") -> st
     context_note = context.get("context_note") or "Use balanced, concrete tasks that are easy to start today."
     recent_titles = context.get("recent_titles_to_avoid") or context.get("recent_titles") or []
     task_feedback_summary = context.get("task_feedback_summary") or {}
+    recent_inner_layers = context.get("recent_inner_work_layers") or []
+    recent_approach_angles = context.get("recent_approach_angles") or []
+    avoidance_signals = context.get("avoidance_signals") or {}
     adaptation_mode = context.get("adaptation_mode") or task_feedback_summary.get("adaptation_mode") or "steady"
     duration_multiplier = context.get("duration_multiplier") or task_feedback_summary.get("duration_multiplier") or 1.0
     prompt_label_text = ", ".join(prompt_labels[:3]) if prompt_labels else "none"
     recent_fingerprints = context.get("recent_task_fingerprints") or []
 
-    # ── 30-day history for anti-repetition ──────────────────
-    # Use full title list (up to 90 entries = 30 days × 3)
+    # ── 14-day history for anti-repetition ──────────────────
+    # Use full title list (up to 70 entries = 14 days x 5)
     all_history_titles = context.get("all_history_titles") or recent_titles
     if all_history_titles:
         history_lines = "\n".join(
@@ -522,8 +594,12 @@ def build_loop_tasks_prompt(context: dict, intelligence_context: str = "") -> st
 
     adaptive_durations = {
         category: adaptive_duration(category)
-        for category in ("awareness", "action", "meaning")
+        for category in ("awareness", "action", "reflection", "reset", "growth")
     }
+    adaptive_duration_text = ", ".join(
+        f"{category}={minutes} min"
+        for category, minutes in adaptive_durations.items()
+    )
     feedback_note = task_feedback_summary.get("feedback_note") or "No strong post-action feedback signal yet."
     adaptation_instruction = {
         "simplify": "Halve or simplify tasks. Make the first visible step easy enough to begin.",
@@ -548,41 +624,34 @@ def build_loop_tasks_prompt(context: dict, intelligence_context: str = "") -> st
     kotler_guidance_block = "\n".join(
         f"- {tag}: {guidance}" for tag, guidance in KOTLER_TAG_GUIDANCE.items()
     )
+    recent_layer_text = ", ".join(recent_inner_layers) if recent_inner_layers else "none"
+    recent_angle_text = ", ".join(recent_approach_angles) if recent_approach_angles else "none"
+    skipped_category_text = ", ".join(avoidance_signals.get("skipped_categories") or []) or "none"
+    skipped_layer_text = ", ".join(avoidance_signals.get("skipped_inner_layers") or []) or "none"
 
     return f"""
-You are the Ustad, the master mentor inside The Life Project.
-Generate 3 daily core practices for the user's Loop.
+You are The Loop reasoning engine inside The Life Project.
+Generate exactly 5 daily micro-actions using AI reasoning, not templates.
 
-════════════════════════════════════════════════
- YOUR ROLE — READ THIS FIRST
-════════════════════════════════════════════════
-You are not a chatbot, therapist, cheerleader, or productivity coach.
-You give Clear Waar: one undeniable physical or mental action the user can complete today.
-Your voice is firm, precise, and mentor-like. It can feel serious, but never insulting, shaming, clinical, or unsafe.
-Every task must make the user stronger through action, not abstract advice.
-Never mention Ikigai, Morita, Logotherapy, Flow, Symbol, Steven Kotler, or neurochemistry terms in user-facing task text.
-Never ask the user "what is your passion?" or "what gives you purpose?" Let action reveal it.
+Core principle: the app is a mirror, not a master. Each task is an invitation.
 
-════════════════════════════════════════════════
- TODAY'S 30-DAY JOURNEY CONTEXT
-════════════════════════════════════════════════
-Journey Day: {journey_day}
-Ustad Phase: {ustad_phase_name}
-Ustad phase depth note: {ustad_phase_depth}
-Internal journey stage: {stage_name} — {stage_description}
-Internal stage note: {stage_depth}
+TODAY'S JOURNEY CONTEXT
+- Journey day: {journey_day}
+- Ustad phase: {ustad_phase_name}
+- Ustad phase note: {ustad_phase_depth}
+- Internal journey phase: {stage_name} — {stage_description}
+- Internal phase note: {stage_depth}
+- Active frameworks: Ikigai, Logotherapy, Morita, Flow, Panj Dosh
 
-Active philosophical lenses for today's task design:
+FRAMEWORK DESIGN LENSES
 {framework_guidance_block}
 
-Kotler motivational tags:
+KOTLER TAGS
 {kotler_guidance_block}
 
-════════════════════════════════════════════════
- PERSONALIZATION CONTEXT (privacy-safe)
-════════════════════════════════════════════════
+PERSONALIZATION CONTEXT
 - User's core struggles ({struggles_source}): {struggles_summary}
-- Current streak day: {current_day} | Streak band: {streak_band}
+- Current streak day: {current_day} | streak band: {streak_band}
 - Completion pattern: {completion_pattern}
 - Strong categories: {", ".join(strong_categories) if strong_categories else "none"}
 - Weak categories: {", ".join(weak_categories) if weak_categories else "none"}
@@ -591,157 +660,211 @@ Kotler motivational tags:
 - Context note: {context_note}
 - Journey guidance: {journey_guidance}
 - Suggested intensity: {suggested_intensity}. {intensity_guidance}
+- Adaptive durations: {adaptive_duration_text}
 - Post-action feedback signal: {feedback_note}
 - Adaptive sizing: {adaptation_mode}. {adaptation_instruction}
 - Skip reasons: {skip_reason_summary if skip_reason_summary else "none recorded"}
 
-════════════════════════════════════════════════
- 30-DAY ANTI-REPETITION SHIELD — HARD CONSTRAINT
-════════════════════════════════════════════════
-Every task title the user has received in the past 30 days is listed below.
-You MUST NOT generate any task whose title shares more than 1 key content word with any title here.
-This is non-negotiable. Change the verb, the object, and the framing entirely if needed.
-The user must never feel they are getting the same task twice in any 30-day cycle.
-
-Past 30 days — all task titles:
+14-DAY NON-REPETITION CONTEXT
+Do not duplicate or lightly reword these task titles:
 {history_block}
 
-Additionally, do NOT reuse the same core action or concept from these recent fingerprints, even in different words:
+Do not reuse the same core action or concept from these recent fingerprints:
 {recent_fingerprint_text}
+
+Recent inner work layers to rotate away from when possible: {recent_layer_text}
+Recent approach angles to rotate away from when possible: {recent_angle_text}
+Skipped categories: {skipped_category_text}
+Skipped inner layers: {skipped_layer_text}
+
 {intelligence_context}
-════════════════════════════════════════════════
- TASK GENERATION RULES
-════════════════════════════════════════════════
-Create one task for each category, in this exact order:
-1. "awareness"   — shaped by the awareness lens of the active framework(s)
-2. "action"      — shaped by the action lens of the active framework(s)
-3. "meaning"     — shaped by the meaning lens of the active framework(s)
 
-Quality laws (every task must satisfy ALL of these):
-- CLEAR WAAR: exactly one action; no advice, no theme, no multi-step routine
-- VERB-FIRST title: starts with an imperative verb (Write / Send / Walk / Open / Text / Stand / Name / Close / Read / Notice / Do / Find / Make / Spend / Call / Draw / Move / Count / Ask)
-- COUNTABLE: contains a number, duration, or named output ("3 sentences", "15 minutes", "1 message")
-- SINGLE action: only one thing — no "and" chains in the title
-- ZERO-SETUP: user can start within 30 seconds without any preparation
-- SELF-EVIDENT done: user knows unambiguously when finished
-- PHASE-SCALED: Day 1 should feel foundational; Day 20 can be heavier and more identity-facing
+REASONING ORDER — REQUIRED, INTERNAL ONLY
+Silently reason through these five questions before writing JSON:
+1. Who is this person today?
+2. Where are they in their journey?
+3. What inner force needs attention?
+4. What did they do recently, so repetition is avoided?
+5. What single action creates the most meaningful friction?
 
-Safety rules:
-- Output strictly valid JSON only.
-- Do not use markdown, bullets, numbering, code fences, or commentary outside the JSON.
-- Do not diagnose, make medical/clinical/treatment claims, or give harmful advice.
-- Do not create overwhelming tasks — each must be completable today.
-- Do not use shame-heavy language or imply the user is failing.
-- Do not call the user weak, lazy, broken, cowardly, addicted, or damaged.
-- Avoid generic phrases like "be productive", "stay motivated", or "think positive".
-- If a category is weak, make that category especially approachable.
-- If skip reasons include "too heavy" or "unclear" — make that task smaller and more concrete.
-- If skip reasons include "not relevant" — use a completely different framing for that category.
-- If skip reasons include "no time" or "low energy" — prefer shorter duration.
+TASK SET
+Create one task for each category in this exact order:
+1. "awareness"   — notice the pattern
+2. "action"      — take one concrete step
+3. "reflection"  — write or name one honest signal
+4. "reset"       — lower nervous-system friction
+5. "growth"      — connect effort to direction, values, or contribution
 
-Field rules:
-- "title": concrete verb-first practice (max 10 words)
-- "subtitle": short human label, not a slogan (e.g. "Awareness Practice")
-- "kotler_tag": MUST be one of: {kotler_tag_list}
-- "waar_action": the exact Clear Waar action to take today, max 2 sentences
-- "ikigai_purpose": the direct psychological why, max 2 sentences; firm but never shaming
-- "why_this_helps": concise version of ikigai_purpose, max 22 words
-- "detail_description": one purpose sentence, then "Action:" followed by the same instruction as waar_action
-- "duration_minutes": must match suggested intensity range
-- "preferred_time_of_day": morning / afternoon / evening / today
-- "supportive_line": one calm sentence, max 16 words
-- "why_chosen": one calm sentence, max 18 words
-- "easier_version" and "smaller_version": identical — one genuinely smaller version
-- "success_condition": exactly what counts as done today (max 15 words)
-- "post_completion_question": one short question about mood or fit
-- "difficulty_level": gentle / normal / deeper
-- "personalization_reason": one internal sentence (max 20 words) for backend logging — do NOT display to user
-- "framework_key": MUST be one of: {framework_keys_list} — choose the framework whose lens most shaped this task
-- "inner_work_layer": MUST be one of: "attachment" | "anger" | "distraction" | "ego" | "greed" | "acceptance" | "none" — which inner force this task quietly addresses; backend-only, never shown to user
-- "approach_angle": MUST be one of: "direct" | "oblique" | "embodied" | "reflective" — HOW the task enters the inner territory; backend-only
-- "journey_phase": MUST be one of: "foundation" | "recognition" | "integration" — current phase based on days active; backend-only
-- "ikigai_quadrant": MUST be one of: "passion" | "mission" | "vocation" | "profession" | "none" — which quadrant this task moves toward; backend-only
+NON-REPETITION AND AVOIDANCE RULES
+- Generate all 5 categories every day.
+- Within the last 14-day history, do not repeat task titles, core objects, or task concepts.
+- Rotate inner_work_layer across today's 5 tasks; use at least 3 distinct values.
+- Rotate approach_angle across today's 5 tasks; use at least 3 distinct values.
+- If a category or inner layer is being skipped, include it gently from a different angle instead of abandoning it.
+- If direct framing was skipped, use oblique, embodied, or reflective framing.
 
-════════════════════════════════════════════════
-OUTPUT — STRICTLY VALID JSON ONLY
-════════════════════════════════════════════════
+TONE AND SAFETY RULES
+- No shame language.
+- No pressure or urgency framing.
+- No toxic productivity words such as maximize, optimize, hustle, grind, crush, or no excuses.
+- No fear-based motivation.
+- The body text should feel optional and invitational, never like a command.
+- Do not diagnose, treat, or make clinical claims.
+- Do not mention Ikigai, Logotherapy, Morita, Flow, Panj Dosh, hidden metadata, or backend logic in user-facing text.
+- Hidden fields are for the system only and are never shown to the user.
+
+FIELD RULES
+- "title": short, clear action, max 10 words.
+- "subtitle": short human label, such as "Awareness Practice".
+- "kotler_tag": one of {kotler_tag_list}.
+- "waar_action": exact action to try today, max 2 sentences, invitation tone.
+- "ikigai_purpose": 1-2 warm direct sentences explaining why this helps.
+- "why_this_helps": concise version, max 22 words.
+- "detail_description": one purpose sentence, then "Action:" followed by the same instruction as waar_action.
+- "duration_minutes": one of the adaptive durations above and within the suggested intensity range.
+- "preferred_time_of_day": morning / afternoon / evening / today.
+- "supportive_line": one calm sentence, max 16 words.
+- "why_chosen": one calm sentence, max 18 words.
+- "easier_version" and "smaller_version": identical, genuinely smaller.
+- "success_condition": what counts as done today, max 15 words.
+- "post_completion_question": one short question about mood or fit.
+- "difficulty_level": gentle / normal / deeper.
+- "personalization_reason": internal sentence for backend logging only.
+- "framework_key": one of {framework_keys_list}.
+- "inner_work_layer": one of "attachment" | "anger" | "distraction" | "ego" | "greed" | "acceptance" | "none". Use "ego" for arrogance.
+- "approach_angle": one of "direct" | "oblique" | "embodied" | "reflective".
+- "journey_phase": one of "foundation" | "recognition" | "integration".
+- "ikigai_quadrant": one of "passion" | "mission" | "vocation" | "profession" | "none".
+
+OUTPUT — STRICT JSON ONLY
+Return only this JSON object. No markdown, no commentary, no extra keys outside tasks.
 {{
   "tasks": [
-  {{
-    "category": "awareness",
-    "title": "Write 1 Returning Thought",
-    "subtitle": "Awareness Practice",
-    "kotler_tag": "Curiosity",
-    "waar_action": "Sit for 2 minutes and write the single thought your mind returns to most today.",
-    "ikigai_purpose": "A loop you refuse to name keeps steering from the dark. Naming it gives your attention one clean handle on the pattern.",
-    "why_this_helps": "Naming the loop gives your attention one clean handle on the pattern.",
-    "detail_description": "A loop you name loses some hidden control.\n\nAction: Sit for 2 minutes and write the single thought your mind returns to most today.",
-    "duration_minutes": {adaptive_durations["awareness"]},
-    "preferred_time_of_day": "morning",
-    "supportive_line": "Name the loop; stop letting it move unseen.",
-    "why_chosen": "Naming what repeats is the first step toward choosing something different.",
-    "easier_version": "Write one sentence naming the recurring thought.",
-    "smaller_version": "Write one sentence naming the recurring thought.",
-    "success_condition": "You have written one honest sentence.",
-    "post_completion_question": "Did this feel too easy, right-sized, or too heavy?",
-    "difficulty_level": "{suggested_intensity}",
-    "personalization_reason": "Sized gently based on recent heavy mood signals and low completion pattern.",
-    "framework_key": "morita",
-    "inner_work_layer": "distraction",
-    "approach_angle": "reflective",
-    "journey_phase": "foundation",
-    "ikigai_quadrant": "passion"
-  }},
-  {{
-    "category": "action",
-    "title": "Work 15 Minutes on Avoided Task",
-    "subtitle": "Action Practice",
-    "kotler_tag": "Mastery",
-    "waar_action": "Open the task you have avoided most and work on it for 15 uninterrupted minutes.",
-    "ikigai_purpose": "Resistance shrinks only when the body proves the mind can move first. This builds mastery by training action before comfort.",
-    "why_this_helps": "This trains action before comfort and turns avoidance into a visible rep.",
-    "detail_description": "Resistance weakens when action happens before comfort.\n\nAction: Open the task you have avoided most and work on it for 15 uninterrupted minutes.",
-    "duration_minutes": {adaptive_durations["action"]},
-    "preferred_time_of_day": "afternoon",
-    "supportive_line": "One clean rep is the assignment.",
-    "why_chosen": "Acting before feeling ready is how resistance breaks.",
-    "easier_version": "Open the avoided task and work on it for 5 minutes only.",
-    "smaller_version": "Open the avoided task and work on it for 5 minutes only.",
-    "success_condition": "You worked on the avoided task for the full time block.",
-    "post_completion_question": "How does your mind feel after this?",
-    "difficulty_level": "{suggested_intensity}",
-    "personalization_reason": "Action category chosen because it was marked weak in recent history.",
-    "framework_key": "morita",
-    "inner_work_layer": "ego",
-    "approach_angle": "embodied",
-    "journey_phase": "foundation",
-    "ikigai_quadrant": "profession"
-  }},
-  {{
-    "category": "meaning",
-    "title": "Do 1 Useful Act",
-    "subtitle": "Meaning Practice",
-    "kotler_tag": "Purpose",
-    "waar_action": "Do one concrete act that makes tomorrow easier for you or one real person.",
-    "ikigai_purpose": "Purpose is not found by staring inward forever. It appears when effort becomes useful to a future beyond the present mood.",
-    "why_this_helps": "Purpose strengthens when your effort becomes useful beyond the present mood.",
-    "detail_description": "Purpose becomes real when effort turns useful.\n\nAction: Do one concrete act that makes tomorrow easier for you or one real person.",
-    "duration_minutes": {adaptive_durations["meaning"]},
-    "preferred_time_of_day": "evening",
-    "supportive_line": "Make the day useful, not just survived.",
-    "why_chosen": "This connects today's action to something larger than escape.",
-    "easier_version": "Write one sentence naming who today's effort serves.",
-    "smaller_version": "Write one sentence naming who today's effort serves.",
-    "success_condition": "You completed one helpful act or wrote who it serves.",
-    "post_completion_question": "Was this too easy, right-sized, or too heavy?",
-    "difficulty_level": "{suggested_intensity}",
-    "personalization_reason": "Meaning included to reconnect effort to purpose given recent restless mood pattern.",
-    "framework_key": "ikigai",
-    "inner_work_layer": "acceptance",
-    "approach_angle": "direct",
-    "journey_phase": "foundation",
-    "ikigai_quadrant": "mission"
-  }}
+    {{
+      "category": "awareness",
+      "title": "Notice 1 Pulling Pattern",
+      "subtitle": "Awareness Practice",
+      "kotler_tag": "Curiosity",
+      "waar_action": "If it feels useful, take {adaptive_durations["awareness"]} minutes to write the one pattern pulling your attention today.",
+      "ikigai_purpose": "Naming one pattern creates space between the feeling and the next choice.",
+      "why_this_helps": "A named pattern has less power to steer the day unseen.",
+      "detail_description": "A named pattern becomes easier to meet with care.\\n\\nAction: If it feels useful, write the one pattern pulling your attention today.",
+      "duration_minutes": {adaptive_durations["awareness"]},
+      "preferred_time_of_day": "morning",
+      "supportive_line": "One honest noticing is enough.",
+      "why_chosen": "Awareness gives the day a clearer starting point.",
+      "easier_version": "Write one phrase for the pattern.",
+      "smaller_version": "Write one phrase for the pattern.",
+      "success_condition": "One pattern is written.",
+      "post_completion_question": "Did this feel right-sized today?",
+      "difficulty_level": "{suggested_intensity}",
+      "personalization_reason": "Awareness selected to name the current loop before action.",
+      "framework_key": "panj_dosh",
+      "inner_work_layer": "distraction",
+      "approach_angle": "reflective",
+      "journey_phase": "{journey_stage_key if journey_stage_key in {"foundation", "recognition", "integration"} else "foundation"}",
+      "ikigai_quadrant": "passion"
+    }},
+    {{
+      "category": "action",
+      "title": "Begin 1 Visible Step",
+      "subtitle": "Action Practice",
+      "kotler_tag": "Mastery",
+      "waar_action": "You can choose one visible task and give it {adaptive_durations["action"]} quiet minutes, stopping when the timer ends.",
+      "ikigai_purpose": "A small completed step turns resistance into evidence that movement is still available.",
+      "why_this_helps": "One visible step interrupts avoidance without asking for a perfect day.",
+      "detail_description": "Movement becomes easier after one small proof.\\n\\nAction: Choose one visible task and give it a quiet time block.",
+      "duration_minutes": {adaptive_durations["action"]},
+      "preferred_time_of_day": "afternoon",
+      "supportive_line": "A small start still counts.",
+      "why_chosen": "Action is being kept concrete and bounded.",
+      "easier_version": "Do the first two minutes only.",
+      "smaller_version": "Do the first two minutes only.",
+      "success_condition": "The time block is complete.",
+      "post_completion_question": "What changed after beginning?",
+      "difficulty_level": "{suggested_intensity}",
+      "personalization_reason": "Action selected to create one visible completion.",
+      "framework_key": "morita",
+      "inner_work_layer": "ego",
+      "approach_angle": "embodied",
+      "journey_phase": "{journey_stage_key if journey_stage_key in {"foundation", "recognition", "integration"} else "foundation"}",
+      "ikigai_quadrant": "profession"
+    }},
+    {{
+      "category": "reflection",
+      "title": "Write 1 Honest Line",
+      "subtitle": "Reflection Practice",
+      "kotler_tag": "Autonomy",
+      "waar_action": "If you want, write one honest line beginning with: 'Today I am avoiding...'",
+      "ikigai_purpose": "Reflection lets the avoided thing become visible without turning it into a verdict about you.",
+      "why_this_helps": "One honest line lowers the hidden weight of avoidance.",
+      "detail_description": "A plain sentence can hold what the mind keeps circling.\\n\\nAction: Write one honest line beginning with: Today I am avoiding...",
+      "duration_minutes": {adaptive_durations["reflection"]},
+      "preferred_time_of_day": "evening",
+      "supportive_line": "You are naming, not judging.",
+      "why_chosen": "Reflection approaches avoidance without forcing a solution.",
+      "easier_version": "Write only three words.",
+      "smaller_version": "Write only three words.",
+      "success_condition": "One honest line is written.",
+      "post_completion_question": "Did naming it soften anything?",
+      "difficulty_level": "{suggested_intensity}",
+      "personalization_reason": "Reflection selected to re-approach avoided material gently.",
+      "framework_key": "logotherapy",
+      "inner_work_layer": "attachment",
+      "approach_angle": "oblique",
+      "journey_phase": "{journey_stage_key if journey_stage_key in {"foundation", "recognition", "integration"} else "foundation"}",
+      "ikigai_quadrant": "mission"
+    }},
+    {{
+      "category": "reset",
+      "title": "Pause for 5 Slow Breaths",
+      "subtitle": "Reset Practice",
+      "kotler_tag": "Autonomy",
+      "waar_action": "You may pause where you are, lower your shoulders, and take 5 slow breaths before choosing the next step.",
+      "ikigai_purpose": "A reset lowers the inner noise so the next action is chosen from steadiness, not pressure.",
+      "why_this_helps": "Lowering the body pressure makes the next step easier to choose.",
+      "detail_description": "The body can soften before the task changes.\\n\\nAction: Pause, lower your shoulders, and take 5 slow breaths.",
+      "duration_minutes": {adaptive_durations["reset"]},
+      "preferred_time_of_day": "today",
+      "supportive_line": "Settling is also part of movement.",
+      "why_chosen": "Reset reduces friction before asking for effort.",
+      "easier_version": "Take one slow breath.",
+      "smaller_version": "Take one slow breath.",
+      "success_condition": "Five slow breaths are complete.",
+      "post_completion_question": "Is the next step clearer?",
+      "difficulty_level": "{suggested_intensity}",
+      "personalization_reason": "Reset selected to lower pressure before action.",
+      "framework_key": "flow",
+      "inner_work_layer": "anger",
+      "approach_angle": "embodied",
+      "journey_phase": "{journey_stage_key if journey_stage_key in {"foundation", "recognition", "integration"} else "foundation"}",
+      "ikigai_quadrant": "none"
+    }},
+    {{
+      "category": "growth",
+      "title": "Support 1 Future Step",
+      "subtitle": "Growth Practice",
+      "kotler_tag": "Purpose",
+      "waar_action": "If it feels right, do one small thing that makes tomorrow easier for you or one real person.",
+      "ikigai_purpose": "Growth becomes real when effort serves a direction beyond the current mood.",
+      "why_this_helps": "A useful act connects today to direction without forcing certainty.",
+      "detail_description": "A small useful act gives effort a direction.\\n\\nAction: Do one small thing that makes tomorrow easier.",
+      "duration_minutes": {adaptive_durations["growth"]},
+      "preferred_time_of_day": "evening",
+      "supportive_line": "Usefulness can be small.",
+      "why_chosen": "Growth links effort to direction through one helpful act.",
+      "easier_version": "Write one sentence naming who this helps.",
+      "smaller_version": "Write one sentence naming who this helps.",
+      "success_condition": "One useful act is complete.",
+      "post_completion_question": "Did this feel meaningful or too much?",
+      "difficulty_level": "{suggested_intensity}",
+      "personalization_reason": "Growth selected to connect action with direction.",
+      "framework_key": "ikigai",
+      "inner_work_layer": "greed",
+      "approach_angle": "direct",
+      "journey_phase": "{journey_stage_key if journey_stage_key in {"foundation", "recognition", "integration"} else "foundation"}",
+      "ikigai_quadrant": "vocation"
+    }}
   ]
 }}
 """.strip()
@@ -842,6 +965,7 @@ def build_life_companion_prompt(
     user_intent=None,
     formatted_memory: str = "",
     intent_knowledge: str = "",
+    safe_memory_summary: dict = None,
 ) -> dict:
     """
     Assembles the Pass 2 LLM prompt package.  Never logs values.
@@ -902,8 +1026,14 @@ def build_life_companion_prompt(
             "using retrieved context or backend search."
         )
 
+    # Inject memory context into the system prompt at runtime.
+    # Using replace() instead of format() to avoid KeyError on the JSON
+    # examples inside the prompt (e.g. {"reply": "..."} would confuse .format).
+    memory_ctx = build_production_memory_context(safe_memory_summary or {})
+    filled_system = COMPANION_SYSTEM_PROMPT.replace("{memory_context}", memory_ctx)
+
     return {
-        "system": COMPANION_SYSTEM_PROMPT,
+        "system": filled_system,
         "context": "\n\n".join(context_parts),
         "history": conversation_history or [],
     }

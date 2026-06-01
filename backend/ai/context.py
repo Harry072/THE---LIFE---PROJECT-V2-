@@ -169,41 +169,47 @@ def clear_companion_session(user_id: str, session_id: str) -> None:
             pass
 
 
-ALLOWED_LOOP_CATEGORIES = {"awareness", "action", "meaning"}
-CORE_CATEGORY_ORDER = ["awareness", "action", "meaning"]
+ALLOWED_LOOP_CATEGORIES = {"awareness", "action", "reflection", "reset", "growth"}
+CORE_CATEGORY_ORDER = ["awareness", "action", "reflection", "reset", "growth"]
 MAX_CONTEXT_STRUGGLES = 4
 MAX_STRUGGLE_CHARS = 48
-MAX_RECENT_TITLES = 90     # 30 days × 3 tasks — full anti-repetition window
-MAX_ANTI_REPEAT_DAYS = 29  # look back 30 days (inclusive of today = 29 delta)
+MAX_RECENT_TITLES = 70     # 14 days x 5 tasks
+MAX_ANTI_REPEAT_DAYS = 13  # look back 14 days (inclusive of today = 13 delta)
 MAX_PROMPT_LABELS = 3
 MAX_WEEKLY_REFLECTIONS = 7
-MAX_WEEKLY_TASKS = 21
+MAX_WEEKLY_TASKS = 35
 MAX_COMPANION_TASKS = 6
 
 CATEGORY_ALIASES = {
     "awareness": "awareness",
-    "reflection": "awareness",
-    "reflect": "awareness",
     "mindfulness": "awareness",
-    "journaling": "awareness",
-    "journal": "awareness",
     "clarity": "awareness",
-    "breathing": "awareness",
+    "breathing": "reset",
+    "reflection": "reflection",
+    "reflect": "reflection",
+    "journaling": "reflection",
+    "journal": "reflection",
     "action": "action",
     "focus": "action",
     "discipline": "action",
     "health": "action",
     "exercise": "action",
     "movement": "action",
-    "sleep": "action",
-    "connection": "action",
-    "contribution": "meaning",
-    "service": "meaning",
-    "purpose": "meaning",
-    "meaning": "meaning",
-    "gratitude": "meaning",
-    "ikigai": "meaning",
-    "logotherapy": "meaning",
+    "sleep": "reset",
+    "calm": "reset",
+    "grounding": "reset",
+    "emotional-reset": "reset",
+    "emotional_reset": "reset",
+    "reset": "reset",
+    "connection": "growth",
+    "contribution": "growth",
+    "service": "growth",
+    "purpose": "growth",
+    "meaning": "growth",
+    "gratitude": "growth",
+    "ikigai": "growth",
+    "logotherapy": "growth",
+    "growth": "growth",
 }
 
 PATTERN_SIGNAL_KEYWORDS = {
@@ -291,7 +297,7 @@ TASK_FRICTION_LEVELS = {"too_easy", "right_sized", "too_heavy"}
 
 
 def normalize_category(value: str | None) -> str:
-    raw_category = str(value or "meaning").strip().lower().replace("_", "-")
+    raw_category = str(value or "growth").strip().lower().replace("_", "-")
 
     if raw_category in ALLOWED_LOOP_CATEGORIES:
         return raw_category
@@ -303,7 +309,7 @@ def normalize_category(value: str | None) -> str:
         if token in CATEGORY_ALIASES:
             return CATEGORY_ALIASES[token]
 
-    return "meaning"
+    return "growth"
 
 
 def safe_int(value, fallback: int = 0) -> int:
@@ -431,6 +437,28 @@ def fetch_task_history_context(supabase, user_id: str, local_date: str) -> tuple
             "select": (
                 "title,category,done,completed_at,skipped,is_optional,duration_minutes,"
                 "for_date,created_at,task_friction_level,post_action_mood,mood_after,"
+                "completion_state,skip_reason_label,"
+                "inner_work_layer,approach_angle,journey_phase,ikigai_quadrant"
+            ),
+            "ops": [
+                ("eq", ("user_id", user_id)),
+                ("gte", ("for_date", week_start)),
+                ("lte", ("for_date", current_date.isoformat())),
+                ("order", ("for_date",), {"desc": True}),
+                ("limit", (MAX_RECENT_TITLES,)),
+            ],
+        },
+    )
+    if rows:
+        return rows, True
+    rows = table_select_optional(
+        supabase,
+        "loop_tasks",
+        "loop_tasks_history_legacy",
+        {
+            "select": (
+                "title,category,done,completed_at,skipped,is_optional,duration_minutes,"
+                "for_date,created_at,task_friction_level,post_action_mood,mood_after,"
                 "completion_state,skip_reason_label"
             ),
             "ops": [
@@ -438,7 +466,7 @@ def fetch_task_history_context(supabase, user_id: str, local_date: str) -> tuple
                 ("gte", ("for_date", week_start)),
                 ("lte", ("for_date", current_date.isoformat())),
                 ("order", ("for_date",), {"desc": True}),
-                ("limit", (90,)),
+                ("limit", (MAX_RECENT_TITLES,)),
             ],
         },
     )
@@ -447,7 +475,7 @@ def fetch_task_history_context(supabase, user_id: str, local_date: str) -> tuple
 
 def fetch_journey_context(supabase, user_id: str, local_date: str) -> dict:
     """
-    Calculate the user's day number in their 30-day self-discovery journey
+    Calculate the user's day number in their Foundation/Recognition/Integration journey
     by finding the date of their first loop task.
     Returns journey_day (1-based int) and journey_stage (str key).
     """
@@ -471,14 +499,12 @@ def fetch_journey_context(supabase, user_id: str, local_date: str) -> dict:
     else:
         day_number = 1
 
-    if day_number <= 7:
+    if day_number <= 14:
         stage = "foundation"
-    elif day_number <= 14:
-        stage = "discovery"
-    elif day_number <= 21:
-        stage = "integration"
+    elif day_number <= 45:
+        stage = "recognition"
     else:
-        stage = "mastery"
+        stage = "integration"
 
     return {"journey_day": day_number, "journey_stage": stage}
 
@@ -562,7 +588,7 @@ def build_weekly_pattern_signals(input_summary: dict, task_summary: dict) -> dic
     skipped_count = safe_int(task_summary.get("skipped_task_count"), 0)
     completion_rate = completed_count / task_count if task_count else 0.0
     action_rate = category_completion_rate(category_counts, "action")
-    meaning_rate = category_completion_rate(category_counts, "meaning")
+    growth_rate = category_completion_rate(category_counts, "growth")
     most_common_mood = str(mood_labels[0]).lower() if mood_labels else ""
 
     distraction_signal = (
@@ -589,7 +615,7 @@ def build_weekly_pattern_signals(input_summary: dict, task_summary: dict) -> dic
             safe_signal_text,
             PATTERN_SIGNAL_KEYWORDS["lack_of_purpose_or_lost"],
         )
-        or (meaning_rate is not None and meaning_rate < 0.5)
+        or (growth_rate is not None and growth_rate < 0.5)
     )
     inconsistency_signal = (
         contains_signal_keyword(
@@ -1582,6 +1608,8 @@ def summarize_task_history(rows: list[dict]) -> dict:
     mood_after_values: list[str] = []
     skip_reason_values: list[str] = []
     recent_task_fingerprints: list[dict] = []
+    recent_inner_layers: list[str] = []
+    recent_approach_angles: list[str] = []
 
     for row in rows:
         category = normalize_category(row.get("category"))
@@ -1596,6 +1624,14 @@ def summarize_task_history(rows: list[dict]) -> dict:
             skip_reason = clean_label(row.get("skip_reason_label"))
             if skip_reason:
                 skip_reason_values.append(skip_reason)
+
+        inner_layer = clean_label(row.get("inner_work_layer"))
+        if inner_layer:
+            recent_inner_layers.append(inner_layer)
+
+        approach_angle = clean_label(row.get("approach_angle"))
+        if approach_angle:
+            recent_approach_angles.append(approach_angle)
 
         duration = safe_int(row.get("duration_minutes"), 0)
         if duration > 0:
@@ -1619,6 +1655,8 @@ def summarize_task_history(rows: list[dict]) -> dict:
                     "title": title,
                     "category": category,
                     "for_date": str(row.get("for_date") or "")[:10],
+                    "inner_work_layer": inner_layer,
+                    "approach_angle": approach_angle,
                 })
 
     total_tasks = sum(item["total"] for item in stats.values())
@@ -1734,6 +1772,20 @@ def summarize_task_history(rows: list[dict]) -> dict:
         "weak_categories": weak_categories[:2],
         "recent_titles_to_avoid": recent_titles[:MAX_RECENT_TITLES],
         "recent_task_fingerprints": recent_task_fingerprints,
+        "recent_inner_work_layers": list(count_values(recent_inner_layers).keys())[:5],
+        "recent_approach_angles": list(count_values(recent_approach_angles).keys())[:4],
+        "avoidance_signals": {
+            "skipped_categories": list(count_values([
+                category
+                for category, category_stats in stats.items()
+                for _ in range(category_stats["skipped"])
+            ]).keys())[:3],
+            "skipped_inner_layers": list(count_values([
+                clean_label(row.get("inner_work_layer"))
+                for row in rows
+                if row.get("skipped") and clean_label(row.get("inner_work_layer"))
+            ]).keys())[:3],
+        },
         "average_duration": average_duration,
         "task_feedback_summary": {
             "feedback_count": len(friction_values) + len(mood_after_values),
@@ -1761,8 +1813,8 @@ def choose_journey_guidance(streak_band: str) -> str:
     if streak_band == "new":
         return "Focus on gentle awareness and low-pressure action."
     if streak_band == "building":
-        return "Focus on clear action and building consistency."
-    return "Focus on purpose, meaning, and identity-level growth."
+        return "Focus on clear action, reflection, and building consistency."
+    return "Focus on reset, growth, and identity-level integration."
 
 
 def choose_intensity(
@@ -1902,7 +1954,7 @@ def build_generation_context(
         for task in (existing_tasks or [])
         if str(task.get("title") or "").strip()
     ]
-    # Full 30-day title history for anti-repetition — deduplicated, most recent first
+    # Full 14-day title history for anti-repetition — deduplicated, most recent first
     all_history_titles_raw = [
         clean_short_text(row.get("title"), 120)
         for row in task_history
@@ -1973,6 +2025,9 @@ def build_generation_context(
         "recent_titles_to_avoid": recent_titles_to_avoid,
         "all_history_titles": all_history_titles,
         "recent_task_fingerprints": history_summary.get("recent_task_fingerprints") or [],
+        "recent_inner_work_layers": history_summary.get("recent_inner_work_layers") or [],
+        "recent_approach_angles": history_summary.get("recent_approach_angles") or [],
+        "avoidance_signals": history_summary.get("avoidance_signals") or {},
         "average_duration": history_summary["average_duration"],
         "task_feedback_summary": task_feedback_summary,
         "adaptation_mode": feedback_adaptation,

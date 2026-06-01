@@ -14,6 +14,9 @@ const AppStateContext = createContext(null);
 const DOMAIN_LABELS = {
   awareness: "5 minutes reflection",
   action: "30 minutes",
+  reflection: "Honest reflection",
+  reset: "Reset space",
+  growth: "Gratitude & Growth",
   meaning: "Gratitude & Growth",
 };
 
@@ -322,22 +325,33 @@ export function AppStateProvider({ children }) {
       // 2. Fetch today's core loop tasks without HEAD; some Supabase setups reject count paths
       const { data: todayTasks, error: taskError } = await supabase
         .from("loop_tasks")
-        .select("id, category, completed_at, is_optional")
+        .select("id, category, subtitle, completed_at, is_optional")
         .eq("user_id", storeUser.id)
         .eq("for_date", localDate)
-        .in("category", ["awareness", "action", "meaning"]);
+        .in("category", ["awareness", "action", "reflection", "reset", "growth", "meaning"]);
 
       if (taskError) throw taskError;
 
-      const coreTasks = (todayTasks || []).filter(task => !task.is_optional);
+      const toPublicCategory = (task) => {
+        const subtitle = String(task?.subtitle || "").toLowerCase();
+        if (subtitle.includes("reflection") || subtitle.includes("journal")) return "reflection";
+        if (subtitle.includes("reset") || subtitle.includes("breath") || subtitle.includes("ground")) return "reset";
+        if (subtitle.includes("growth") || subtitle.includes("meaning") || subtitle.includes("purpose")) return "growth";
+        return task.category === "meaning" ? "growth" : task.category;
+      };
+      const coreTasks = (todayTasks || []).filter((task) => {
+        const isCompatCore = Boolean(task.is_optional) && String(task.subtitle || "").toLowerCase().includes("practice");
+        return !task.is_optional || isCompatCore;
+      });
+
       const completedToday = new Set(
         coreTasks
           .filter(task => task.completed_at)
-          .map(task => task.category)
+          .map(toPublicCategory)
       ).size;
       const totalCoreTasks = Math.max(
-        3,
-        new Set(coreTasks.map(task => task.category)).size
+        5,
+        new Set(coreTasks.map(toPublicCategory)).size
       );
 
       setStats((prev) => ({

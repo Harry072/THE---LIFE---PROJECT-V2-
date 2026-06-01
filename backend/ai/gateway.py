@@ -30,7 +30,7 @@ class ProviderResponse:
 
 
 class LoopTaskPayload(BaseModel):
-    category: Literal["awareness", "action", "meaning"]
+    category: Literal["awareness", "action", "reflection", "reset", "growth"]
     title: str = Field(min_length=3, max_length=80)
     subtitle: str = Field(min_length=3, max_length=80)
     kotler_tag: Literal["Curiosity", "Purpose", "Passion", "Autonomy", "Mastery"]
@@ -46,10 +46,10 @@ class LoopTaskPayload(BaseModel):
     success_condition: str = Field(min_length=5, max_length=140)
     smaller_version: str = Field(min_length=5, max_length=180)
     post_completion_question: str = Field(min_length=5, max_length=120)
-    framework_key: Literal["ikigai", "morita", "logotherapy", "flow", "symbol"]
+    framework_key: Literal["ikigai", "morita", "logotherapy", "flow", "panj_dosh", "symbol"]
     # ── Intelligence fields with defaults for post-parse validation ───────────
     inner_work_layer: Literal[
-        "attachment", "anger", "distraction", "ego", "greed", "acceptance", "none"
+        "attachment", "anger", "distraction", "ego", "arrogance", "greed", "acceptance", "none"
     ] = "none"
     approach_angle: Literal["direct", "oblique", "embodied", "reflective"] = "reflective"
     journey_phase: Literal["foundation", "recognition", "integration"] = "foundation"
@@ -57,14 +57,14 @@ class LoopTaskPayload(BaseModel):
 
 
 class LoopTasksPayload(BaseModel):
-    tasks: list[LoopTaskPayload] = Field(min_length=3, max_length=3)
+    tasks: list[LoopTaskPayload] = Field(min_length=5, max_length=5)
 
 
 # Gemini rejects default values in responseSchema. This mirror model has the
 # same shape as LoopTaskPayload but with the 4 intelligence fields as required
 # (no defaults), so the schema sent to Gemini has no 'default' keys.
 class _LoopTaskGeminiSchema(BaseModel):
-    category: Literal["awareness", "action", "meaning"]
+    category: Literal["awareness", "action", "reflection", "reset", "growth"]
     title: str = Field(min_length=3, max_length=80)
     subtitle: str = Field(min_length=3, max_length=80)
     kotler_tag: Literal["Curiosity", "Purpose", "Passion", "Autonomy", "Mastery"]
@@ -80,9 +80,9 @@ class _LoopTaskGeminiSchema(BaseModel):
     success_condition: str = Field(min_length=5, max_length=140)
     smaller_version: str = Field(min_length=5, max_length=180)
     post_completion_question: str = Field(min_length=5, max_length=120)
-    framework_key: Literal["ikigai", "morita", "logotherapy", "flow", "symbol"]
+    framework_key: Literal["ikigai", "morita", "logotherapy", "flow", "panj_dosh", "symbol"]
     inner_work_layer: Literal[
-        "attachment", "anger", "distraction", "ego", "greed", "acceptance", "none"
+        "attachment", "anger", "distraction", "ego", "arrogance", "greed", "acceptance", "none"
     ]
     approach_angle: Literal["direct", "oblique", "embodied", "reflective"]
     journey_phase: Literal["foundation", "recognition", "integration"]
@@ -90,7 +90,7 @@ class _LoopTaskGeminiSchema(BaseModel):
 
 
 class _LoopTasksGeminiSchema(BaseModel):
-    tasks: list[_LoopTaskGeminiSchema] = Field(min_length=3, max_length=3)
+    tasks: list[_LoopTaskGeminiSchema] = Field(min_length=5, max_length=5)
 
 
 def _strip_schema_defaults(value):

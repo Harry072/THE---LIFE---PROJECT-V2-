@@ -16,7 +16,7 @@ const LOOP_TOAST_MESSAGES = {
   allComplete: "Today's Loop is complete. Come back tomorrow.",
 };
 
-const CORE_CATS = ["awareness", "action", "meaning"];
+const CORE_CATS = ["awareness", "action", "reflection", "reset", "growth"];
 const DEFAULT_SIGNAL = "One honest signal is enough for the mirror to begin forming.";
 const LOOP_INTRO_STORAGE_KEY = "lifeproject_loop_intro_seen";
 
@@ -228,7 +228,7 @@ export default function TheLoopPage() {
     setShowIntroVideo(true);
   }, []);
 
-  const isBusy = loading || generating || preparingTodayPlan;
+  const isBusy = (loading || generating || preparingTodayPlan) && sorted.length === 0;
 
   return (
     <main className="loop-funnel-page">

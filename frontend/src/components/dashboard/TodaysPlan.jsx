@@ -7,7 +7,8 @@ import { useAppState } from "../../contexts/AppStateContext";
 import PostActionFeedbackModal from "../loop/PostActionFeedbackModal";
 
 const CAT_COLORS = {
-  meaning: "#FFD93D", awareness: "#4ECDC4", action: "#FF8C42",
+  awareness: "#4ECDC4", action: "#FF8C42", reflection: "#7FD99A", reset: "#C084FC", growth: "#FFD93D",
+  meaning: "#FFD93D",
 };
 
 const DIFFICULTY_LABELS = {
@@ -263,7 +264,7 @@ export default function TodaysPlan() {
     generateTasks,
   });
 
-  const CORE_CATS = ["awareness", "action", "meaning"];
+  const CORE_CATS = ["awareness", "action", "reflection", "reset", "growth"];
   const coreTasks = (tasks || []).filter(t => CORE_CATS.includes(t.category));
   const displayed = coreTasks.filter(t => !t.skipped).slice(0, 4);
   const doneCount = displayed.filter(t => t.done).length;

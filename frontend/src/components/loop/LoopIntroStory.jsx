@@ -4,7 +4,7 @@ const STORY_SLIDES = [
   "Most people do not fail because they lack potential. They fail because attention gets trapped in loops: scrolling, overthinking, delaying, escaping.",
   "The first step is not motivation. The first step is seeing clearly what is happening inside you.",
   "When a person finds one useful thing to do, distraction begins to lose its grip.",
-  "The Loop gives you three practices: one for awareness, one for action, and one for meaning.",
+  "The Loop gives you five practices: awareness, action, reflection, reset, and growth.",
   "Complete them slowly. Your score grows. Your streak continues. Your tree gains life. Small actions become identity.",
 ];
 

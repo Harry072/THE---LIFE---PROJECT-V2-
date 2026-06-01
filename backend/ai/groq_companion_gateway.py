@@ -189,8 +189,8 @@ def create_groq_chat_completion(client, *, model: str, messages: list[dict], jso
     kwargs = {
         "model": model,
         "messages": messages,
-        "max_tokens": 900,
-        "temperature": 0.8,
+        "max_tokens": 500,
+        "temperature": 0.7,
     }
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
@@ -357,3 +357,60 @@ def generate_life_companion_with_groq_messages(
         prompt_version=prompt_version,
         timeout_seconds=(timeout_seconds * 2) + 2,
     )
+
+
+def summarize_companion_session(conversation_history: list[dict]) -> dict:
+    """
+    Summarizes a completed companion session using Groq at low temperature.
+    Returns structured dict: primary_emotion, main_topic, key_insight,
+    pattern_signal, notable_context.
+    """
+    import json as _json
+    from ai.prompts import SESSION_SUMMARY_PROMPT
+
+    if not conversation_history:
+        return {
+            "primary_emotion": "unknown",
+            "main_topic": "no conversation",
+            "key_insight": "session was empty",
+            "pattern_signal": "none",
+            "notable_context": "",
+        }
+
+    # Build a compact conversation text for summarization
+    conv_text = _json.dumps([
+        {"role": t.get("role", "user"), "content": str(t.get("content", ""))[:300]}
+        for t in conversation_history
+        if isinstance(t, dict)
+    ])
+
+    try:
+        api_key, _ = get_groq_companion_config(prefer_quality=True)
+        client = OpenAI(
+            api_key=api_key,
+            base_url=GROQ_OPENAI_BASE_URL,
+            timeout=12,
+            max_retries=0,
+        )
+        response = client.chat.completions.create(
+            model=GROQ_QUALITY_COMPANION_MODEL,
+            messages=[
+                {"role": "system", "content": SESSION_SUMMARY_PROMPT},
+                {"role": "user", "content": conv_text},
+            ],
+            max_tokens=300,
+            temperature=0.2,
+        )
+        raw = extract_groq_output_text(response).strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        return _json.loads(raw)
+    except Exception as exc:
+        print(f"SESSION_SUMMARIZER error={exc!r}")
+        return {
+            "primary_emotion": "unknown",
+            "main_topic": "summary failed",
+            "key_insight": "could not extract",
+            "pattern_signal": "none",
+            "notable_context": "",
+        }

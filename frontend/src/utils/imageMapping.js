@@ -46,8 +46,11 @@ const CATEGORY_MAP = {
     health:            [6, 9, 7, 4],
     sleep:             [9, 1, 10, 14],
     meaning:           [3, 8, 13, 11],
+    growth:            [3, 8, 13, 11],
     awareness:         [1, 12, 5, 0],
     action:            [7, 2, 6, 13],
+    reflection:        [12, 5, 1, 9],
+    reset:             [8, 11, 0, 4],
     connection:        [8, 4, 6, 7],
     mental:            [12, 5, 1, 10],
 };

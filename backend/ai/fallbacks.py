@@ -6,9 +6,9 @@ from .context import CORE_CATEGORY_ORDER
 
 
 INTENSITY_DURATIONS = {
-    "gentle": {"awareness": 3, "action": 5, "meaning": 5},
-    "normal": {"awareness": 10, "action": 15, "meaning": 10},
-    "deeper": {"awareness": 20, "action": 25, "meaning": 20},
+    "gentle": {"awareness": 3, "action": 5, "reflection": 5, "reset": 3, "growth": 5},
+    "normal": {"awareness": 10, "action": 15, "reflection": 10, "reset": 5, "growth": 10},
+    "deeper": {"awareness": 20, "action": 25, "reflection": 20, "reset": 10, "growth": 20},
 }
 
 INTENSITY_LIMITS = {
@@ -60,6 +60,30 @@ ALTERNATE_TITLES = {
         "Invest Five Minutes in Something That Lasts",
         "Connect One Action to a Larger Purpose",
     ],
+    "reflection": [
+        "Write One Honest Line",
+        "Name What You Are Avoiding",
+        "Write the Pattern Once",
+        "Trace One Feeling Back",
+        "Answer One Quiet Question",
+        "Write the Truth Without Fixing It",
+    ],
+    "reset": [
+        "Take Five Slow Breaths",
+        "Lower Your Shoulders Once",
+        "Step Away for Two Minutes",
+        "Ground Both Feet",
+        "Unclench and Breathe",
+        "Pause Before the Next Step",
+    ],
+    "growth": [
+        "Support One Future Step",
+        "Make Tomorrow Lighter",
+        "Do One Useful Act",
+        "Leave One Thing Better",
+        "Choose One Value-Led Move",
+        "Help One Real Person",
+    ],
 }
 
 MOOD_DESCRIPTIONS = {
@@ -81,12 +105,18 @@ MOOD_DESCRIPTIONS = {
 CATEGORY_LABELS = {
     "awareness": "noticing the pattern before acting",
     "action": "turning thought into one concrete step",
+    "reflection": "naming one honest signal without judgment",
+    "reset": "lowering friction before the next step",
+    "growth": "connecting effort to something that matters",
     "meaning": "connecting effort to something that matters",
 }
 
 KOTLER_TAG_BY_CATEGORY = {
     "awareness": "Curiosity",
     "action": "Mastery",
+    "reflection": "Autonomy",
+    "reset": "Autonomy",
+    "growth": "Purpose",
     "meaning": "Purpose",
 }
 
@@ -224,16 +254,22 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
 
     awareness_duration = get_duration(context, "awareness")
     action_duration = get_duration(context, "action")
-    meaning_duration = get_duration(context, "meaning")
+    reflection_duration = get_duration(context, "reflection")
+    reset_duration = get_duration(context, "reset")
+    growth_duration = get_duration(context, "growth")
 
     if latest_mood == "heavy":
         awareness_action = "Write the thought that felt heaviest today."
         action_step = f"Give {action_duration} {minute_word(action_duration)} to one small task you can finish."
-        meaning_action = "Do one thing that makes tomorrow easier."
+        reflection_action = "Write one sentence naming what feels heavy without judging it."
+        reset_action = "Take five slow breaths with both feet on the floor."
+        growth_action = "Do one thing that makes tomorrow easier."
     elif latest_mood == "restless":
         awareness_action = f"Sit for {min(awareness_duration, 5)} minutes and name where your mind keeps running."
         action_step = "Clear one small physical space."
-        meaning_action = "Choose one action that supports the person you are becoming."
+        reflection_action = "Write one line about what your restlessness wants to avoid."
+        reset_action = "Step away from the screen for two minutes and breathe slowly."
+        growth_action = "Choose one action that supports the person you are becoming."
     else:
         awareness_action = (
             "Write the moment you most often reach for your phone today."
@@ -245,14 +281,20 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             if has_low_motivation or is_early or is_gentle
             else "Work for ten minutes on one task you have been avoiding."
         )
-        meaning_action = "Do one thing that makes tomorrow easier for you or someone else."
+        reflection_action = "Write one honest sentence about what you are avoiding today."
+        reset_action = "Pause, lower your shoulders, and take five slow breaths."
+        growth_action = "Do one thing that makes tomorrow easier for you or someone else."
 
     if "awareness" in weak_categories:
         awareness_action = "Write one honest sentence about what is happening right now."
     if "action" in weak_categories:
         action_step = "Spend five minutes on the easiest visible next step."
-    if "meaning" in weak_categories:
-        meaning_action = "Write one sentence naming who your next effort helps."
+    if "reflection" in weak_categories:
+        reflection_action = "Write three words that name what is happening inside."
+    if "reset" in weak_categories:
+        reset_action = "Take one slow breath, unclench your jaw, and stop there."
+    if "growth" in weak_categories or "meaning" in weak_categories:
+        growth_action = "Write one sentence naming who your next effort helps."
 
     tasks_by_category = {
         "awareness": {
@@ -272,6 +314,10 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "supportive_line": "You only need to notice one pattern today.",
             "why_chosen": "This keeps the first step small and visible.",
             "easier_version": "Write one sentence about the pattern.",
+            "inner_work_layer": "distraction",
+            "approach_angle": "reflective",
+            "journey_phase": context.get("journey_stage") or "foundation",
+            "ikigai_quadrant": "passion",
             **task_metadata(
                 context,
                 "You write one honest sentence about the pattern.",
@@ -295,29 +341,91 @@ def generate_fallback_tasks(context: dict) -> list[dict]:
             "supportive_line": "Starting small still counts.",
             "why_chosen": "This turns pressure into a concrete next move.",
             "easier_version": "Do the first two minutes only.",
+            "inner_work_layer": "ego",
+            "approach_angle": "embodied",
+            "journey_phase": context.get("journey_stage") or "foundation",
+            "ikigai_quadrant": "profession",
             **task_metadata(
                 context,
                 "You begin the visible next step, even briefly.",
                 "Do the first two minutes only.",
             ),
         },
-        "meaning": {
-            "category": "meaning",
-            "title": avoid_recent_title("meaning", "Make Tomorrow Lighter", recent_titles),
-            "subtitle": "Meaning Practice",
-            "kotler_tag": KOTLER_TAG_BY_CATEGORY["meaning"],
-            "waar_action": meaning_action,
+        "reflection": {
+            "category": "reflection",
+            "title": avoid_recent_title("reflection", "Write One Honest Line", recent_titles),
+            "subtitle": "Reflection Practice",
+            "kotler_tag": KOTLER_TAG_BY_CATEGORY["reflection"],
+            "waar_action": reflection_action,
+            "ikigai_purpose": (
+                "A short reflection lets the avoided signal become visible without turning it into a verdict. "
+                "Naming it gently lowers its hidden weight."
+            ),
+            "why_this_helps": "A plain sentence can make avoidance easier to meet.",
+            "detail_description": f"Reflection creates room around the pattern. Action: {reflection_action}",
+            "duration_minutes": reflection_duration,
+            "preferred_time_of_day": "evening",
+            "supportive_line": "You are naming, not judging.",
+            "why_chosen": "This re-approaches avoided material without forcing a solution.",
+            "easier_version": "Write only three words.",
+            "inner_work_layer": "attachment",
+            "approach_angle": "oblique",
+            "journey_phase": context.get("journey_stage") or "foundation",
+            "ikigai_quadrant": "mission",
+            **task_metadata(
+                context,
+                "You write one honest line or three honest words.",
+                "Write only three words.",
+            ),
+        },
+        "reset": {
+            "category": "reset",
+            "title": avoid_recent_title("reset", "Take Five Slow Breaths", recent_titles),
+            "subtitle": "Reset Practice",
+            "kotler_tag": KOTLER_TAG_BY_CATEGORY["reset"],
+            "waar_action": reset_action,
+            "ikigai_purpose": (
+                "A reset lowers the body's pressure before asking for effort. "
+                "The next step gets easier when the system is less crowded."
+            ),
+            "why_this_helps": "Lowering body pressure makes the next step easier to choose.",
+            "detail_description": f"A brief reset can lower the friction around action. Action: {reset_action}",
+            "duration_minutes": reset_duration,
+            "preferred_time_of_day": "today",
+            "supportive_line": "Settling is also a useful step.",
+            "why_chosen": "This lowers pressure before effort.",
+            "easier_version": "Take one slow breath.",
+            "inner_work_layer": "anger",
+            "approach_angle": "embodied",
+            "journey_phase": context.get("journey_stage") or "foundation",
+            "ikigai_quadrant": "none",
+            **task_metadata(
+                context,
+                "You complete one short reset.",
+                "Take one slow breath.",
+            ),
+        },
+        "growth": {
+            "category": "growth",
+            "title": avoid_recent_title("growth", "Make Tomorrow Lighter", recent_titles),
+            "subtitle": "Growth Practice",
+            "kotler_tag": KOTLER_TAG_BY_CATEGORY["growth"],
+            "waar_action": growth_action,
             "ikigai_purpose": (
                 "Purpose becomes real when effort serves a future beyond the present mood. "
                 "One useful act proves your day can carry weight."
             ),
             "why_this_helps": "Meaning grows when one action serves a future you care about.",
-            "detail_description": f"A small helpful act can reconnect effort to purpose. Action: {meaning_action}",
-            "duration_minutes": meaning_duration,
+            "detail_description": f"A small helpful act can reconnect effort to direction. Action: {growth_action}",
+            "duration_minutes": growth_duration,
             "preferred_time_of_day": "evening",
             "supportive_line": "Small service can make today feel less random.",
             "why_chosen": "This connects effort to something beyond the current mood.",
             "easier_version": "Write one sentence about who this effort helps.",
+            "inner_work_layer": "greed",
+            "approach_angle": "direct",
+            "journey_phase": context.get("journey_stage") or "foundation",
+            "ikigai_quadrant": "vocation",
             **task_metadata(
                 context,
                 "You complete one helpful action or name who it helps.",

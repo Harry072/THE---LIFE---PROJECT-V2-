@@ -138,6 +138,10 @@ GENERIC_SPAM_PATTERNS = [
     r"\bthink positive\b",
     r"\bcrush your goals\b",
     r"\bunlock your potential\b",
+    r"\bmaximi[sz]e\b",
+    r"\boptimi[sz]e\b",
+    r"\bhustle\b",
+    r"\bgrind\b",
 ]
 
 OVERWHELMING_PATTERNS = [
@@ -145,6 +149,9 @@ OVERWHELMING_PATTERNS = [
     r"\bevery hour\b",
     r"\buntil you finish\b",
     r"\bno breaks?\b",
+    r"\bno excuses?\b",
+    r"\bmust\b",
+    r"\bhave to\b",
 ]
 
 VAGUE_ACTION_PATTERNS = [
@@ -1161,7 +1168,15 @@ def sanitize_detail_description(detail_description: str, fallback_action: str = 
 
 
 def parse_duration(task: dict, context: dict | None = None) -> int:
-    raw_duration = task.get("duration_minutes") or task.get("estimated_duration_mins") or 15
+    raw_duration = (
+        task.get("duration_minutes")
+        or task.get("estimated_duration_mins")
+        or task.get("duration")
+        or 15
+    )
+    if isinstance(raw_duration, str):
+        match = re.search(r"\d+", raw_duration)
+        raw_duration = match.group(0) if match else raw_duration
     try:
         duration = int(raw_duration)
     except (TypeError, ValueError) as exc:
@@ -1246,7 +1261,7 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
         if has_pattern(combined_text, GENERIC_SPAM_PATTERNS):
             raise TaskValidationError("generic_productivity_spam")
 
-        title = str(item.get("title") or "").strip()
+        title = str(item.get("title") or item.get("task_title") or "").strip()
         if len(title) < 3:
             raise TaskValidationError("missing_title")
         if normalize_title(title) in recent_titles_to_avoid:
@@ -1256,7 +1271,14 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
             if _word_overlap_ratio(title, _recent_t) >= _OVERLAP_THRESHOLD:
                 raise TaskValidationError("similar_recent_title")
 
-        action_source = item.get("waar_action") or item.get("action_step") or item.get("easier_version") or ""
+        action_source = (
+            item.get("waar_action")
+            or item.get("action_step")
+            or item.get("task_description")
+            or item.get("easier_version")
+            or item.get("smaller_version")
+            or ""
+        )
         if isinstance(item.get("action_steps"), list):
             action_source = next(
                 (str(step).strip() for step in item["action_steps"] if str(step).strip()),
@@ -1265,6 +1287,7 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
 
         detail_source = (
             item.get("detail_description")
+            or item.get("task_description")
             or item.get("ikigai_purpose")
             or item.get("why_this_helps")
             or item.get("why_chosen")
@@ -1278,8 +1301,16 @@ def validate_ai_tasks(raw_text: str, context: dict | None = None) -> list[dict]:
 
         duration_minutes = parse_duration(item, context)
         kotler_tag = normalize_kotler_tag(item.get("kotler_tag"))
-        waar_action = sanitize_waar_action(item.get("waar_action"))
-        ikigai_purpose = sanitize_ikigai_purpose(item.get("ikigai_purpose"))
+        waar_action = sanitize_waar_action(
+            item.get("waar_action")
+            or item.get("task_description")
+            or item.get("success_condition")
+        )
+        ikigai_purpose = sanitize_ikigai_purpose(
+            item.get("ikigai_purpose")
+            or item.get("why_this_helps")
+            or item.get("task_description")
+        )
         if not str(item.get("personalization_reason") or "").strip():
             print(
                 f"AI_TASK_GENERATION missing_personalization_reason=true category={category}"
@@ -1409,10 +1440,11 @@ def normalize_task_for_insert(
     generation_failure_reason: str | None = None,
 ) -> dict:
     category = normalize_category(task.get("category"))
-    title = str(task.get("title") or f"Meaningful Task {index + 1}").strip()
+    title = str(task.get("title") or task.get("task_title") or f"Growth Task {index + 1}").strip()
     subtitle = str(task.get("subtitle") or f"{category.title()} Practice").strip()
     why_this_helps = str(
         task.get("why_this_helps")
+        or task.get("task_description")
         or task.get("ikigai_purpose")
         or task.get("why_chosen")
         or task.get("why")
@@ -1446,7 +1478,7 @@ def normalize_task_for_insert(
         14,
     )
 
-    _valid_frameworks = {"ikigai", "morita", "logotherapy", "flow", "symbol"}
+    _valid_frameworks = {"ikigai", "morita", "logotherapy", "flow", "panj_dosh", "symbol"}
     _raw_framework = str(task.get("framework_key") or "").strip().lower()
     framework_key = _raw_framework if _raw_framework in _valid_frameworks else None
     _raw_kotler_tag = str(task.get("kotler_tag") or "").strip()
@@ -1455,6 +1487,8 @@ def normalize_task_for_insert(
     # ── Intelligence fields ───────────────────────────────────────────────────
     _valid_inner_layers = {"attachment", "anger", "distraction", "ego", "greed", "acceptance", "none"}
     _raw_inner_layer = str(task.get("inner_work_layer") or "none").strip().lower()
+    if _raw_inner_layer == "arrogance":
+        _raw_inner_layer = "ego"
     inner_work_layer = _raw_inner_layer if _raw_inner_layer in _valid_inner_layers else "none"
 
     _valid_angles = {"direct", "oblique", "embodied", "reflective"}
@@ -1479,13 +1513,14 @@ def normalize_task_for_insert(
         "detail_title": title,
         "detail_description": str(
             task.get("detail_description")
+            or task.get("task_description")
             or (
                 f"{task.get('ikigai_purpose')}\n\nAction: {task.get('waar_action')}"
                 if task.get("ikigai_purpose") and task.get("waar_action")
                 else ""
             )
         ).strip(),
-        "duration_minutes": int(task.get("duration_minutes") or 15),
+        "duration_minutes": parse_duration(task),
         "preferred_time": preferred_time or "today",
         "inline_quote": supportive_line or None,
         "sort_order": index + 1,

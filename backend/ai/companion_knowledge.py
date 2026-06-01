@@ -108,7 +108,7 @@ COMPANION_KNOWLEDGE_CHUNKS = [
         "id": "the_loop",
         "tags": ["loop", "tasks", "productivity", "discipline", "action", "focus"],
         "content": (
-            "The Loop is for daily core practices and task movement: awareness, action, and meaning. "
+            "The Loop is for daily core practices and task movement: awareness, action, reflection, reset, and growth. "
             "Suggest it when the user clearly wants focus, discipline, productivity, task help, or a practical plan."
         ),
     },
