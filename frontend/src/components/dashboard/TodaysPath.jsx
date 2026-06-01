@@ -5,9 +5,8 @@ import Icon from "../Icon";
 import { useAppState } from "../../contexts/AppStateContext";
 import { supabase } from "../../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../../lib/appAuth";
+import { API_BASE_URL } from "../../lib/apiConfig";
 import { LIFE_PATH_INTRO, LIFE_PATH_STEPS } from "../../data/lifeNavigation";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const STEP_SHORT = {
   act: "Loop",

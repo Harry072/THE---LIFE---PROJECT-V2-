@@ -2,8 +2,8 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
+import { API_BASE_URL } from "../lib/apiConfig";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const CORE_LOOP_CATEGORIES = ["awareness", "action", "reflection", "reset", "growth"];
 const AUTO_GENERATION_ERROR =
   "We couldn't prepare today's plan yet. Open The Loop to try again.";

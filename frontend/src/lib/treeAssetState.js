@@ -119,7 +119,7 @@ export function getTreeAssetState(totalScore, lastCompletedDate) {
     phaseLevel: phase.level,
     season,
     daysMissed,
-    assetPath: `/assets/trees/${phase.phase}_${season}.png`,
+    assetPath: phase.fallbackImage,
     fallbackImage: phase.fallbackImage,
     progress: getPhaseProgress(score, phase),
   };

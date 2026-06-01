@@ -2,8 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+import { API_BASE_URL } from "../lib/apiConfig";
 
 const getLocalDate = (date = new Date()) => date.toLocaleDateString("en-CA");
 

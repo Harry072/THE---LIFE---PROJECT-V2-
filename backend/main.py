@@ -82,9 +82,32 @@ from ai.validator import (
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 
+DEFAULT_FRONTEND_URL = "https://the-life-project.vercel.app"
+ALLOWED_ORIGIN = os.getenv("FRONTEND_URL", DEFAULT_FRONTEND_URL)
+
+
+def normalize_origin(value: str | None) -> str | None:
+    if not value:
+        return None
+    origin = value.strip().rstrip("/")
+    return origin or None
+
+
+def split_origins(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [
+        origin
+        for origin in (normalize_origin(item) for item in value.split(","))
+        if origin
+    ]
+
+
 _ALWAYS_ALLOWED_ORIGINS = [
-    "https://the-life-project.vercel.app",
+    DEFAULT_FRONTEND_URL,
     "https://www.the-life-project.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:5174",
@@ -93,30 +116,20 @@ _ALWAYS_ALLOWED_ORIGINS = [
 
 
 def get_cors_origins() -> list[str]:
-    configured_origins = os.environ.get("CORS_ORIGINS")
-    if not configured_origins:
-        return _ALWAYS_ALLOWED_ORIGINS
+    frontend_origin = normalize_origin(ALLOWED_ORIGIN) or DEFAULT_FRONTEND_URL
+    configured_origins = split_origins(os.environ.get("CORS_ORIGINS"))
 
-    extra = [
-        origin.strip()
-        for origin in configured_origins.split(",")
-        if origin.strip()
-    ]
-    # Merge so the Vercel URL is always present regardless of env config
+    # Merge so the Vercel URL is always present regardless of env config.
     seen = set()
     merged = []
-    for o in _ALWAYS_ALLOWED_ORIGINS + extra:
-        if o not in seen:
-            seen.add(o)
-            merged.append(o)
+    for origin in [frontend_origin, *_ALWAYS_ALLOWED_ORIGINS, *configured_origins]:
+        if origin not in seen:
+            seen.add(origin)
+            merged.append(origin)
     return merged
 
 
 app = FastAPI()
-app.include_router(auth_router)
-
-# Build playbook chunk index at startup (graceful — missing .md files are skipped).
-build_chunk_index()
 
 app.add_middleware(
     CORSMiddleware,
@@ -125,6 +138,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+app.include_router(auth_router)
+
+# Build playbook chunk index at startup (graceful — missing .md files are skipped).
+build_chunk_index()
 
 # Initialize Supabase
 def get_env_value(name: str) -> str | None:
@@ -1818,6 +1842,7 @@ async def save_curator_interaction(
         raise HTTPException(status_code=500, detail="Failed to save curator metadata") from error
 
 
+@app.post("/api/life-companion")
 @app.post("/api/life-companion/chat")
 async def life_companion_chat(
     request: LifeCompanionRequest,

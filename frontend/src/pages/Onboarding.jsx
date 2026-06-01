@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { PremiumButton, GlassCard, InputGroup, PageTransition } from '../components/common/ThemeUI';
 import { Mail, Lock, Shield, ArrowRight, Compass, Info, User } from 'lucide-react';
 import heroImage from '../assets/hero-tree.png';
+import { API_BASE_URL } from '../lib/apiConfig';
 
 const STRUGGLES = [
   "I can't stop scrolling",
@@ -21,7 +22,6 @@ const STRUGGLES = [
 
 const MotionDiv = motion.div;
 const MotionP = motion.p;
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GOOGLE_AUTH_ORIGIN = import.meta.env.VITE_GOOGLE_AUTH_ORIGIN ?? 'http://localhost:5173';
 const GOOGLE_AUTH_DRAFT_HASH_PREFIX = 'googleAuthDraft=';

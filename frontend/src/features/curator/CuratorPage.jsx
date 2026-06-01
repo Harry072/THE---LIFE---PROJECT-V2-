@@ -16,10 +16,9 @@ import CuratorIntelligencePanel from "./CuratorIntelligencePanel";
 import useCuratorIntelligence from "./useCuratorIntelligence";
 import { supabase } from "../../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../../lib/appAuth";
+import { API_BASE_URL } from "../../lib/apiConfig";
 import { useAppState } from "../../contexts/AppStateContext";
 import "./CuratorPage.css";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 export default function CuratorPage() {
   const navigate = useNavigate();
