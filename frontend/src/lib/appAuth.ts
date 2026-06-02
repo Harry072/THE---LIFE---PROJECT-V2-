@@ -1,5 +1,52 @@
 export const APP_ACCESS_TOKEN_KEY = 'lifeProject.accessToken';
 export const APP_AUTH_USER_KEY = 'lifeProject.authUser';
+export const AUTH_LOGIN_PATH = '/';
+
+export const isAuthSessionError = (error: any) => {
+  const text = [
+    error?.name,
+    error?.message,
+    error?.status,
+    error?.code,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  return (
+    text.includes('invalid refresh token') ||
+    text.includes('refresh token not found') ||
+    text.includes('auth session missing') ||
+    text.includes('session not found') ||
+    text.includes('jwt expired')
+  );
+};
+
+export const clearBrowserAuthState = () => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+};
+
+export const redirectToLogin = () => {
+  if (typeof window === 'undefined') return;
+  if (window.location.pathname === AUTH_LOGIN_PATH) return;
+  window.location.assign(AUTH_LOGIN_PATH);
+};
+
+export const recoverFromDeadAuthSession = async (
+  supabase: any,
+  { redirect = true } = {}
+) => {
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    // The browser storage purge below is the source of truth for recovery.
+  }
+
+  clearBrowserAuthState();
+
+  if (redirect) {
+    redirectToLogin();
+  }
+};
 
 export const getStoredAppAccessToken = () => {
   if (typeof window === 'undefined') return null;
@@ -7,9 +54,28 @@ export const getStoredAppAccessToken = () => {
 };
 
 export const getSupabaseOrAppAccessToken = async (supabase: any) => {
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  let sessionData: any = null;
+  let sessionError: any = null;
+
+  try {
+    const sessionResult = await supabase.auth.getSession();
+    sessionData = sessionResult?.data;
+    sessionError = sessionResult?.error;
+  } catch (error) {
+    if (isAuthSessionError(error)) {
+      await recoverFromDeadAuthSession(supabase);
+      throw new Error('Your session expired. Please sign in again.');
+    }
+    throw error;
+  }
+
   const supabaseToken = sessionData?.session?.access_token;
   if (supabaseToken) return supabaseToken;
+
+  if (sessionError && isAuthSessionError(sessionError)) {
+    await recoverFromDeadAuthSession(supabase);
+    throw new Error('Your session expired. Please sign in again.');
+  }
 
   const appToken = getStoredAppAccessToken();
   if (appToken) return appToken;

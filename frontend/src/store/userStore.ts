@@ -2,9 +2,13 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { queryClient } from '../lib/queryClient';
 import {
+  clearBrowserAuthState,
   clearStoredAppAuth,
   getStoredAppAccessToken,
   getStoredAppUser,
+  isAuthSessionError,
+  recoverFromDeadAuthSession,
+  redirectToLogin,
   setStoredAppAuth,
 } from '../lib/appAuth';
 
@@ -40,8 +44,7 @@ interface UserState {
  * to prevent data bleed in production.
  */
 const purgeAllLocalData = () => {
-  localStorage.clear();
-  sessionStorage.clear();
+  clearBrowserAuthState();
   queryClient.clear();
 };
 
@@ -161,7 +164,15 @@ export const useUserStore = create<UserState>((set, get) => ({
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       const session = sessionData?.session ?? null;
 
-      if (sessionError || !session) {
+      if (sessionError) {
+        if (isAuthSessionError(sessionError)) {
+          await recoverFromDeadAuthSession(supabase);
+        }
+        set({ ...clearedAuthState, loading: false });
+        return false;
+      }
+
+      if (!session) {
         set({ ...clearedAuthState, loading: false });
         return false;
       }
@@ -169,7 +180,15 @@ export const useUserStore = create<UserState>((set, get) => ({
       const { data: userData, error: userError } = await supabase.auth.getUser();
       const authUser = userData?.user ?? null;
 
-      if (userError || !authUser || authUser.id !== session.user?.id) {
+      if (userError) {
+        if (isAuthSessionError(userError)) {
+          await recoverFromDeadAuthSession(supabase);
+        }
+        set({ ...clearedAuthState, loading: false });
+        return false;
+      }
+
+      if (!authUser || authUser.id !== session.user?.id) {
         set({ ...clearedAuthState, loading: false });
         return false;
       }
@@ -201,6 +220,9 @@ export const useUserStore = create<UserState>((set, get) => ({
       return true;
     } catch (e) {
       console.error("Fetch User Error:", e);
+      if (isAuthSessionError(e)) {
+        await recoverFromDeadAuthSession(supabase);
+      }
       set({ ...clearedAuthState, loading: false });
       return false;
     }
@@ -324,11 +346,17 @@ export const useUserStore = create<UserState>((set, get) => ({
 
 // Initialize Auth State listener
 supabase.auth.onAuthStateChange((event, session) => {
+  if (event === 'TOKEN_REFRESHED') {
+    console.log('Token refreshed successfully');
+  }
+
   if (event === 'SIGNED_OUT') {
     purgeAllLocalData();
     useUserStore.setState({ ...clearedAuthState, loading: false });
+    redirectToLogin();
     return;
   }
+
   if (session) {
     useUserStore.getState().fetchUser();
   } else {
@@ -338,6 +366,7 @@ supabase.auth.onAuthStateChange((event, session) => {
       useUserStore.getState().fetchUser();
       return;
     }
+    purgeAllLocalData();
     useUserStore.setState({ ...clearedAuthState, loading: false });
   }
 });

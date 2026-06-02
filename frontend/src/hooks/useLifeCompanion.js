@@ -1,6 +1,10 @@
 import { useCallback, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
+import {
+  getSupabaseOrAppAccessToken,
+  isAuthSessionError,
+  recoverFromDeadAuthSession,
+} from "../lib/appAuth";
 import { useAppState } from "../contexts/AppStateContext";
 import { API_BASE_URL } from "../lib/apiConfig";
 
@@ -79,9 +83,18 @@ export function useLifeCompanion() {
       throw new Error("Sign in again to use Life Companion.");
     }
 
-    const accessToken = await getSupabaseOrAppAccessToken(supabase);
+    let accessToken = null;
+    try {
+      accessToken = await getSupabaseOrAppAccessToken(supabase);
+    } catch (tokenError) {
+      if (isAuthSessionError(tokenError)) {
+        await recoverFromDeadAuthSession(supabase);
+      }
+      throw tokenError;
+    }
 
     if (!accessToken) {
+      await recoverFromDeadAuthSession(supabase);
       throw new Error("Your session has expired. Please sign in again.");
     }
 
@@ -101,6 +114,10 @@ export function useLifeCompanion() {
 
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status === 401) {
+        await recoverFromDeadAuthSession(supabase);
+        throw new Error("Your session has expired. Please sign in again.");
+      }
       throw new Error(payload?.detail || `Server returned ${response.status}`);
     }
 
