@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import main
 from ai.gateway import (
-    AIGenerationError,
     _call_google_genai_loop_tasks,
     build_gemini_diagnosis,
     classify_gemini_error,
@@ -91,10 +90,9 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
                 "completion_pattern": "mixed",
                 "suggested_intensity": "gentle",
             }),
-            patch.object(main, "build_loop_tasks_prompt", return_value="safe loop prompt"),
         )
 
-    def test_gemini_success_saves_five_ai_tasks(self):
+    def test_retrieval_success_saves_two_tasks_from_library(self):
         request = main.TaskRequest(
             user_id=USER_ID,
             local_date=LOCAL_DATE,
@@ -108,36 +106,98 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
             captured["source"] = source
             return "inserted", rows
 
+        candidates = [
+            {
+                "id": "T-awareness", "category": "awareness",
+                "task_text": "Write three honest lines about today. Notice what surprised you.",
+                "inner_layer": "distraction", "approach_angle": "reflective",
+                "level": "foundation", "ikigai": "mission", "direction": "inward",
+                "safety_gate": None, "duration_minutes": 5, "score": 0.9,
+            },
+            {
+                "id": "T-action", "category": "action",
+                "task_text": "Stand up and move one visible step forward. Do it now.",
+                "inner_layer": "ego", "approach_angle": "embodied",
+                "level": "foundation", "ikigai": "profession", "direction": "inward",
+                "safety_gate": None, "duration_minutes": 5, "score": 0.8,
+            },
+            {
+                "id": "T-reflection", "category": "reflection",
+                "task_text": "Name one feeling you have been avoiding. Sit with it a moment.",
+                "inner_layer": "attachment", "approach_angle": "reflective",
+                "level": "foundation", "ikigai": "mission", "direction": "inward",
+                "safety_gate": None, "duration_minutes": 5, "score": 0.7,
+            },
+            {
+                "id": "T-reset", "category": "reset",
+                "task_text": "Take five slow breaths with your feet on the floor. Let your shoulders drop.",
+                "inner_layer": "anger", "approach_angle": "embodied",
+                "level": "foundation", "ikigai": "passion", "direction": "inward",
+                "safety_gate": None, "duration_minutes": 5, "score": 0.6,
+            },
+            {
+                "id": "T-growth", "category": "growth",
+                "task_text": "Send one useful message to someone who helped you. Keep it short and honest.",
+                "inner_layer": "greed", "approach_angle": "reflective",
+                "level": "foundation", "ikigai": "vocation", "direction": "outward",
+                "safety_gate": None, "duration_minutes": 5, "score": 0.5,
+            },
+        ]
+
         patches = self._base_patches()
         with (
             patches[0],
             patches[1],
             patches[2],
-            patches[3],
-            patch.object(main, "loop_gemini_client", object()),
-            patch.object(
-                main,
-                "generate_loop_tasks_with_gemini",
-                return_value=SimpleNamespace(
-                    text='{"tasks":[]}',
-                    provider="gemini",
-                    prompt_version=main.LOOP_TASKS_PROMPT_VERSION,
-                    latency_ms=12,
-                ),
-            ),
-            patch.object(main, "validate_ai_tasks", return_value=AI_TASKS),
+            patch.object(main, "retrieve_candidates", return_value=candidates),
             patch.object(main, "insert_task_rows", side_effect=fake_insert),
         ):
             response = run_async(main.generate_tasks(request, authorization="Bearer token"))
 
         self.assertEqual(response["status"], "inserted")
-        self.assertEqual(captured["source"], "ai_success")
-        self.assertEqual(len(captured["rows"]), 5)
-        self.assertTrue(all(row["ai_generated"] is True for row in captured["rows"]))
-        self.assertTrue(all(row["generation_provider"] == "gemini" for row in captured["rows"]))
+        self.assertEqual(captured["source"], "task_retrieval_success")
+        self.assertEqual(len(captured["rows"]), 2)
+        self.assertEqual(
+            {row["category"] for row in captured["rows"]}, {"awareness", "action"}
+        )
+        self.assertTrue(all(row["ai_generated"] is False for row in captured["rows"]))
+        self.assertTrue(
+            all(row["generation_provider"] == "task_library_retrieval" for row in captured["rows"])
+        )
         self.assertEqual(captured["rows"][0]["kotler_tag"], "Curiosity")
+        for hidden_field in ("inner_work_layer", "approach_angle", "journey_phase", "ikigai_quadrant"):
+            self.assertNotIn(hidden_field, response["data"][0])
 
-    def test_first_gemini_failure_returns_retryable_without_saving_fallback(self):
+    def test_pick_retrieval_tasks_skips_unsafe_candidate_and_tries_next(self):
+        candidates = [
+            {
+                "id": "T-bad", "category": "awareness",
+                "task_text": "Diagnose your own anxiety and treat it before bed.",
+                "inner_layer": "distraction", "approach_angle": "reflective",
+                "level": "foundation", "ikigai": "mission",
+            },
+            {
+                "id": "T-good", "category": "awareness",
+                "task_text": "Write three honest lines about today. Notice what surprised you.",
+                "inner_layer": "distraction", "approach_angle": "reflective",
+                "level": "foundation", "ikigai": "mission",
+            },
+            {
+                "id": "T-action", "category": "action",
+                "task_text": "Stand up and move one visible step forward. Do it now.",
+                "inner_layer": "ego", "approach_angle": "embodied",
+                "level": "foundation", "ikigai": "profession",
+            },
+        ]
+
+        picked = main._pick_retrieval_tasks(candidates, set(), [], 15)
+
+        self.assertEqual(len(picked), 2)
+        awareness_task = next(t for t in picked if t["category"] == "awareness")
+        self.assertNotIn("diagnose", awareness_task["why_this_helps"].lower())
+        self.assertIn("honest lines", awareness_task["why_this_helps"].lower())
+
+    def test_retrieval_failure_returns_retryable_without_saving_fallback(self):
         request = main.TaskRequest(
             user_id=USER_ID,
             local_date=LOCAL_DATE,
@@ -145,31 +205,13 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
             current_streak=0,
             allow_safe_fallback=False,
         )
-        diagnosis = build_gemini_diagnosis(
-            "gemini_permission_denied",
-            key_source="GEMINI_API_KEY",
-            gemini_api_key_present=True,
-            google_api_key_present=False,
-            model_name="gemini-2.5-flash",
-        )
 
         patches = self._base_patches()
         with (
             patches[0],
             patches[1],
             patches[2],
-            patches[3],
-            patch.object(main, "loop_gemini_client", object()),
-            patch.object(
-                main,
-                "generate_loop_tasks_with_gemini",
-                side_effect=AIGenerationError(
-                    "gemini_permission_denied",
-                    "permission denied",
-                    latency_ms=10,
-                    diagnosis=diagnosis,
-                ),
-            ),
+            patch.object(main, "retrieve_candidates", return_value=[]),
             patch.object(main, "save_fallback_tasks") as save_fallback,
             patch.object(main, "insert_task_rows") as insert_rows,
         ):
@@ -178,34 +220,7 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         self.assertEqual(response["status"], "retryable_ai_failure")
         self.assertEqual(response["data"], [])
         self.assertTrue(response["meta"]["retryable"])
-        self.assertEqual(response["meta"]["diagnosis"]["reason"], "gemini_permission_denied")
-        save_fallback.assert_not_called()
-        insert_rows.assert_not_called()
-
-    def test_provider_unavailable_first_attempt_returns_retryable_without_saving(self):
-        request = main.TaskRequest(
-            user_id=USER_ID,
-            local_date=LOCAL_DATE,
-            struggles=["scrolling"],
-            current_streak=0,
-            allow_safe_fallback=False,
-        )
-
-        patches = self._base_patches()
-        with (
-            patches[0],
-            patches[1],
-            patches[2],
-            patches[3],
-            patch.object(main, "loop_gemini_client", None),
-            patch.object(main, "save_fallback_tasks") as save_fallback,
-            patch.object(main, "insert_task_rows") as insert_rows,
-        ):
-            response = run_async(main.generate_tasks(request, authorization="Bearer token"))
-
-        self.assertEqual(response["status"], "retryable_ai_failure")
-        self.assertEqual(response["data"], [])
-        self.assertEqual(response["meta"]["error_reason"], "provider_unavailable")
+        self.assertIn("insufficient_categories", response["meta"]["diagnosis"]["reason"])
         save_fallback.assert_not_called()
         insert_rows.assert_not_called()
 
@@ -252,6 +267,9 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         self.assertEqual(status, "fallback")
         self.assertEqual(captured["source"], "safe_fallback")
         self.assertEqual(rows, captured["rows"])
+        # generate_fallback_tasks returned 5 (AI_TASKS); save_fallback_tasks
+        # must trim to _RETRIEVAL_TASK_COUNT when not in repair mode.
+        self.assertEqual(len(rows), main._RETRIEVAL_TASK_COUNT)
         self.assertTrue(all(row["ai_generated"] is False for row in rows))
         self.assertTrue(all(row["generation_provider"] == "safe_fallback" for row in rows))
         self.assertTrue(all(row["generation_failure_reason"] == "provider_timeout" for row in rows))
@@ -260,7 +278,7 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         self.assertTrue(main.is_core_task({"category": "awareness", "is_optional": "false"}))
         self.assertFalse(main.is_core_task({"category": "awareness", "is_optional": "true"}))
 
-    def test_retry_failure_tries_gemini_then_saves_safe_fallback(self):
+    def test_retrieval_failure_saves_safe_fallback_when_allowed(self):
         request = main.TaskRequest(
             user_id=USER_ID,
             local_date=LOCAL_DATE,
@@ -271,9 +289,6 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
         fallback_rows = [
             {"id": "a", "category": "awareness", "ai_generated": False, "generation_provider": "safe_fallback"},
             {"id": "b", "category": "action", "ai_generated": False, "generation_provider": "safe_fallback"},
-            {"id": "c", "category": "reflection", "ai_generated": False, "generation_provider": "safe_fallback"},
-            {"id": "d", "category": "reset", "ai_generated": False, "generation_provider": "safe_fallback"},
-            {"id": "e", "category": "growth", "ai_generated": False, "generation_provider": "safe_fallback"},
         ]
 
         patches = self._base_patches()
@@ -281,27 +296,21 @@ class LoopTaskGenerationRetryTests(unittest.TestCase):
             patches[0],
             patches[1],
             patches[2],
-            patches[3],
-            patch.object(main, "loop_gemini_client", object()),
-            patch.object(
-                main,
-                "generate_loop_tasks_with_gemini",
-                side_effect=AIGenerationError("gemini_permission_denied", "permission denied", latency_ms=10),
-            ) as live_call,
+            patch.object(main, "retrieve_candidates", return_value=[]) as retrieval_call,
             patch.object(main, "delete_uncompleted_generated_core_tasks") as delete_existing,
             patch.object(main, "save_fallback_tasks", return_value=("fallback", fallback_rows)) as save_fallback,
         ):
             response = run_async(main.generate_tasks(request, authorization="Bearer token"))
 
-        live_call.assert_called_once()
+        retrieval_call.assert_called_once()
         delete_existing.assert_called_once_with(USER_ID, LOCAL_DATE)
         save_fallback.assert_called_once()
         _, kwargs = save_fallback.call_args
         self.assertEqual(kwargs["generation_provider"], "safe_fallback")
-        self.assertEqual(kwargs["generation_failure_reason"], "gemini_permission_denied")
+        self.assertIn("insufficient_categories", kwargs["generation_failure_reason"])
         self.assertTrue(kwargs["force_insert_all"])
         self.assertEqual(response["status"], "fallback")
-        self.assertEqual(len(response["data"]), 5)
+        self.assertEqual(len(response["data"]), 2)
         self.assertEqual(response["meta"]["provider"], "safe_fallback")
 
     def test_permission_denied_is_classified_for_key_diagnosis(self):

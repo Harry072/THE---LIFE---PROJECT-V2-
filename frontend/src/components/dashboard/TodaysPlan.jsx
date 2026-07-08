@@ -269,9 +269,7 @@ export default function TodaysPlan() {
   const displayed = coreTasks.filter(t => !t.skipped).slice(0, 4);
   const doneCount = displayed.filter(t => t.done).length;
   const totalCount = coreTasks.length;
-  const hasAllCoreCategories = CORE_CATS.every(cat => coreTasks.some(t => t.category === cat));
   const allTasksDone = coreTasks.length > 0
-    && hasAllCoreCategories
     && coreTasks.every(t => t.done || t.completed_at || t.skipped);
   const statusMessage = error || autoGenerationError;
   const isPreparingPlan = preparingTodayPlan || (generating && displayed.length === 0);

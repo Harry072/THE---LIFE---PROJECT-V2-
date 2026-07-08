@@ -359,22 +359,14 @@ const getStructuredCards = (reflection) => {
   ].filter(Boolean);
 };
 
-const getCanvasValue = (answers) => (
-  [answers[0], answers[1], answers[2]]
-    .map((answer) => answer || "")
-    .filter((answer) => answer.trim())
-    .join("\n\n")
-);
-
 function ArchiveEntryDetail({
   reflection,
-  today,
   onBack,
   onNewReflection,
-  onEditToday,
+  onEditEntry,
   isDrawer = false,
 }) {
-  const isToday = getReflectionDateKey(reflection) === today;
+  const isEditable = Boolean(reflection?.content);
   const sections = getDiarySections(reflection);
   const weather = getWeatherMeta(reflection);
   const WeatherIcon = weather?.Icon;
@@ -483,13 +475,13 @@ function ArchiveEntryDetail({
         This is your space. No judgment. Just you.
       </p>
 
-      {isToday && (
+      {isEditable && (
         <button
           type="button"
           className="reflection-archive-edit"
-          onClick={onEditToday}
+          onClick={() => onEditEntry(reflection)}
         >
-          Return to today
+          Edit this entry
         </button>
       )}
     </main>
@@ -501,10 +493,9 @@ function ArchivePanel({
   selectedId,
   onSelect,
   selectedReflection,
-  today,
   loading,
   error,
-  onEditToday,
+  onEditEntry,
   onBack,
   onNewReflection,
   onClose,
@@ -518,10 +509,9 @@ function ArchivePanel({
       <aside className="reflection-archive-drawer has-detail">
         <ArchiveEntryDetail
           reflection={selectedReflection}
-          today={today}
           onBack={onBack}
           onNewReflection={onNewReflection}
-          onEditToday={onEditToday}
+          onEditEntry={onEditEntry}
           isDrawer
         />
       </aside>
@@ -596,7 +586,10 @@ function ArchivePanel({
               </span>
               <span className="reflection-archive-entry-copy">
                 <span>{formatDate(getReflectionDateValue(reflection), { year: true, weekday: false })}</span>
-                <small>{formatWeekday(getReflectionDateValue(reflection))}</small>
+                <small>
+                  {formatWeekday(getReflectionDateValue(reflection))}
+                  {formatEntryTime(reflection) ? ` · ${formatEntryTime(reflection)}` : ""}
+                </small>
                 <strong>{getEntryTitle(reflection)}</strong>
                 {weather?.label && (
                   <em>{weather.label}</em>
@@ -620,19 +613,22 @@ function ArchivePanel({
 export default function ReflectionPage() {
   const navigate = useNavigate();
   const {
-    answers,
-    setAnswer,
-    selectedMood,
-    setSelectedMood,
+    entries,
     loading,
+    archiveError,
+    loadEntries,
+    activeEntryId,
+    draftContent,
+    setDraftContent,
+    draftMood,
+    setDraftMood,
+    startNewEntry,
+    startEditingEntry,
     saving,
-    save,
+    saveDraft,
     statusMessage,
     statusTone,
-    recentReflections,
-    archiveLoading,
-    archiveError,
-    loadRecentReflections,
+    hasContent,
     today,
   } = useReflection();
 
@@ -666,12 +662,9 @@ export default function ReflectionPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [archiveDetailOpen, archiveOpen]);
 
-  const canvasValue = getCanvasValue(answers);
-  const hasCanvasContent = canvasValue.trim().length > 0;
-
   const selectedArchiveReflection = useMemo(() => (
-    recentReflections.find((reflection) => reflection.id === selectedArchiveId) || null
-  ), [recentReflections, selectedArchiveId]);
+    entries.find((reflection) => reflection.id === selectedArchiveId) || null
+  ), [entries, selectedArchiveId]);
 
   const handleArchiveSelect = (id) => {
     setSelectedArchiveId(id);
@@ -682,34 +675,40 @@ export default function ReflectionPage() {
     setArchiveDetailOpen(false);
   };
 
-  const handleCanvasChange = (value) => {
-    setAnswer(0, value);
-    if (answers[1]) setAnswer(1, "");
-    if (answers[2]) setAnswer(2, "");
-  };
-
-  const handleSave = async () => {
-    if (saving || !hasCanvasContent) return;
-    await save();
-  };
-
-  const openArchive = async () => {
-    setArchiveOpen(true);
-    setArchiveDetailOpen(false);
-    await loadRecentReflections();
-  };
-
-  const editToday = () => {
-    setArchiveOpen(false);
-    setArchiveDetailOpen(false);
+  const focusComposer = () => {
     window.setTimeout(() => {
       textareaRef.current?.focus();
       textareaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 0);
   };
 
+  const handleSave = async () => {
+    if (saving || !hasContent) return;
+    await saveDraft();
+  };
+
+  const openArchive = async () => {
+    setArchiveOpen(true);
+    setArchiveDetailOpen(false);
+    await loadEntries();
+  };
+
+  const handleNewEntry = () => {
+    startNewEntry();
+    setArchiveOpen(false);
+    setArchiveDetailOpen(false);
+    focusComposer();
+  };
+
+  const handleEditEntry = (reflection) => {
+    startEditingEntry(reflection);
+    setArchiveOpen(false);
+    setArchiveDetailOpen(false);
+    focusComposer();
+  };
+
   const activeStatus = loading ? "Preparing a quiet page..." : statusMessage;
-  const statusCopy = activeStatus || (hasCanvasContent ? "Only you can see this." : "Saved privately");
+  const statusCopy = activeStatus || (hasContent ? "Only you can see this." : "Saved privately");
 
   if (loading) {
     return (
@@ -731,16 +730,15 @@ export default function ReflectionPage() {
       <div className="reflection-shell">
         {!isCompact && (
           <ArchivePanel
-            reflections={recentReflections}
+            reflections={entries}
             selectedId={selectedArchiveId}
             selectedReflection={selectedArchiveReflection}
             onSelect={handleArchiveSelect}
-            today={today}
-            loading={archiveLoading}
+            loading={loading}
             error={archiveError}
-            onEditToday={editToday}
+            onEditEntry={handleEditEntry}
             onBack={closeArchiveDetail}
-            onNewReflection={editToday}
+            onNewReflection={handleNewEntry}
             detailOpen={archiveDetailOpen}
           />
         )}
@@ -748,10 +746,9 @@ export default function ReflectionPage() {
         {!isCompact && archiveDetailOpen && selectedArchiveReflection ? (
           <ArchiveEntryDetail
             reflection={selectedArchiveReflection}
-            today={today}
             onBack={closeArchiveDetail}
-            onNewReflection={editToday}
-            onEditToday={editToday}
+            onNewReflection={handleNewEntry}
+            onEditEntry={handleEditEntry}
           />
         ) : (
         <main className="reflection-main-panel">
@@ -776,12 +773,21 @@ export default function ReflectionPage() {
               </button>
             )}
 
+            <button
+              type="button"
+              className="reflection-mobile-archive-button"
+              onClick={handleNewEntry}
+            >
+              <Feather size={17} strokeWidth={1.7} />
+              <span>Add entry</span>
+            </button>
+
             <div className="reflection-save-cluster">
               <button
                 type="button"
                 className="reflection-save-button"
                 onClick={handleSave}
-                disabled={saving || !hasCanvasContent}
+                disabled={saving || !hasContent}
                 aria-label="Save Entry"
               >
                 {saving ? "Saving..." : "Save Entry"}
@@ -796,7 +802,11 @@ export default function ReflectionPage() {
           <header className="reflection-header">
             <p>{formatDate(today).toUpperCase()}</p>
             <h1>Night Reflection</h1>
-            <span>Name what is happening without turning it into a verdict.</span>
+            <span>
+              {activeEntryId
+                ? "Editing a past entry. Changes save in place."
+                : "Name what is happening without turning it into a verdict."}
+            </span>
           </header>
 
           <section className="reflection-marcus-card" aria-labelledby="marcus-title">
@@ -826,7 +836,7 @@ export default function ReflectionPage() {
               {INNER_WEATHER.map((weather) => {
                 const { id, label, note } = weather;
                 const WeatherIcon = weather.Icon;
-                const active = selectedMood === id;
+                const active = draftMood === id;
 
                 return (
                   <button
@@ -836,7 +846,7 @@ export default function ReflectionPage() {
                       "reflection-weather-option",
                       active ? "is-active" : "",
                     ].filter(Boolean).join(" ")}
-                    onClick={() => setSelectedMood(id)}
+                    onClick={() => setDraftMood(id)}
                     role="radio"
                     aria-checked={active}
                   >
@@ -855,19 +865,19 @@ export default function ReflectionPage() {
             <textarea
               ref={textareaRef}
               className="journal-textarea reflection-single-canvas"
-              value={canvasValue}
-              onChange={(event) => handleCanvasChange(event.target.value)}
+              value={draftContent}
+              onChange={(event) => setDraftContent(event.target.value)}
               placeholder="Write from your truth..."
               maxLength={2500}
               aria-label="Write your private reflection"
             />
-            {!canvasValue.trim() && (
+            {!draftContent.trim() && (
               <p className="reflection-phantom-prompt">{JOURNAL_PROMPT}</p>
             )}
             <div className="reflection-canvas-footer">
               <span>
                 <Feather size={18} strokeWidth={1.55} />
-                {canvasValue.length}
+                {draftContent.length}
               </span>
             </div>
           </section>
@@ -911,16 +921,15 @@ export default function ReflectionPage() {
         >
           <div onClick={(event) => event.stopPropagation()}>
             <ArchivePanel
-              reflections={recentReflections}
+              reflections={entries}
               selectedId={selectedArchiveId}
               selectedReflection={selectedArchiveReflection}
               onSelect={handleArchiveSelect}
-              today={today}
-              loading={archiveLoading}
+              loading={loading}
               error={archiveError}
-              onEditToday={editToday}
+              onEditEntry={handleEditEntry}
               onBack={closeArchiveDetail}
-              onNewReflection={editToday}
+              onNewReflection={handleNewEntry}
               onClose={() => {
                 setArchiveOpen(false);
                 setArchiveDetailOpen(false);

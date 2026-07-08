@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { getDailyReflectionPrompts } from "../data/reflectionQuestions";
 import { supabase } from "../lib/supabase";
 import { useUserStore } from "../store/userStore";
 
@@ -16,34 +15,6 @@ const limitAnswer = (value) => {
   return String(value).slice(0, MAX_REFLECTION_ANSWER_LENGTH);
 };
 
-const normalizeQuestionItem = (item) => {
-  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-
-  const prompt = typeof item.prompt === "string" ? item.prompt : item.q;
-  if (typeof prompt !== "string" || !prompt.trim()) return null;
-
-  return {
-    prompt,
-    answer: limitAnswer(item.answer ?? item.a ?? ""),
-  };
-};
-
-const normalizeSavedQuestions = (items, fallbackPrompts) => {
-  const safeFallbackPrompts = fallbackPrompts.slice(0, 3);
-  const normalizedItems = safeFallbackPrompts.map((fallbackPrompt, index) => {
-    const saved = Array.isArray(items) ? normalizeQuestionItem(items[index]) : null;
-    return saved ?? { prompt: fallbackPrompt, answer: "" };
-  });
-
-  return {
-    questions: normalizedItems.map((item) => item.prompt),
-    answers: normalizedItems.reduce((nextAnswers, item, index) => {
-      nextAnswers[index] = item.answer;
-      return nextAnswers;
-    }, {}),
-  };
-};
-
 const logSupabaseError = (label, error) => {
   console.error(label, {
     message: error?.message,
@@ -56,76 +27,31 @@ const logSupabaseError = (label, error) => {
 export function useReflection() {
   const user = useUserStore((state) => state.user);
   const [today] = useState(getLocalDate);
-  const [questions, setQuestions] = useState(() =>
-    getDailyReflectionPrompts(today)
-  );
-  const [answers, setAnswers] = useState({});
-  const [selectedMood, setSelectedMood] = useState(null);
-  const [savedToday, setSavedToday] = useState(false);
+
+  const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [archiveError, setArchiveError] = useState("");
+
+  // activeEntryId === null means composing a brand new entry.
+  // Otherwise it's the id of an existing entry being edited.
+  const [activeEntryId, setActiveEntryId] = useState(null);
+  const [draftContent, setDraftContentState] = useState("");
+  const [draftMood, setDraftMood] = useState(null);
+
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [statusTone, setStatusTone] = useState("neutral");
-  const [recentReflections, setRecentReflections] = useState([]);
-  const [archiveLoading, setArchiveLoading] = useState(false);
-  const [archiveError, setArchiveError] = useState("");
 
-  const hasContent = Object.values(answers).some(
-    (answer) => answer && answer.trim().length > 0
-  );
+  const hasContent = draftContent.trim().length > 0;
 
-  const loadToday = useCallback(async () => {
+  const loadEntries = useCallback(async () => {
     if (!user) {
+      setEntries([]);
       setLoading(false);
       return;
     }
 
-    const fallbackPrompts = getDailyReflectionPrompts(today);
     setLoading(true);
-    setStatusMessage("");
-    setStatusTone("neutral");
-
-    try {
-      const { data: existing, error } = await supabase
-        .from("reflections")
-        .select("id, user_id, for_date, questions, mood")
-        .eq("user_id", user.id)
-        .eq("for_date", today)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (existing) {
-        const normalized = normalizeSavedQuestions(
-          existing.questions,
-          fallbackPrompts
-        );
-        setQuestions(normalized.questions);
-        setAnswers(normalized.answers);
-        setSelectedMood(existing.mood || null);
-        setSavedToday(true);
-      } else {
-        setQuestions(fallbackPrompts);
-        setAnswers({});
-        setSelectedMood(null);
-        setSavedToday(false);
-      }
-    } catch (error) {
-      logSupabaseError("Night reflection load failed", error);
-      setStatusMessage("We couldn’t load tonight’s reflection. Your writing space is still here.");
-      setStatusTone("error");
-    } finally {
-      setLoading(false);
-    }
-  }, [today, user]);
-
-  const loadRecentReflections = useCallback(async () => {
-    if (!user) {
-      setRecentReflections([]);
-      return;
-    }
-
-    setArchiveLoading(true);
     setArchiveError("");
 
     try {
@@ -133,112 +59,119 @@ export function useReflection() {
         .from("reflections")
         .select("*")
         .eq("user_id", user.id)
-        .order("for_date", { ascending: false });
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
 
-      setRecentReflections(data || []);
+      setEntries(data || []);
     } catch (error) {
-      logSupabaseError("Night reflection archive load failed", error);
-      setArchiveError("We couldn’t load your archive just now.");
+      logSupabaseError("Journal entries load failed", error);
+      setArchiveError("We couldn’t load your journal just now.");
     } finally {
-      setArchiveLoading(false);
+      setLoading(false);
     }
   }, [user]);
 
   useEffect(() => {
-    loadToday();
-    loadRecentReflections();
-  }, [loadRecentReflections, loadToday]);
+    loadEntries();
+  }, [loadEntries]);
 
-  const setAnswer = useCallback((index, value) => {
-    setAnswers((prev) => ({ ...prev, [index]: limitAnswer(value) }));
+  const setDraftContent = useCallback((value) => {
+    setDraftContentState(limitAnswer(value));
     setStatusMessage("");
     setStatusTone("neutral");
   }, []);
 
-  const handleMoodChange = useCallback((mood) => {
-    setSelectedMood(mood);
+  const startNewEntry = useCallback(() => {
+    setActiveEntryId(null);
+    setDraftContentState("");
+    setDraftMood(null);
     setStatusMessage("");
     setStatusTone("neutral");
   }, []);
 
-  const save = useCallback(async () => {
+  const startEditingEntry = useCallback((entry) => {
+    if (!entry) return;
+    setActiveEntryId(entry.id);
+    setDraftContentState(limitAnswer(entry.content || ""));
+    setDraftMood(entry.mood || null);
+    setStatusMessage("");
+    setStatusTone("neutral");
+  }, []);
+
+  const saveDraft = useCallback(async () => {
     if (!user || saving || !hasContent) return { success: false };
-
-    const wasSavedToday = savedToday;
-    const payload = {
-      user_id: user.id,
-      for_date: today,
-      mood: selectedMood || null,
-      questions: questions.map((question, index) => ({
-        prompt: question,
-        answer: limitAnswer(answers[index]).trim(),
-      })),
-      updated_at: new Date().toISOString(),
-    };
 
     setSaving(true);
     setStatusMessage("Saving privately...");
     setStatusTone("neutral");
 
     try {
-      const { data, error } = await supabase
-        .from("reflections")
-        .upsert(payload, { onConflict: "user_id,for_date" })
-        .select()
-        .single();
+      let data;
+      let error;
+
+      if (activeEntryId) {
+        ({ data, error } = await supabase
+          .from("reflections")
+          .update({
+            content: draftContent.trim(),
+            mood: draftMood || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", activeEntryId)
+          .eq("user_id", user.id)
+          .select()
+          .single());
+      } else {
+        ({ data, error } = await supabase
+          .from("reflections")
+          .insert({
+            user_id: user.id,
+            for_date: today,
+            content: draftContent.trim(),
+            mood: draftMood || null,
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single());
+      }
 
       if (error) throw error;
 
-      const normalized = normalizeSavedQuestions(data?.questions, questions);
-      setQuestions(normalized.questions);
-      setAnswers(normalized.answers);
-      setSelectedMood(data?.mood || selectedMood || null);
-      setSavedToday(true);
-      setStatusMessage(
-        wasSavedToday ? "Entry updated privately." : "Entry saved privately."
-      );
+      setActiveEntryId(data?.id ?? activeEntryId);
+      setStatusMessage("Entry saved privately.");
       setStatusTone("success");
-      await loadRecentReflections();
+      await loadEntries();
       return { success: true, data };
     } catch (error) {
-      logSupabaseError("Night reflection save failed", error);
+      logSupabaseError("Journal entry save failed", error);
       setStatusMessage("Couldn’t save this entry. Your words are still here.");
       setStatusTone("error");
       return { success: false, error };
     } finally {
       setSaving(false);
     }
-  }, [
-    answers,
-    hasContent,
-    loadRecentReflections,
-    questions,
-    savedToday,
-    saving,
-    selectedMood,
-    today,
-    user,
-  ]);
+  }, [activeEntryId, draftContent, draftMood, hasContent, loadEntries, saving, today, user]);
 
   return {
-    questions,
-    answers,
-    setAnswer,
-    selectedMood,
-    setSelectedMood: handleMoodChange,
-    savedToday,
+    entries,
     loading,
+    archiveError,
+    loadEntries,
+
+    activeEntryId,
+    draftContent,
+    setDraftContent,
+    draftMood,
+    setDraftMood,
+    startNewEntry,
+    startEditingEntry,
+
     saving,
-    save,
+    saveDraft,
     statusMessage,
     statusTone,
     hasContent,
-    recentReflections,
-    archiveLoading,
-    archiveError,
-    loadRecentReflections,
     today,
   };
 }
