@@ -1007,7 +1007,8 @@ textarea,
   animation: shimmer 2s linear infinite;
 }
 
-.growth-tree-spring .growth-tree-frame {
+.growth-tree-spring .growth-tree-frame,
+.growth-tree-hint-morning .growth-tree-frame {
   border-color: rgba(126, 217, 154, 0.18);
   background:
     radial-gradient(circle at 50% 74%, rgba(46, 204, 113, 0.18), transparent 44%),
@@ -1017,7 +1018,8 @@ textarea,
     0 0 56px rgba(46, 204, 113, 0.12);
 }
 
-.growth-tree-winter .growth-tree-frame {
+.growth-tree-winter .growth-tree-frame,
+.growth-tree-hint-winter .growth-tree-frame {
   border-color: rgba(148, 163, 184, 0.16);
   background:
     radial-gradient(circle at 50% 76%, rgba(71, 85, 105, 0.20), transparent 46%),
@@ -1035,11 +1037,12 @@ textarea,
   object-fit: cover;
   opacity: var(--tree-image-opacity);
   transform-origin: center bottom;
-  transition: opacity 0.6s ease, filter 1s ease;
+  transition: opacity 0.6s ease-in-out, filter 0.8s ease-in-out;
   animation: growthTreeImageIn 0.7s ease both;
 }
 
-.growth-tree-spring .growth-tree-image {
+.growth-tree-spring .growth-tree-image,
+.growth-tree-hint-morning .growth-tree-image {
   --tree-image-opacity: 0.92;
   filter: saturate(1.04) brightness(1.02);
   animation:
@@ -1047,7 +1050,8 @@ textarea,
     growthTreeBreath 8s ease-in-out 0.7s infinite;
 }
 
-.growth-tree-winter .growth-tree-image {
+.growth-tree-winter .growth-tree-image,
+.growth-tree-hint-winter .growth-tree-image {
   --tree-image-opacity: 0.74;
   filter: saturate(0.66) brightness(0.72) contrast(1.08);
   animation: growthTreeImageIn 0.7s ease both;
@@ -1074,14 +1078,16 @@ textarea,
   transition: opacity 0.8s ease;
 }
 
-.growth-tree-spring .growth-tree-glow {
+.growth-tree-spring .growth-tree-glow,
+.growth-tree-hint-morning .growth-tree-glow {
   opacity: 1;
   background:
     radial-gradient(ellipse 62% 46% at 50% 78%, rgba(46, 204, 113, 0.26), transparent 70%),
     radial-gradient(circle at 30% 18%, rgba(240, 165, 0, 0.08), transparent 28%);
 }
 
-.growth-tree-winter .growth-tree-glow {
+.growth-tree-winter .growth-tree-glow,
+.growth-tree-hint-winter .growth-tree-glow {
   opacity: 1;
   background:
     radial-gradient(ellipse 62% 46% at 50% 78%, rgba(100, 116, 139, 0.18), transparent 72%),
@@ -1097,7 +1103,8 @@ textarea,
   transition: opacity 0.8s ease;
 }
 
-.growth-tree-winter .growth-tree-storm {
+.growth-tree-winter .growth-tree-storm,
+.growth-tree-hint-winter .growth-tree-storm {
   opacity: 1;
 }
 
@@ -1110,7 +1117,8 @@ textarea,
   transition: opacity 0.8s ease;
 }
 
-.growth-tree-spring .growth-tree-particles {
+.growth-tree-spring .growth-tree-particles,
+.growth-tree-hint-morning .growth-tree-particles {
   opacity: 0.72;
 }
 
@@ -1258,6 +1266,170 @@ textarea,
   box-shadow: 0 0 34px rgba(46, 204, 113, 0.10);
 }
 
+/* ── Weather hints (server-driven visual_hint) ──────────────────────
+   morning reuses the spring look, winter reuses winter (selectors
+   above). dawn / rain / storm below. All overlays are pointer-events:
+   none layers behind the stat panel (z-index 10) — weather can never
+   block the tree or the UI. Transitions ≤ 0.8s ease-in-out. */
+
+/* DAWN — soft warm light, slightly lighter than morning. */
+.growth-tree-hint-dawn .growth-tree-frame {
+  border-color: rgba(240, 180, 120, 0.22);
+  background:
+    radial-gradient(circle at 50% 74%, rgba(240, 165, 0, 0.14), transparent 46%),
+    linear-gradient(180deg, rgba(24, 18, 12, 0.96), rgba(8, 8, 6, 0.98));
+  box-shadow:
+    0 28px 78px rgba(0, 0, 0, 0.36),
+    0 0 56px rgba(240, 165, 0, 0.10);
+}
+
+.growth-tree-hint-dawn .growth-tree-image {
+  --tree-image-opacity: 0.94;
+  filter: saturate(1.02) brightness(1.06) sepia(0.12);
+}
+
+.growth-tree-hint-dawn .growth-tree-glow {
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 64% 48% at 50% 76%, rgba(240, 180, 120, 0.20), transparent 70%),
+    radial-gradient(circle at 72% 12%, rgba(240, 165, 0, 0.12), transparent 32%);
+}
+
+/* RAIN — slight desaturate, blue-grey tint, subtle pure-CSS rain. */
+.growth-tree-hint-rain .growth-tree-frame {
+  border-color: rgba(120, 150, 180, 0.20);
+  background:
+    radial-gradient(circle at 50% 76%, rgba(71, 105, 139, 0.16), transparent 46%),
+    linear-gradient(180deg, rgba(12, 18, 26, 0.96), rgba(4, 8, 12, 0.98));
+}
+
+.growth-tree-hint-rain .growth-tree-image {
+  --tree-image-opacity: 0.84;
+  filter: saturate(0.82) brightness(0.90);
+}
+
+.growth-tree-hint-rain .growth-tree-glow {
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 62% 46% at 50% 78%, rgba(96, 125, 155, 0.16), transparent 72%),
+    linear-gradient(180deg, rgba(30, 41, 59, 0.14), transparent 60%);
+}
+
+.growth-tree-hint-rain .growth-tree-frame::after {
+  content: "";
+  position: absolute;
+  inset: -20% 0 0 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.16;
+  background:
+    repeating-linear-gradient(
+      168deg,
+      transparent 0 26px,
+      rgba(190, 210, 235, 0.5) 26px 27px,
+      transparent 27px 54px
+    ),
+    repeating-linear-gradient(
+      172deg,
+      transparent 0 41px,
+      rgba(160, 185, 215, 0.35) 41px 42px,
+      transparent 42px 86px
+    );
+  animation: growthTreeRain 1.6s linear infinite;
+}
+
+/* STORM — dark overlay, high contrast, deeper vignette. */
+.growth-tree-hint-storm .growth-tree-frame {
+  border-color: rgba(100, 116, 139, 0.22);
+  background:
+    radial-gradient(circle at 50% 78%, rgba(51, 65, 85, 0.22), transparent 48%),
+    linear-gradient(180deg, rgba(8, 12, 18, 0.98), rgba(2, 4, 8, 0.99));
+  box-shadow: 0 28px 78px rgba(0, 0, 0, 0.55);
+}
+
+.growth-tree-hint-storm .growth-tree-image {
+  --tree-image-opacity: 0.80;
+  filter: saturate(0.72) brightness(0.78) contrast(1.18);
+}
+
+.growth-tree-hint-storm .growth-tree-storm {
+  opacity: 1;
+}
+
+.growth-tree-hint-storm .growth-tree-vignette {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.42) 0%, rgba(0, 0, 0, 0.10) 46%, rgba(0, 0, 0, 0.66) 100%),
+    radial-gradient(circle at 50% 46%, transparent 32%, rgba(0, 0, 0, 0.38) 100%);
+}
+
+/* Season-copy tones per hint (morning uses the default styling). */
+.growth-tree-season-copy.is-rain {
+  border-color: rgba(120, 150, 180, 0.18);
+  background:
+    linear-gradient(180deg, rgba(30, 41, 59, 0.30), rgba(4, 8, 12, 0.74)),
+    rgba(8, 12, 18, 0.76);
+}
+
+.growth-tree-season-copy.is-dawn {
+  border-color: rgba(240, 180, 120, 0.20);
+  background:
+    linear-gradient(180deg, rgba(60, 45, 24, 0.26), rgba(10, 8, 6, 0.76)),
+    rgba(14, 11, 8, 0.76);
+}
+
+.growth-tree-season-copy.is-storm {
+  border-color: rgba(100, 116, 139, 0.22);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.44), rgba(2, 4, 8, 0.82)),
+    rgba(6, 9, 14, 0.82);
+}
+
+@keyframes growthTreeRain {
+  from {
+    transform: translate3d(0, -54px, 0);
+  }
+  to {
+    transform: translate3d(-8px, 54px, 0);
+  }
+}
+
+/* Milestone moment — one quiet line above the season message.
+   Fade in 0.8s, hold 12s, fade out 0.8s. No motion, no celebration. */
+.growth-tree-milestone {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border: 1px solid rgba(126, 217, 154, 0.16);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)),
+    rgba(7, 12, 10, 0.72);
+  text-align: center;
+  animation: growthTreeMilestoneIn 0.8s ease-in-out both;
+  transition: opacity 0.8s ease-in-out;
+}
+
+.growth-tree-milestone.is-leaving {
+  opacity: 0;
+}
+
+.growth-tree-milestone p {
+  margin: 0;
+  color: rgba(236, 241, 232, 0.92);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+@keyframes growthTreeMilestoneIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes growthTreeBreath {
   0%, 100% {
     transform: scale(1);
@@ -1297,8 +1469,25 @@ textarea,
 
 @media (prefers-reduced-motion: reduce) {
   .growth-tree-spring .growth-tree-image,
-  .growth-tree-particles span {
+  .growth-tree-hint-morning .growth-tree-image,
+  .growth-tree-particles span,
+  .growth-tree-hint-rain .growth-tree-frame::after {
     animation: none;
+  }
+
+  .growth-tree-image,
+  .growth-tree-glow,
+  .growth-tree-storm,
+  .growth-tree-particles,
+  .growth-tree-progress-fill {
+    transition: none;
+  }
+
+  /* Milestone: no fades — appears and disappears at full opacity,
+     still auto-hides after the same 12 seconds. */
+  .growth-tree-milestone {
+    animation: none;
+    transition: none;
   }
 }
 

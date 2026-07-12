@@ -143,6 +143,7 @@ export default function LifeCompanionPage() {
             <p>Life Companion</p>
             <h1>A quiet place to speak, then move.</h1>
             <span className="companion-purpose">Talk, plan, reset, or choose the next step.</span>
+            <span className="companion-ai-disclosure">Your companion is an AI, not a human.</span>
           </div>
         </header>
 
@@ -287,6 +288,14 @@ export default function LifeCompanionPage() {
           color: rgba(232, 232, 227, 0.58);
           font-size: 14px;
           line-height: 1.5;
+        }
+
+        .companion-ai-disclosure {
+          display: block;
+          margin-top: 6px;
+          color: rgba(232, 232, 227, 0.38);
+          font-size: 12px;
+          line-height: 1.4;
         }
 
         .companion-back,

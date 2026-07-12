@@ -5,7 +5,7 @@ from datetime import datetime
 from time import perf_counter
 from uuid import UUID
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import os
@@ -30,6 +30,27 @@ from ai.task_intelligence import (
     build_intelligence_context_block,
 )
 from ai.task_retrieval import retrieve_candidates
+from ai.companion_agent import count_questions_asked, detect_distress, run_react_loop
+from ai.companion_guardrails import apply_guardrails
+from ai.companion_orchestrator import build_orchestrator_payload, feed_orchestrator
+from ai.companion_security import (
+    DAILY_LIMIT_MESSAGE,
+    SESSION_PAUSE_MESSAGE,
+    check_rate_limits,
+    sanitize_untrusted_text,
+)
+from ai.companion_tools import escalation_trigger
+from ai.reflection_agent import (
+    analyse_entry_task,
+    clear_pending_reveal,
+    embed_and_analyse_task,
+    find_pending_reveal,
+)
+from ai.growth_tree_intelligence import (
+    build_journey,
+    get_score_payload,
+    get_season_payload,
+)
 from ai.companion_knowledge import (
     detect_companion_intent,
     extract_request_slots,
@@ -38,6 +59,7 @@ from ai.companion_knowledge import (
 from ai.companion_understanding import understand_companion_message
 from ai.fallbacks import (
     KOTLER_TAG_BY_CATEGORY,
+    build_life_companion_response as build_companion_payload,
     generate_fallback_tasks,
     generate_fallback_weekly_mirror,
     generate_insufficient_weekly_mirror,
@@ -1857,10 +1879,137 @@ async def save_curator_interaction(
         raise HTTPException(status_code=500, detail="Failed to save curator metadata") from error
 
 
+@app.post("/api/reflections/{entry_id}/embed")
+async def schedule_reflection_embedding(
+    entry_id: str,
+    background_tasks: BackgroundTasks = None,
+    authorization: str | None = Header(default=None),
+):
+    """Reflection Layer 2: fire-and-forget embedding trigger. The journal
+    save has already succeeded (frontend -> Supabase) before this is called.
+    Accepts NO text — only the entry id in the path; the backend re-fetches
+    the entry server-side, scoped to the token user. Returns immediately;
+    the embedding runs as a background task after the response."""
+    token_user_id = validate_supabase_access_token(authorization)
+    if background_tasks is None:
+        background_tasks = BackgroundTasks()
+    # Layer 2 -> Layer 3 trigger chain: embed, then analyse, one background
+    # task. Composed in reflection_agent so journal_embeddings stays untouched.
+    background_tasks.add_task(embed_and_analyse_task, supabase, token_user_id, entry_id)
+    print(
+        "REFLECTION_EMBEDDING "
+        f"status=scheduled entry_id={entry_id} user_id={token_user_id}"
+    )
+    return {"status": "scheduled"}
+
+
+@app.post("/api/reflections/{entry_id}/analyse")
+async def schedule_reflection_analysis(
+    entry_id: str,
+    background_tasks: BackgroundTasks = None,
+    authorization: str | None = Header(default=None),
+):
+    """Reflection Layer 3: fire-and-forget analysis trigger (also runs
+    automatically after every embed via the trigger chain — this standalone
+    endpoint exists for re-analysis and Layer 4). Accepts NO text; the agent
+    re-fetches the entry server-side, scoped to the token user."""
+    token_user_id = validate_supabase_access_token(authorization)
+    if background_tasks is None:
+        background_tasks = BackgroundTasks()
+    background_tasks.add_task(analyse_entry_task, supabase, token_user_id, entry_id)
+    print(
+        "REFLECTION_AGENT "
+        f"status=scheduled entry_id={entry_id} user_id={token_user_id}"
+    )
+    return {"status": "scheduled"}
+
+
+@app.get("/api/reflections/pattern-reveal")
+async def get_pattern_reveal(authorization: str | None = Header(default=None)):
+    """Reflection Layer 4 — CHECK step. Called after the user completes all
+    of today's tasks. Synchronous (not a background task): the frontend needs
+    the answer immediately to decide whether to show the gentle prompt."""
+    token_user_id = validate_supabase_access_token(authorization)
+    try:
+        return find_pending_reveal(supabase, token_user_id)
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "REFLECTION_AGENT "
+            f"status=reveal_check_failed user_id={token_user_id} "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to check pattern reveal") from error
+
+
+@app.post("/api/reflections/pattern-reveal/seen")
+async def mark_pattern_reveal_seen(authorization: str | None = Header(default=None)):
+    """Reflection Layer 4 — fires only on 'Show me', never on 'Later'."""
+    token_user_id = validate_supabase_access_token(authorization)
+    try:
+        cleared = clear_pending_reveal(supabase, token_user_id)
+        return {"status": "cleared" if cleared else "nothing_pending"}
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "REFLECTION_AGENT "
+            f"status=reveal_seen_failed user_id={token_user_id} "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to clear pattern reveal") from error
+
+
+@app.get("/api/growth-tree/season")
+async def get_growth_tree_season(authorization: str | None = Header(default=None)):
+    """Growth Tree — season + milestone + stats. user_id comes from the
+    token only; the module itself fails safe to THRIVING on data errors,
+    so this endpoint never 500s for a data problem."""
+    token_user_id = validate_supabase_access_token(authorization)
+    return get_season_payload(supabase, token_user_id)
+
+
+@app.get("/api/growth-tree/score")
+async def get_growth_tree_score(authorization: str | None = Header(default=None)):
+    """Growth Tree — canonical server-side score read (Requirement 6).
+    Token-scoped; user_id is never accepted from the request."""
+    token_user_id = validate_supabase_access_token(authorization)
+    try:
+        return get_score_payload(supabase, token_user_id)
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(
+            "GROWTH_TREE "
+            f"status=score_read_failed user_id={token_user_id} "
+            f"error_type={type(error).__name__}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to read score") from error
+
+
+@app.get("/api/growth-tree/journey")
+async def get_growth_tree_journey(authorization: str | None = Header(default=None)):
+    """Growth Tree — Tree Memory timeline. Token-scoped. On any failure
+    returns [] (logged): a missing journey is acceptable, a broken page
+    is not."""
+    token_user_id = validate_supabase_access_token(authorization)
+    try:
+        return build_journey(supabase, token_user_id)
+    except Exception as error:
+        print(
+            "GROWTH_TREE "
+            f"status=journey_failed user_id={token_user_id} "
+            f"error_type={type(error).__name__}"
+        )
+        return []
+
+
 @app.post("/api/life-companion")
 @app.post("/api/life-companion/chat")
 async def life_companion_chat(
     request: LifeCompanionRequest,
+    background_tasks: BackgroundTasks = None,
     authorization: str | None = Header(default=None),
 ):
     request_started = perf_counter()
@@ -1873,6 +2022,8 @@ async def life_companion_chat(
             authorization_present=bool(authorization),
         )
         token_user_id = validate_supabase_access_token(authorization)
+        if background_tasks is None:
+            background_tasks = BackgroundTasks()
 
         try:
             mode = validate_life_companion_mode(request.mode)
@@ -1891,13 +2042,24 @@ async def life_companion_chat(
         understanding = understand_companion_message(user_message, mode)
         request_slots = extract_request_slots(user_message, detected_intent)
         safety_signal = detect_life_companion_safety(user_message)
-        if safety_signal.get("crisis"):
-            companion_response = generate_life_companion_crisis_response()
+
+        def serve_escalation(escalation: dict):
+            companion_response = escalation["response"]
+            background_tasks.add_task(
+                feed_orchestrator,
+                supabase,
+                build_orchestrator_payload(
+                    user_id=token_user_id,
+                    agent_turn=None,
+                    message=user_message,
+                    escalation_triggered=True,
+                ),
+            )
             log_life_companion_event(
                 status="safety",
                 mode=mode,
                 provider="deterministic",
-                risk_level="crisis",
+                risk_level=companion_response["safety"]["risk_level"],
                 total_request_ms=int((perf_counter() - request_started) * 1000),
                 context_build_ms=context_build_ms,
                 prompt_build_ms=prompt_build_ms,
@@ -1907,7 +2069,6 @@ async def life_companion_chat(
                 provider_selected="deterministic",
                 final_response_mode="safety",
             )
-            total_request_ms = int((perf_counter() - request_started) * 1000)
             return build_life_companion_response(
                 "safety",
                 companion_response,
@@ -1917,12 +2078,58 @@ async def life_companion_chat(
                     fallback_reason=None,
                     provider_ms=0,
                     validation_ms=0,
-                    total_request_ms=total_request_ms,
+                    total_request_ms=int((perf_counter() - request_started) * 1000),
                     context_build_ms=context_build_ms,
                     prompt_build_ms=prompt_build_ms,
                     retrieval_ms=retrieval_ms,
                 ),
                 conversation_id=conversation.get("id") if conversation else None,
+            )
+
+        # ── AGENT Gate 1: distress routes first (Guardrail 3 — before rate
+        # limits, before retrieval, before any provider call. No exceptions.)
+        distress_tier = detect_distress(user_message)
+        if distress_tier or safety_signal.get("crisis"):
+            escalation = escalation_trigger(
+                token_user_id,
+                distress_tier or "crisis",
+                user_message,
+                supabase=supabase,
+            )
+            return serve_escalation(escalation)
+
+        # ── AGENT Gate 2: rate limits (deterministic pause, no provider call).
+        # Sits below distress on purpose: a user at the cap in crisis still
+        # gets the escalation response above.
+        rate_status = check_rate_limits(supabase, token_user_id, request.conversation_id)
+        if rate_status.session_exceeded or rate_status.daily_exceeded:
+            pause_reply = (
+                SESSION_PAUSE_MESSAGE if rate_status.session_exceeded else DAILY_LIMIT_MESSAGE
+            )
+            companion_response = build_companion_payload(
+                reply=pause_reply,
+                action_type="none",
+                tone="grounded",
+                risk_level="none",
+                reply_format="conversation",
+                intent="general_question",
+            )
+            total_request_ms = int((perf_counter() - request_started) * 1000)
+            return build_life_companion_response(
+                "rate_limited",
+                companion_response,
+                meta=build_life_companion_meta(
+                    provider_selected="deterministic",
+                    final_response_mode="rate_limited",
+                    fallback_reason=None,
+                    provider_ms=0,
+                    validation_ms=0,
+                    total_request_ms=total_request_ms,
+                    context_build_ms=context_build_ms,
+                    prompt_build_ms=prompt_build_ms,
+                    retrieval_ms=retrieval_ms,
+                ),
+                conversation_id=request.conversation_id,
             )
 
         if conversation is None:
@@ -1936,6 +2143,21 @@ async def life_companion_chat(
             limit=10,
         )
 
+        # ── AGENT: ReAct loop (perceive → reason → act → observe). Produces
+        # the sanitized message, the tools' signal outputs, the response mode,
+        # and the directive block the single provider call will receive.
+        agent_turn = run_react_loop(
+            user_id=token_user_id,
+            message=user_message,
+            conversation_history=conversation_history,
+            supabase=supabase,
+            rate_status=rate_status,
+        )
+        if agent_turn.escalation:
+            # Defense in depth — Gate 1 normally catches distress first.
+            return serve_escalation(agent_turn.escalation)
+        user_message = agent_turn.sanitized_message or user_message
+
         context_started = perf_counter()
         context = build_life_companion_context(
             supabase,
@@ -1946,6 +2168,22 @@ async def life_companion_chat(
         )
         context["latest_request_slots"] = request_slots
         context["understanding"] = understanding
+        context["agent_directive_block"] = agent_turn.directive_block
+
+        # SECURITY 2: memory summary strings re-enter the prompt every turn —
+        # injection-scan them before they do.
+        safe_summary = context.get("safe_memory_summary")
+        if isinstance(safe_summary, dict):
+            context["safe_memory_summary"] = {
+                key: (
+                    sanitize_untrusted_text(
+                        value, source="memory_summary", user_id=token_user_id
+                    ).text
+                    if isinstance(value, str)
+                    else value
+                )
+                for key, value in safe_summary.items()
+            }
         context_build_ms = int((perf_counter() - context_started) * 1000)
 
         retrieval_message = user_message
@@ -2037,6 +2275,21 @@ async def life_companion_chat(
             conversation_history=conversation_history,
         )
         prompt_build_ms = gateway_result.prompt_build_ms or 0
+
+        # ── AGENT: guardrails on the LLM reply. Applied only to live model
+        # output — deterministic safety/fallback copy is already controlled,
+        # and the crisis reply's own safety question must never be stripped.
+        if gateway_result.status == "success":
+            _reply = str(gateway_result.companion_response.get("reply") or "")
+            _questions_allowed = count_questions_asked(conversation_history) < 2
+            _guard = apply_guardrails(
+                _reply,
+                mode=agent_turn.response_mode or "REFLECT",
+                tools_called=agent_turn.tools_called,
+                tool_results=agent_turn.tool_results,
+                questions_allowed=_questions_allowed,
+            )
+            gateway_result.companion_response["reply"] = _guard.reply
         log_life_companion_event(
             status=gateway_result.status,
             mode=mode,
@@ -2068,6 +2321,19 @@ async def life_companion_chat(
                 companion_response=gateway_result.companion_response,
                 companion_intent=detected_intent,
             )
+
+        # ── AGENT STEP 7: orchestrator feed. Fire-and-forget after the
+        # response is sent; never blocks the user (retry handled inside).
+        background_tasks.add_task(
+            feed_orchestrator,
+            supabase,
+            build_orchestrator_payload(
+                user_id=token_user_id,
+                agent_turn=agent_turn,
+                message=user_message,
+                escalation_triggered=False,
+            ),
+        )
         return build_life_companion_response(
             gateway_result.status,
             gateway_result.companion_response,

@@ -1,6 +1,9 @@
 import Icon from "../../components/Icon";
 import BookCover from "./BookCover";
 
+const DEFAULT_ADVISORY_TEXT =
+  "This book explores difficult human experiences. Read when you feel ready for depth.";
+
 export default function BookPrescriptionCard({
   book,
   featured = false,
@@ -42,6 +45,7 @@ export default function BookPrescriptionCard({
           <div className="curator-book-meta-row">
             <span>{book.difficulty}</span>
             <span>{book.tone}</span>
+            {book.discipline ? <span>{book.discipline}</span> : null}
           </div>
           <h3>{book.title}</h3>
           <p className="curator-book-author">{book.author}</p>
@@ -57,6 +61,17 @@ export default function BookPrescriptionCard({
 
       {expanded && (
         <div className="curator-book-detail">
+          {book.content_advisory ? (
+            <p className="curator-content-advisory">
+              {book.advisory_text || DEFAULT_ADVISORY_TEXT}
+            </p>
+          ) : null}
+          {book.one_insight ? (
+            <blockquote className="curator-pull-quote">{book.one_insight}</blockquote>
+          ) : null}
+          {book.shelf ? (
+            <p className="curator-shelf-caption">Shelf: {book.shelf}</p>
+          ) : null}
           <div className="curator-detail-block">
             <h4>Why this book belongs here</h4>
             <p>{book.whyPath}</p>
@@ -89,6 +104,12 @@ export default function BookPrescriptionCard({
               <p>{book.readingGuidance}</p>
             </div>
           </div>
+          {book.reading_ritual ? (
+            <div className="curator-detail-block">
+              <h4>How to meet this book</h4>
+              <p>{book.reading_ritual}</p>
+            </div>
+          ) : null}
           <div className="curator-action-bridge">
             <span>Real-life action</span>
             <p>{book.actionBridge}</p>

@@ -5,6 +5,8 @@ import { useLoopTasks } from "../../hooks/useLoopTasks";
 import { useEnsureTodayLoopTasks } from "../../hooks/useEnsureTodayLoopTasks";
 import { useAppState } from "../../contexts/AppStateContext";
 import PostActionFeedbackModal from "../loop/PostActionFeedbackModal";
+import PatternRevealModal from "./PatternRevealModal";
+import { usePatternReveal } from "../../hooks/usePatternReveal";
 
 const CAT_COLORS = {
   awareness: "#4ECDC4", action: "#FF8C42", reflection: "#7FD99A", reset: "#C084FC", growth: "#FFD93D",
@@ -251,6 +253,15 @@ export default function TodaysPlan() {
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
   const {
+    pending: patternRevealPending,
+    description: patternRevealDescription,
+    question: patternRevealQuestion,
+    checkForReveal,
+    markSeen: markPatternRevealSeen,
+    dismissForToday: dismissPatternRevealForToday,
+  } = usePatternReveal();
+  const [showPatternRevealModal, setShowPatternRevealModal] = useState(false);
+  const {
     autoGenerationError,
     clearAutoGenerationError,
     preparingTodayPlan,
@@ -273,6 +284,21 @@ export default function TodaysPlan() {
     && coreTasks.every(t => t.done || t.completed_at || t.skipped);
   const statusMessage = error || autoGenerationError;
   const isPreparingPlan = preparingTodayPlan || (generating && displayed.length === 0);
+
+  useEffect(() => {
+    if (allTasksDone) {
+      checkForReveal();
+    }
+  }, [allTasksDone, checkForReveal]);
+
+  const handleShowPatternReveal = useCallback(() => {
+    setShowPatternRevealModal(true);
+  }, []);
+
+  const handleClosePatternReveal = useCallback(() => {
+    setShowPatternRevealModal(false);
+    markPatternRevealSeen();
+  }, [markPatternRevealSeen]);
 
   const handleTaskToggle = useCallback(async (taskId) => {
     const result = await toggleTask(taskId);
@@ -402,6 +428,59 @@ export default function TodaysPlan() {
                   </p>
                 </div>
               )}
+              {allTasksDone && patternRevealPending && (
+                <div style={{
+                  marginTop: 10,
+                  padding: "13px 18px",
+                  borderRadius: 10,
+                  background: "rgba(126,217,154,0.05)",
+                  border: "1px solid rgba(126,217,154,0.15)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}>
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--text-dim)" }}>
+                    I&rsquo;ve noticed something about you. Want to see it?
+                  </p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={dismissPatternRevealForToday}
+                      style={{
+                        padding: "7px 12px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(255,255,255,0.07)",
+                        background: "transparent",
+                        color: "var(--text-faint)",
+                        cursor: "pointer",
+                        fontFamily: "var(--font-body)",
+                        fontSize: 12,
+                      }}
+                    >
+                      Later
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleShowPatternReveal}
+                      style={{
+                        padding: "7px 14px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(126, 217, 154, 0.32)",
+                        background: "var(--green-bright)",
+                        color: "#06100b",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        fontFamily: "var(--font-body)",
+                        fontSize: 12,
+                      }}
+                    >
+                      Show me
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <EmptyState onClick={() => navigate("/loop")} />
@@ -417,6 +496,14 @@ export default function TodaysPlan() {
           error={feedbackError}
           onSubmit={handleSubmitFeedback}
           onClose={handleCloseFeedback}
+        />
+      ) : null}
+
+      {showPatternRevealModal ? (
+        <PatternRevealModal
+          description={patternRevealDescription}
+          question={patternRevealQuestion}
+          onClose={handleClosePatternReveal}
         />
       ) : null}
 

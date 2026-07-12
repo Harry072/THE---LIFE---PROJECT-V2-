@@ -134,6 +134,8 @@ export const CURATOR_BOOKS = [
       "Block one 45-minute session tomorrow for one important task with no tabs open except what you need.",
     findUrl:
       "https://www.google.com/search?q=Deep+Work+Cal+Newport+book",
+    reading_ritual:
+      "Put your phone in another room. Read one section, then work in silence for 25 minutes before checking anything.",
   },
   {
     id: "5am-club",
@@ -246,6 +248,8 @@ export const CURATOR_BOOKS = [
       "When you feel rushed today, pause and name three things you can physically sense.",
     findUrl:
       "https://www.google.com/search?q=The+Power+of+Now+Eckhart+Tolle+book",
+    reading_ritual:
+      "Read a few pages. Then put the book down and simply notice your breath for one minute before continuing.",
   },
   {
     id: "mans-search-for-meaning",
@@ -274,6 +278,8 @@ export const CURATOR_BOOKS = [
       "Ask: what responsibility in my life deserves a quieter, more courageous yes?",
     findUrl:
       "https://www.google.com/search?q=Man%27s+Search+For+Meaning+Viktor+Frankl+book",
+    reading_ritual:
+      "Read slowly, in a quiet place. When a line feels heavy, close the book and sit with it before continuing.",
   },
   {
     id: "alchemist",
@@ -302,6 +308,8 @@ export const CURATOR_BOOKS = [
       "Name one dream you have made too complicated to begin, then choose the smallest honest step.",
     findUrl:
       "https://www.google.com/search?q=The+Alchemist+Paulo+Coelho+book",
+    reading_ritual:
+      "Read one chapter in one sitting, like a story told aloud. Notice which line you would tell a friend.",
   },
   {
     id: "meditations",
@@ -330,6 +338,8 @@ export const CURATOR_BOOKS = [
       "Before sleep, write one sentence about where you acted with character today.",
     findUrl:
       "https://www.google.com/search?q=Meditations+Marcus+Aurelius+book",
+    reading_ritual:
+      "Read one passage in the morning. Carry it with you and notice when it applies before the day ends.",
   },
   {
     id: "psychology-of-money",
@@ -442,6 +452,9 @@ export const CURATOR_BOOKS = [
       "Write one sentence beginning with: Few people believe this, but I think...",
     findUrl:
       "https://www.google.com/search?q=Zero+to+One+Peter+Thiel+book",
+    shelf: "If You Are Building Something",
+    discipline: "Growth",
+    reading_ritual: "Read one chapter with a notebook open. Write down one belief about your project that few people share.",
   },
   {
     id: "war-of-art",
@@ -470,6 +483,9 @@ export const CURATOR_BOOKS = [
       "Open the project you are avoiding and complete one visible action before checking your phone.",
     findUrl:
       "https://www.google.com/search?q=The+War+of+Art+Steven+Pressfield+book",
+    shelf: "If You Keep Stopping Yourself",
+    discipline: "Discipline",
+    reading_ritual: "Read one section. Then do the work you've been avoiding for ten minutes, before anything else.",
   },
   {
     id: "show-your-work",
@@ -526,6 +542,8 @@ export const CURATOR_BOOKS = [
       "Place one hand on your chest and name what is here without trying to fix it.",
     findUrl:
       "https://www.google.com/search?q=When+Things+Fall+Apart+Pema+Chodron+book",
+    reading_ritual:
+      "Read in a quiet moment. When something feels heavy, place a hand on your chest and stay there before reading on.",
   },
   {
     id: "body-keeps-score",
@@ -554,6 +572,11 @@ export const CURATOR_BOOKS = [
       "After reading, do one grounding action: walk, stretch, breathe slowly, or drink water.",
     findUrl:
       "https://www.google.com/search?q=The+Body+Keeps+the+Score+Bessel+van+der+Kolk+book",
+    shelf: "If You Feel Stuck in the Past",
+    discipline: "Mind",
+    content_advisory: true,
+    advisory_text: "This book explores trauma with depth. Take it slowly.",
+    reading_ritual: "Read only when you feel steady. After a section, do one grounding action before continuing: stretch, breathe, or step outside.",
   },
   {
     id: "untethered-soul",
@@ -582,6 +605,267 @@ export const CURATOR_BOOKS = [
       "When a tense thought appears today, say quietly: I can notice this without becoming it.",
     findUrl:
       "https://www.google.com/search?q=The+Untethered+Soul+Michael+Singer+book",
+    shelf: "If You Feel Reactive / Overwhelmed",
+    discipline: "Mind",
+    one_insight: "You are not the voice in your head. You are the one who hears it.",
+    reading_ritual: "Read one chapter. Then sit in silence for 5 minutes. Let it settle.",
+  },
+  {
+    id: "gap-and-gain",
+    pathSlug: "mind",
+    title: "The Gap and The Gain",
+    author: "Dan Sullivan & Dr. Benjamin Hardy",
+    cover: "",
+    difficulty: "Perspective",
+    tone: "Practical",
+    hook: "A simple shift for measuring progress without punishing yourself.",
+    whyPath:
+      "This belongs to the Mind because it exposes a measuring habit that quietly decides whether you feel proud or defeated.",
+    mystery:
+      "It helps you understand why comparing yourself to an ideal future keeps you feeling behind, even while you are actually moving forward.",
+    learnings: [
+      "Why measuring backward from where you started reveals real progress.",
+      "How measuring against an ideal keeps happiness permanently out of reach.",
+      "Why high achievers are especially prone to living in the Gap.",
+      "How to build a habit of noticing and recording daily wins.",
+    ],
+    change:
+      "You may stop treating every unmet goal as failure and start recognizing how far you have actually come.",
+    readingGuidance:
+      "Read with a pen nearby. After each chapter, list three ways you have grown that you normally overlook.",
+    actionBridge:
+      "Tonight, write down one win from this week you would normally have dismissed as 'not enough'.",
+    findUrl:
+      "https://www.google.com/search?q=The+Gap+and+The+Gain+Dan+Sullivan+book",
+    shelf: "If You Feel Behind",
+    discipline: "Mindset",
+    reading_ritual:
+      "Before you read, write down where you started. After each chapter, add one thing you can now do that you couldn't before.",
+  },
+  {
+    id: "ikigai",
+    pathSlug: "meaning",
+    title: "Ikigai",
+    author: "Héctor García & Francesc Miralles",
+    cover: "",
+    difficulty: "Gentle",
+    tone: "Purposeful",
+    hook: "A quiet Okinawan idea about the reason you wake up in the morning.",
+    whyPath:
+      "This belongs to Meaning because it treats purpose as something ordinary and daily, not a single dramatic calling.",
+    mystery:
+      "It helps you understand how small, sustained purpose — practiced daily, among others — can matter more than grand ambition.",
+    learnings: [
+      "How ikigai sits at the overlap of what you love, are good at, the world needs, and can be paid for.",
+      "Why community and daily rhythm support long, purposeful lives.",
+      "How small consistent practices outlast bursts of motivation.",
+      "Why staying gently active matters as much as what you are active in.",
+    ],
+    change:
+      "You may stop searching for one big purpose and start noticing the small reasons you already have to keep going.",
+    readingGuidance:
+      "Read slowly, in short sessions. Let the examples from Okinawa sit with you rather than rushing to apply them.",
+    actionBridge:
+      "Write one small thing today that you would do even if no one paid you for it.",
+    findUrl:
+      "https://www.google.com/search?q=Ikigai+Hector+Garcia+book",
+    shelf: "If You Feel Lost",
+    discipline: "Meaning",
+    reading_ritual:
+      "Read one section outdoors if you can. Notice one small thing today that gave you a quiet reason to keep going.",
+  },
+  {
+    id: "willpower-instinct",
+    pathSlug: "discipline",
+    title: "The Willpower Instinct",
+    author: "Kelly McGonigal",
+    cover: "",
+    difficulty: "Grounding",
+    tone: "Clear",
+    hook: "A science-based look at why willpower runs out, and how to protect it.",
+    whyPath:
+      "This belongs to Discipline because it treats self-control as a trainable, limited resource, not a fixed character trait.",
+    mystery:
+      "It helps you understand why habits feel automatic, and how stress, sleep, and self-judgment quietly drain the willpower you need to change them.",
+    learnings: [
+      "Why willpower behaves like a muscle that tires and can be trained.",
+      "How stress and self-criticism secretly increase impulsive behavior.",
+      "Why 'I will' power and 'I won't' power need to be managed separately.",
+      "How simple physiological resets can restore self-control in the moment.",
+    ],
+    change:
+      "You may stop blaming yourself for lapses and start protecting the conditions that make self-control possible.",
+    readingGuidance:
+      "Read one chapter, then try its single exercise for a week before moving to the next.",
+    actionBridge:
+      "Notice the next moment you feel an urge today, and pause for ten slow breaths before acting on it.",
+    findUrl:
+      "https://www.google.com/search?q=The+Willpower+Instinct+Kelly+McGonigal+book",
+    shelf: "If You Feel Controlled by Habits",
+    discipline: "Discipline",
+    reading_ritual:
+      "Read with a habit you're struggling with in mind. After each chapter, test one exercise on that exact habit before continuing.",
+  },
+  {
+    id: "essentialism",
+    pathSlug: "discipline",
+    title: "Essentialism: The Disciplined Pursuit of Less",
+    author: "Greg McKeown",
+    cover: "",
+    difficulty: "Focused",
+    tone: "Clear",
+    hook: "A discipline of doing less, but better.",
+    whyPath:
+      "This belongs to Discipline because it treats saying no as a skill, and protecting focus as a daily practice.",
+    mystery:
+      "It helps you understand why trying to do everything quietly guarantees you do nothing exceptionally well.",
+    learnings: [
+      "Why 'almost everything is non-essential' changes how you choose commitments.",
+      "How to trade the trivial many for the vital few.",
+      "Why saying no protects the yeses that matter most.",
+      "How to build routines that make the essential easier to choose.",
+    ],
+    change:
+      "You may become more selective about your commitments and less apologetic about protecting your time.",
+    readingGuidance:
+      "Read with your calendar open. After each chapter, remove one commitment that no longer earns its place.",
+    actionBridge:
+      "Say no to one request today that does not serve what matters most to you right now.",
+    findUrl:
+      "https://www.google.com/search?q=Essentialism+Greg+McKeown+book",
+    shelf: "If You Feel Overwhelmed",
+    discipline: "Discipline",
+    reading_ritual:
+      "Before reading, list everything currently competing for your attention. Read one chapter, then cross out anything on that list you now recognize as noise.",
+  },
+  {
+    id: "psycho-cybernetics",
+    pathSlug: "mind",
+    title: "Psycho-Cybernetics",
+    author: "Maxwell Maltz",
+    cover: "",
+    difficulty: "Grounding",
+    tone: "Timeless",
+    hook: "A 1960s classic on how self-image quietly sets the ceiling on your life.",
+    whyPath:
+      "This belongs to the Mind because it treats self-image, not willpower, as the real governor of behavior and confidence.",
+    mystery:
+      "It helps you understand why you keep returning to the same ceiling no matter how hard you try, and how that ceiling can move.",
+    learnings: [
+      "Why your self-image sets the boundary for what you allow yourself to achieve.",
+      "How mental rehearsal shapes real-world performance.",
+      "Why past failures can be reinterpreted instead of carried as identity.",
+      "How to relax the inner critic enough to let new behavior take hold.",
+    ],
+    change:
+      "You may begin separating who you actually are from the outdated self-image you have been unconsciously defending.",
+    readingGuidance:
+      "Read a chapter, then spend five minutes mentally rehearsing yourself doing the thing you have been avoiding.",
+    actionBridge:
+      "Before one task today, picture yourself completing it calmly, in specific detail, before you begin.",
+    findUrl:
+      "https://www.google.com/search?q=Psycho-Cybernetics+Maxwell+Maltz+book",
+    shelf: "If You Feel Like a Fraud",
+    discipline: "Mindset",
+    reading_ritual:
+      "Before you begin a chapter, sit quietly and picture the version of yourself who has already changed. Then read.",
+  },
+  {
+    id: "when-breath-becomes-air",
+    pathSlug: "meaning",
+    title: "When Breath Becomes Air",
+    author: "Paul Kalanithi",
+    cover: "",
+    difficulty: "Tender",
+    tone: "Profound",
+    hook: "A neurosurgeon's memoir written while facing his own mortality.",
+    whyPath:
+      "This belongs to Meaning because it asks what makes a life worth living when time can no longer be assumed.",
+    mystery:
+      "It helps you understand how facing mortality directly can clarify what actually matters, instead of what merely feels urgent.",
+    learnings: [
+      "How confronting mortality can sharpen rather than collapse meaning.",
+      "Why identity built only on achievement can feel fragile under pressure.",
+      "How love and presence remain available even inside loss.",
+      "Why the question 'what makes life worth living' deserves a direct, personal answer.",
+    ],
+    change:
+      "You may hold your remaining time with more reverence and spend less of it on what does not actually matter to you.",
+    readingGuidance:
+      "Read slowly and let yourself feel it. This is not a book to rush through for lessons alone.",
+    actionBridge:
+      "Tell one person today, plainly, what they mean to you.",
+    findUrl:
+      "https://www.google.com/search?q=When+Breath+Becomes+Air+Paul+Kalanithi+book",
+    shelf: "If You Need Perspective on Time",
+    discipline: "Meaning",
+    reading_ritual:
+      "Read this in a quiet room, without your phone nearby. When you finish a section, sit for a moment before returning to your day.",
+  },
+  {
+    id: "courage-to-be-disliked",
+    pathSlug: "mind",
+    title: "The Courage to Be Disliked",
+    author: "Ichiro Kishimi & Fumitake Koga",
+    cover: "",
+    difficulty: "Direct",
+    tone: "Freeing",
+    hook: "A dialogue on Adlerian psychology and the freedom of not needing approval.",
+    whyPath:
+      "This belongs to the Mind because it dismantles the belief that your worth depends on being liked.",
+    mystery:
+      "It helps you understand how the need for approval quietly hands your choices to other people.",
+    learnings: [
+      "Why separating your tasks from other people's tasks reduces needless suffering.",
+      "How the need for approval can override your own honest choices.",
+      "Why the past does not have to determine the present.",
+      "How courage, not confidence, is what change actually requires.",
+    ],
+    change:
+      "You may become less governed by what others think and more willing to choose according to your own values.",
+    readingGuidance:
+      "Read it as a conversation, not a lecture. Argue with it in your head before accepting any of it.",
+    actionBridge:
+      "Notice one decision today you are making to be liked, and ask what you would choose without that pressure.",
+    findUrl:
+      "https://www.google.com/search?q=The+Courage+to+Be+Disliked+book",
+    shelf: "If You Seek Approval Too Much",
+    discipline: "Mind",
+    reading_ritual:
+      "Read a section, then ask yourself out loud: whose approval was I seeking in that story? Let the question sit before you continue.",
+  },
+  {
+    id: "letters-to-a-young-poet",
+    pathSlug: "meaning",
+    title: "Letters to a Young Poet",
+    author: "Rainer Maria Rilke",
+    cover: "",
+    difficulty: "Quiet",
+    tone: "Timeless",
+    hook: "Gentle letters on solitude, doubt, and creative patience.",
+    whyPath:
+      "This belongs to Meaning because it treats unresolved questions as something to live inside, not rush to solve.",
+    mystery:
+      "It helps you understand why creative blocks often ask for patience and honesty rather than more effort.",
+    learnings: [
+      "Why living the questions can matter more than forcing premature answers.",
+      "How solitude can become a creative ally instead of a discomfort to escape.",
+      "Why comparison quietly damages original creative work.",
+      "How patience with what is unresolved can itself be a discipline.",
+    ],
+    change:
+      "You may become gentler with your own unfinished ideas and less rushed toward false certainty.",
+    readingGuidance:
+      "Read one letter at a time, slowly, ideally on separate days. Let each one finish before starting the next.",
+    actionBridge:
+      "Write one honest sentence today about something in your creative work that still feels unresolved.",
+    findUrl:
+      "https://www.google.com/search?q=Letters+to+a+Young+Poet+Rilke+book",
+    shelf: "If You Feel Creatively Blocked",
+    discipline: "Meaning",
+    one_insight: "Have patience with everything unresolved in your heart.",
+    reading_ritual:
+      "Read one letter. Then close the book and write, without editing, for five minutes about whatever it stirred.",
   },
 ];
 

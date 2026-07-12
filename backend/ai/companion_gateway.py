@@ -1096,6 +1096,7 @@ def generate_life_companion_response(
         formatted_memory=_formatted_memory,
         intent_knowledge=_intent_knowledge,
         safe_memory_summary=(context or {}).get("safe_memory_summary") or {},
+        agent_directive=(context or {}).get("agent_directive_block") or "",
     )
     provider_prompt_parts = {
         **prompt_parts,

@@ -1,14 +1,46 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useGrowthTree } from "../hooks/useGrowthTree";
-import { getTreeAssetState, isToday } from "../lib/treeAssetState";
+import { useTreeSeason } from "../hooks/useTreeSeason";
+import { getTreeAssetState } from "../lib/treeAssetState";
 
-const RECOVERY_SEASON_KEY = "lifeproject_growth_tree_previous_season";
+const MILESTONE_VISIBLE_MS = 12000;
+const MILESTONE_FADE_MS = 800;
 
-const SEASON_COPY = {
+// Fallback copy for when the season endpoint is unreachable — the tree
+// then renders exactly as it did before the season engine existed.
+const FALLBACK_COPY = {
   spring: "The roots deepen with every action.",
   winter: "The storm stripped the leaves, but the roots hold. One action brings the spring.",
-  recovery: "The first drop of rain. The tree remembers.",
 };
+
+const KNOWN_HINTS = new Set(["morning", "rain", "winter", "dawn", "storm"]);
+
+// DEV-only demo copy so ?tree_hint=<hint> renders a complete state.
+const DEV_HINT_MESSAGES = {
+  morning: "The roots deepen with every action.",
+  rain: "Growth happens in the rain too. The roots deepen in resistance.",
+  winter: "Rest is also a season. The roots are still holding.",
+  dawn: "You came back. That's enough. The roots were waiting.",
+  storm: "The tree stands through the storm. So do you.",
+};
+
+function readDevHintOverride() {
+  if (!import.meta.env.DEV || typeof window === "undefined") return null;
+  const hint = new URLSearchParams(window.location.search).get("tree_hint");
+  return KNOWN_HINTS.has(hint) ? hint : null;
+}
+
+// DEV-only: ?tree_milestone=1 renders a sample crossing (latch bypassed
+// so it can be replayed on refresh while designing).
+function readDevMilestoneOverride() {
+  if (!import.meta.env.DEV || typeof window === "undefined") return null;
+  if (new URLSearchParams(window.location.search).get("tree_milestone") !== "1") return null;
+  return {
+    crossed: true,
+    stage_name: "Young Plant",
+    stage_message: "You're building real strength.",
+  };
+}
 
 const PARTICLES = [
   { left: "14%", top: "72%", delay: "0.2s", duration: "8s" },
@@ -41,16 +73,6 @@ function TreeMark({ size = 18 }) {
   );
 }
 
-function readPreviousSeason() {
-  if (typeof window === "undefined") return null;
-
-  try {
-    return window.localStorage.getItem(RECOVERY_SEASON_KEY);
-  } catch {
-    return null;
-  }
-}
-
 function formatMissedDays(daysMissed) {
   if (!Number.isFinite(daysMissed)) return "No recent action";
   if (daysMissed === 0) return "Completed today";
@@ -65,33 +87,64 @@ export default function GrowthTree({ compact = false }) {
     loading,
     lastCompletedDate,
   } = useGrowthTree();
+  const { season } = useTreeSeason();
   const [failedAsset, setFailedAsset] = useState(null);
-  const [previousSeason] = useState(readPreviousSeason);
+  const [devHint] = useState(readDevHintOverride);
+  const [devMilestone] = useState(readDevMilestoneOverride);
+  const [milestonePhase, setMilestonePhase] = useState("idle");
+  const milestoneTimersRef = useRef([]);
+
+  const milestone = devMilestone || season?.milestone;
+
+  // Earned silence: the line fades in (0.8s), stays 12s, fades out (0.8s),
+  // and is never shown again this session (sessionStorage latch per stage).
+  useEffect(() => {
+    if (!milestone?.crossed || !milestone?.stage_message) return undefined;
+
+    if (!devMilestone) {
+      const latchKey = `tlp.tree.milestone.${milestone.stage_name}`;
+      try {
+        if (window.sessionStorage.getItem(latchKey)) return undefined;
+        window.sessionStorage.setItem(latchKey, "1");
+      } catch {
+        // Storage unavailable → still shows at most once per mount.
+      }
+    }
+
+    setMilestonePhase("showing");
+    const leaveTimer = window.setTimeout(
+      () => setMilestonePhase("leaving"),
+      MILESTONE_VISIBLE_MS,
+    );
+    const doneTimer = window.setTimeout(
+      () => setMilestonePhase("done"),
+      MILESTONE_VISIBLE_MS + MILESTONE_FADE_MS,
+    );
+    milestoneTimersRef.current = [leaveTimer, doneTimer];
+    return () => milestoneTimersRef.current.forEach(window.clearTimeout);
+  }, [milestone, devMilestone]);
 
   const treeState = useMemo(
     () => getTreeAssetState(score, lastCompletedDate),
     [lastCompletedDate, score],
   );
 
-  const hasCompletedToday = tasks.done > 0 && isToday(lastCompletedDate);
-  const isRecovery = treeState.season === "spring"
-    && hasCompletedToday
-    && previousSeason === "winter";
-  const seasonTone = isRecovery ? "recovery" : treeState.season;
+  // Server-driven weather. Unknown/missing hint → legacy spring/winter
+  // classes, i.e. the tree renders exactly as before the season engine.
+  const hint = devHint
+    || (KNOWN_HINTS.has(season?.visual_hint) ? season.visual_hint : null);
+  const shellSeasonClass = hint
+    ? `growth-tree-hint-${hint}`
+    : `growth-tree-${treeState.season}`;
+  const seasonMessage = devHint
+    ? DEV_HINT_MESSAGES[devHint]
+    : (season?.message || FALLBACK_COPY[treeState.season]);
+  const copyToneClass = hint ? `is-${hint}` : `is-${treeState.season}`;
+
   const imageSrc = failedAsset === treeState.assetPath
     ? treeState.fallbackImage
     : treeState.assetPath;
   const height = compact ? 300 : 420;
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    try {
-      window.localStorage.setItem(RECOVERY_SEASON_KEY, treeState.season);
-    } catch {
-      // Recovery memory is decorative; the tree still renders without it.
-    }
-  }, [treeState.season]);
 
   if (loading) {
     return (
@@ -104,7 +157,7 @@ export default function GrowthTree({ compact = false }) {
 
   return (
     <div
-      className={`growth-tree-shell growth-tree-${treeState.season}${compact ? " is-compact" : ""}`}
+      className={`growth-tree-shell ${shellSeasonClass}${compact ? " is-compact" : ""}`}
       style={{ "--growth-tree-height": `${height}px` }}
     >
       {!compact && <p className="growth-tree-kicker">Growth Tree</p>}
@@ -113,7 +166,7 @@ export default function GrowthTree({ compact = false }) {
         <img
           key={treeState.assetPath}
           src={imageSrc}
-          alt={`${treeState.phaseLabel} in ${treeState.season}`}
+          alt={`${treeState.phaseLabel}${hint ? ` — ${hint}` : ""}`}
           className="growth-tree-image"
           onError={() => {
             if (imageSrc !== treeState.fallbackImage) {
@@ -161,8 +214,17 @@ export default function GrowthTree({ compact = false }) {
         </div>
       </div>
 
-      <div className={`growth-tree-season-copy is-${seasonTone}`}>
-        <p>{SEASON_COPY[seasonTone]}</p>
+      {(milestonePhase === "showing" || milestonePhase === "leaving") && (
+        <div
+          className={`growth-tree-milestone${milestonePhase === "leaving" ? " is-leaving" : ""}`}
+          role="status"
+        >
+          <p>{milestone.stage_message}</p>
+        </div>
+      )}
+
+      <div className={`growth-tree-season-copy ${copyToneClass}`}>
+        <p>{seasonMessage}</p>
         <span>
           Level {treeState.phaseLevel} - {treeState.phaseLabel} - {formatMissedDays(treeState.daysMissed)}
         </span>

@@ -888,6 +888,36 @@
   padding-left: 18px;
 }
 
+.curator-content-advisory {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(240, 165, 0, 0.22);
+  border-radius: var(--r-sm);
+  background: rgba(240, 165, 0, 0.06);
+  color: rgba(232, 232, 227, 0.78);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.curator-pull-quote {
+  margin: 0 0 20px;
+  padding: 6px 0 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  text-align: center;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.4vw, 28px);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.curator-shelf-caption {
+  margin: 0 0 16px;
+  color: var(--text-faint);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+}
+
 .curator-action-bridge {
   padding: 15px;
   border: 1px solid var(--border);

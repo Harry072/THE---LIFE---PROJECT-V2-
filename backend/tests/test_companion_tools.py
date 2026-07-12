@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,7 +16,9 @@ USER_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def days_ago(n: int) -> str:
-    return (date.today() - timedelta(days=n)).isoformat()
+    # The tools compute "today" in UTC; seeds must use the same clock or
+    # date-boundary tests drift by a day whenever local date leads UTC.
+    return (datetime.now(timezone.utc).date() - timedelta(days=n)).isoformat()
 
 
 def reflection_row(row_id: str, for_date: str, content: str, mood: str | None = None) -> dict:

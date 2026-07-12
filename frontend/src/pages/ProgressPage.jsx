@@ -4,12 +4,25 @@
  */
 import GrowthTree from "../components/GrowthTree";
 import { useGrowthTree } from "../hooks/useGrowthTree";
+import { useTreeSeason } from "../hooks/useTreeSeason";
 import TreeStatCards from "../components/TreeStatCards";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
 
+// "2026-05-05" -> "May 5" (year shown only when it isn't this year).
+function formatJourneyDate(isoDate) {
+  const parsed = new Date(`${isoDate}T00:00:00`);
+  if (!Number.isFinite(parsed.getTime())) return isoDate;
+  const options = { month: "long", day: "numeric" };
+  if (parsed.getFullYear() !== new Date().getFullYear()) {
+    options.year = "numeric";
+  }
+  return parsed.toLocaleDateString("en-US", options);
+}
+
 export default function ProgressPage() {
   const { stage, STAGES } = useGrowthTree();
+  const { journey } = useTreeSeason({ includeJourney: true });
 
   return (
     <div style={{
@@ -83,6 +96,64 @@ export default function ProgressPage() {
           }}>
             <TreeStatCards />
           </div>
+
+          {/* Tree Memory — real milestones only; hidden below 2 items.
+              No icons, no dots, no lines. The words carry the weight. */}
+          {journey.length >= 2 && (
+            <div style={{
+              background: "var(--bg-card)",
+              backdropFilter: "blur(24px)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-md)",
+              padding: "24px",
+              marginBottom: 32,
+              animation: "fadeUp 0.6s ease 0.3s both",
+            }}>
+              <h3 style={{
+                margin: "0 0 16px",
+                fontSize: 11,
+                fontWeight: 500,
+                letterSpacing: 2.5,
+                textTransform: "uppercase",
+                color: "var(--text-faint)",
+              }}>
+                Your Journey
+              </h3>
+
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {journey.map((item) => (
+                  <div
+                    key={`${item.date}-${item.label}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "baseline",
+                      gap: 16,
+                      padding: "8px 0",
+                    }}
+                  >
+                    <span style={{
+                      minWidth: 92,
+                      flexShrink: 0,
+                      color: "var(--text-faint)",
+                      fontSize: 12,
+                      fontFamily: "var(--font-body)",
+                    }}>
+                      {formatJourneyDate(item.date)}
+                    </span>
+                    <p style={{
+                      margin: 0,
+                      color: "var(--text)",
+                      fontSize: 14,
+                      fontFamily: "var(--font-body)",
+                      lineHeight: 1.5,
+                    }}>
+                      {item.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Stage timeline */}
           <div style={{

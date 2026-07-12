@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
+import { API_BASE_URL } from "../lib/apiConfig";
 import { supabase } from "../lib/supabase";
 import { useUserStore } from "../store/userStore";
 
@@ -22,6 +24,23 @@ const logSupabaseError = (label, error) => {
     hint: error?.hint,
     code: error?.code,
   });
+};
+
+// Reflection Layer 2: fire-and-forget embedding trigger. The entry is already
+// saved before this runs; only the entry id travels — never the text. Any
+// failure here is invisible to the user (the sweep heals it on a later save).
+const scheduleEmbedding = async (entryId) => {
+  if (!entryId) return;
+  try {
+    const accessToken = await getSupabaseOrAppAccessToken(supabase);
+    if (!accessToken) return;
+    fetch(`${API_BASE_URL}/api/reflections/${entryId}/embed`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).catch(() => {});
+  } catch {
+    // Never surfaces — the save already succeeded.
+  }
 };
 
 export function useReflection() {
@@ -141,6 +160,7 @@ export function useReflection() {
       setActiveEntryId(data?.id ?? activeEntryId);
       setStatusMessage("Entry saved privately.");
       setStatusTone("success");
+      scheduleEmbedding(data?.id); // fire-and-forget — deliberately not awaited
       await loadEntries();
       return { success: true, data };
     } catch (error) {

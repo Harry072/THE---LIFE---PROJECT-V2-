@@ -966,6 +966,7 @@ def build_life_companion_prompt(
     formatted_memory: str = "",
     intent_knowledge: str = "",
     safe_memory_summary: dict = None,
+    agent_directive: str = "",
 ) -> dict:
     """
     Assembles the Pass 2 LLM prompt package.  Never logs values.
@@ -1025,6 +1026,10 @@ def build_life_companion_prompt(
             + "\nUse this as evidence, but answer naturally. Do not say you are "
             "using retrieved context or backend search."
         )
+
+    # ── Agent directive (companion expert agent ReAct loop, STEP 6) ────────────
+    if agent_directive and agent_directive.strip():
+        context_parts.append(agent_directive)
 
     # Inject memory context into the system prompt at runtime.
     # Using replace() instead of format() to avoid KeyError on the JSON

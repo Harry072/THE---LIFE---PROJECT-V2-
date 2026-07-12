@@ -1,3 +1,5 @@
+// Mirrors the canonical 6-stage config (useGrowthTree.js and the backend
+// season engine) so image, label, and stage payload always agree.
 const TREE_PHASES = [
   {
     level: 1,
@@ -17,25 +19,33 @@ const TREE_PHASES = [
   },
   {
     level: 3,
-    phase: "sapling",
-    label: "Sapling",
+    phase: "young-plant",
+    label: "Young Plant",
     min: 81,
     max: 180,
     fallbackImage: "/media/tree/stage-3-plant.png",
   },
   {
     level: 4,
-    phase: "tree",
-    label: "Tree",
+    phase: "small-tree",
+    label: "Small Tree",
     min: 181,
     max: 350,
     fallbackImage: "/media/tree/stage-4-small.png",
   },
   {
     level: 5,
-    phase: "oak",
-    label: "Oak",
+    phase: "growing-tree",
+    label: "Growing Tree",
     min: 351,
+    max: 600,
+    fallbackImage: "/media/tree/stage-5-growing.png",
+  },
+  {
+    level: 6,
+    phase: "mature-tree",
+    label: "Mature Tree",
+    min: 601,
     max: Infinity,
     fallbackImage: "/media/tree/stage-6-mature.png",
   },

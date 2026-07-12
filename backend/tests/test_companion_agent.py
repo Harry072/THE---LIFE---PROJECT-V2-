@@ -1,6 +1,9 @@
 import unittest
 
 from ai.companion_agent import (
+    ECHO_BLOCK,
+    RESPONSE_STRUCTURE_BLOCK,
+    VOICE_DIRECTIVE,
     count_questions_asked,
     detect_distress,
     perceive,
@@ -118,6 +121,21 @@ class ReactLoopTests(unittest.TestCase):
         self.assertEqual(turn.classification, "progress_question")
         self.assertEqual(turn.tools_called, ["task_history"])
         self.assertEqual(turn.response_mode, "DIRECT")
+        # With task signals present, the directive must force their use.
+        self.assertIn("You MUST reference the specific signals", turn.directive_block)
+
+    def test_direct_mode_without_task_signals_has_no_must_reference_line(self):
+        # practical_question is DIRECT mode but calls no tools — the MUST line
+        # would order the model to cite signals that don't exist in the prompt.
+        turn = run_react_loop(
+            user_id=USER_ID, message="How do I plan my mornings better?",
+            conversation_history=[], supabase=stuck_journal_supabase(),
+        )
+
+        self.assertEqual(turn.classification, "practical_question")
+        self.assertEqual(turn.response_mode, "DIRECT")
+        self.assertEqual(turn.tools_called, [])
+        self.assertNotIn("You MUST reference the specific signals", turn.directive_block)
 
     def test_normal_chat_calls_no_tools(self):
         turn = run_react_loop(
@@ -142,7 +160,47 @@ class ReactLoopTests(unittest.TestCase):
         )
 
         self.assertNotEqual(turn.response_mode, "QUESTION")
-        self.assertIn("do not ask any question", turn.directive_block)
+        self.assertIn("2 of 2 questions used this session", turn.directive_block)
+        self.assertIn("NO question. Ever.", turn.directive_block)
+
+    def test_question_budget_states_zero_used_when_session_is_fresh(self):
+        turn = run_react_loop(
+            user_id=USER_ID, message="tired today",
+            conversation_history=[], supabase=stuck_journal_supabase(),
+        )
+
+        self.assertIn("0 of 2 questions used this session", turn.directive_block)
+        self.assertIn("question allowed, not required", turn.directive_block)
+
+    def test_voice_and_structure_blocks_present_regardless_of_mode(self):
+        # FIX 1-4: these four blocks must reach every response, not just some
+        # modes. Check across three different classifications/modes.
+        cases = [
+            "I keep feeling stuck with everything",        # pattern_question
+            "What have I been struggling with lately?",    # progress_question
+            "How do I plan my mornings better?",            # practical_question
+        ]
+        for message in cases:
+            with self.subTest(message=message):
+                turn = run_react_loop(
+                    user_id=USER_ID, message=message,
+                    conversation_history=[], supabase=stuck_journal_supabase(),
+                )
+                self.assertIn(VOICE_DIRECTIVE, turn.directive_block)
+                self.assertIn(RESPONSE_STRUCTURE_BLOCK, turn.directive_block)
+                self.assertIn(ECHO_BLOCK, turn.directive_block)
+
+    def test_mode_close_directive_matches_final_mode_not_initial(self):
+        # pattern_question starts REFLECT and upgrades to INSIGHT in OBSERVE —
+        # the CLOSE instruction in the directive must reflect the final mode.
+        turn = run_react_loop(
+            user_id=USER_ID, message="I keep feeling stuck with everything",
+            conversation_history=[], supabase=stuck_journal_supabase(),
+        )
+
+        self.assertEqual(turn.response_mode, "INSIGHT")
+        self.assertIn("[CLOSE — INSIGHT]", turn.directive_block)
+        self.assertNotIn("[CLOSE — REFLECT]", turn.directive_block)
 
     def test_directive_wraps_tool_signals_in_data_markers(self):
         turn = run_react_loop(
