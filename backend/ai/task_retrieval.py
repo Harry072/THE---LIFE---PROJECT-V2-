@@ -114,7 +114,7 @@ def _inner_layer_boost(inner_layer: str, focus_areas: list[str] | None) -> float
 def retrieve_candidates(
     message: str,
     *,
-    max_candidates: int = 5,
+    max_candidates: int = 2,
     journey_phase: str | None = None,
     allow_food: bool = False,
     recent_directions: list[str] | None = None,

@@ -139,6 +139,7 @@ def split_origins(value: str | None) -> list[str]:
 
 _ALWAYS_ALLOWED_ORIGINS = [
     DEFAULT_FRONTEND_URL,
+    "https://the-life-project.vercel.app",
     "https://www.the-life-project.vercel.app",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
