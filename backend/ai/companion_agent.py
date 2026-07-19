@@ -56,6 +56,14 @@ DISTRESS_SIGNALS: dict[str, list[str]] = {
         r"\bgive up\b", r"\bcan'?t go on\b", r"\bnothing matters\b",
         r"\bhopeless\b", r"\bno point\b", r"\bcan'?t do this anymore\b",
         r"\bwhat'?s the point of anything\b",
+        # 2026-07-19 audit, keyword gap: "nothing matters" alone doesn't
+        # cover "nothing I do matters" (interposed words break the
+        # adjacency). Negative lookahead excludes "nothing that/which
+        # matters" — a relative clause ("the nothing that matters most
+        # is presence") is a different grammatical construction, not a
+        # distress subject-collapse, and detect_distress uses unanchored
+        # .search() so the exclusion has to happen inline, not by prefix.
+        r"\bnothing\s+(?!that\b|which\b)(?:\w+\s+){0,3}matters\b",
     ],
 }
 
@@ -82,16 +90,30 @@ CLASSIFICATIONS = (
     "journal_reference", "practical_question", "normal_chat",
 )
 
+# Order is the entire matching mechanism — perceive() returns on the first
+# rule whose any pattern matches. journal_reference sits before
+# progress_question on purpose (2026-07-19 audit, M2): progress_question's
+# \bwhat have i been\b also matches journal questions like "what have I
+# been writing about lately", and previously won by being checked first,
+# so journal_search never ran even though a journal_reference pattern
+# (\bbeen writing\b) already matched the same message. pattern_question
+# stays first (unaffected by that swap) and practical_question stays last.
 _PERCEIVE_RULES: list[tuple[str, list[str]]] = [
     ("pattern_question", [
-        r"\bpattern\b", r"\bwhat do you see in me\b", r"\bkeep feeling\b",
+        # \bpattern\b -> \bpatterns?\b: strict superset, catches the plural
+        # ("what patterns have you noticed") the singular-only form missed.
+        r"\bpatterns?\b", r"\bwhat do you see in me\b", r"\bkeep feeling\b",
         r"\balways feel\b", r"\bwhy do i keep\b", r"\bagain and again\b",
         r"\bevery time i\b", r"\bkeep (ending up|coming back|going back)\b",
-    ]),
-    ("progress_question", [
-        r"\bprogress\b", r"\bhow am i doing\b", r"\bstruggling with lately\b",
-        r"\bwhat have i been\b", r"\bmy (tasks|streak)\b", r"\bcompleted\b",
-        r"\bimproving\b", r"\bam i getting (better|worse|anywhere)\b",
+        # 2026-07-19 audit, M1: natural companion-directed phrasings for
+        # asking what the companion has noticed. Deliberately directional
+        # (you/your, not I/my) so self-description ("I notice I keep
+        # feeling sad") doesn't route here through these three specifically
+        # — it can still match the pre-existing \bkeep feeling\b above,
+        # which is unrelated to this fix and left as-is.
+        r"\byou\s+keep\s+(noticing|seeing)\b",
+        r"\bhave\s+you\s+noticed\b",
+        r"\bwhat\s+(?:have\s+you|do\s+you)\s+(?:notice|see|observe)\b",
     ]),
     ("journal_reference", [
         r"\bjournal\b", r"\bi wrote\b", r"\bmy (entries|reflections?)\b",
@@ -102,6 +124,15 @@ _PERCEIVE_RULES: list[tuple[str, list[str]]] = [
         # to normal_chat entirely — same class of gap as _BANNED_OPENERS
         # needing a category match instead of an enumerated phrase list.
         r"\bdid i write\b", r"\bhave i written\b",
+        # 2026-07-19 audit, M2: present-tense "writing about X" without
+        # "been" or "wrote" — genuinely new coverage, not a duplicate of
+        # the two patterns above.
+        r"\bwriting about\b",
+    ]),
+    ("progress_question", [
+        r"\bprogress\b", r"\bhow am i doing\b", r"\bstruggling with lately\b",
+        r"\bwhat have i been\b", r"\bmy (tasks|streak)\b", r"\bcompleted\b",
+        r"\bimproving\b", r"\bam i getting (better|worse|anywhere)\b",
     ]),
     ("practical_question", [
         r"\bhow (do|can|should) i\b", r"\bhow to\b", r"\bplan\b",

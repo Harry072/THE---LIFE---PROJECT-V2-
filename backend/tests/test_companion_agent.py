@@ -54,6 +54,29 @@ class DistressDetectionTests(unittest.TestCase):
             with self.subTest(benign=benign):
                 self.assertIsNone(detect_distress(benign))
 
+    def test_keyword_gap_nothing_i_do_matters_fires(self):
+        # 2026-07-19 audit keyword gap: \bnothing matters\b alone didn't
+        # cover interposed words between "nothing" and "matters".
+        self.assertEqual(
+            detect_distress("I just feel like nothing I do matters"),
+            "persistent_distress",
+        )
+
+    def test_keyword_gap_existing_pattern_still_fires(self):
+        # Regression guard: the new pattern must not replace/shadow the
+        # original exact-phrase match.
+        self.assertEqual(
+            detect_distress("nothing matters anymore"), "persistent_distress"
+        )
+
+    def test_keyword_gap_relative_clause_does_not_fire(self):
+        # False-positive guard: "nothing THAT matters" is a noun clause
+        # ("the nothingness that is significant"), not the distress
+        # subject-collapse construction ("nothing [I do] matters").
+        self.assertIsNone(
+            detect_distress("the nothing that matters most is presence")
+        )
+
 
 class PerceiveTests(unittest.TestCase):
     def test_classifications(self):
@@ -75,10 +98,36 @@ class PerceiveTests(unittest.TestCase):
             # reproduction string from that audit.
             ("what did I write about feeling stuck last week", "journal_reference"),
             ("have I written anything about this before", "journal_reference"),
+            # 2026-07-19 audit — Fix 3A: plural + directional "keep noticing"
+            # phrasings must reach pattern_question (were normal_chat before).
+            ("what patterns have you noticed in me", "pattern_question"),
+            ("what do you keep noticing about me", "pattern_question"),
+            ("what patterns do you see", "pattern_question"),
+            ("have you noticed anything about me", "pattern_question"),
+            # 2026-07-19 audit — Fix 3B: journal_reference now checked before
+            # progress_question, so these no longer get shadowed by
+            # progress_question's broader \bwhat have i been\b.
+            ("what have I been writing about lately", "journal_reference"),
+            ("what did I write about this week", "journal_reference"),
+            ("have I written about this before", "journal_reference"),
+            # Fix 3B regression guard: progress questions must still route
+            # correctly now that journal_reference is checked first.
+            ("what have I been completing lately", "progress_question"),
+            ("am I making progress", "progress_question"),
+            ("how have I been doing with my tasks", "progress_question"),
         ]
         for message, expected in cases:
             with self.subTest(message=message):
                 self.assertEqual(perceive(message), expected)
+
+    def test_self_description_keep_feeling_stays_pattern_question(self):
+        # Pre-existing behavior (predates the 2026-07-19 Fix 3A additions):
+        # \bkeep feeling\b already matches self-description phrasing like
+        # this. Fix 3A's new directional patterns are all you/your-anchored
+        # and don't fire here, but this older, unrelated pattern does — and
+        # that's fine: pattern_question always downgrades to REFLECT without
+        # confirmed frequency>=2 data, so it can't fabricate a pattern claim.
+        self.assertEqual(perceive("I notice I keep feeling sad"), "pattern_question")
 
     def test_emotional_disclosure_without_practical_ask_stays_normal_chat(self):
         # Guards against the new practical_question patterns over-matching —
