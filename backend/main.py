@@ -51,6 +51,7 @@ from ai.growth_tree_intelligence import (
     get_score_payload,
     get_season_payload,
 )
+from ai.master_orchestrator import build_safe_default, get_dashboard_payload
 from ai.companion_knowledge import (
     detect_companion_intent,
     extract_request_slots,
@@ -1988,6 +1989,23 @@ async def get_growth_tree_score(authorization: str | None = Header(default=None)
         raise HTTPException(status_code=500, detail="Failed to read score") from error
 
 
+@app.get("/api/dashboard")
+async def get_dashboard(authorization: str | None = Header(default=None)):
+    """Master orchestrator — the dashboard's single payload. user_id from
+    the token only. The module fails safe internally; this catch-all is the
+    last line: the dashboard always renders, never errors."""
+    token_user_id = validate_supabase_access_token(authorization)
+    try:
+        return get_dashboard_payload(supabase, token_user_id)
+    except Exception as error:
+        print(
+            "MASTER_ORCHESTRATOR "
+            f"status=endpoint_failed user_id={token_user_id} "
+            f"error_type={type(error).__name__}"
+        )
+        return build_safe_default()
+
+
 @app.get("/api/growth-tree/journey")
 async def get_growth_tree_journey(authorization: str | None = Header(default=None)):
     """Growth Tree — Tree Memory timeline. Token-scoped. On any failure
@@ -2288,6 +2306,7 @@ async def life_companion_chat(
                 tools_called=agent_turn.tools_called,
                 tool_results=agent_turn.tool_results,
                 questions_allowed=_questions_allowed,
+                user_message=user_message,
             )
             gateway_result.companion_response["reply"] = _guard.reply
         log_life_companion_event(

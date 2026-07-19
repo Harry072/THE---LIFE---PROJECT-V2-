@@ -9,6 +9,7 @@ import {
   getPreferredAvatarUrl,
   getPreferredInitial,
   getPreferredUsername,
+  toTitleCase,
 } from "../utils/userDisplayName";
 import { useAppState } from "../contexts/AppStateContext";
 
@@ -351,7 +352,7 @@ export default function ProfilePage() {
 
             <div className="profile-identity">
               <p className="profile-kicker">Your Profile</p>
-              <h1>{displayName}</h1>
+              <h1>{toTitleCase(displayName)}</h1>
               <p>{user?.email}</p>
             </div>
           </section>

@@ -173,3 +173,52 @@ export const MOBILE_PRIMARY_NAV = [
   { id: "reflection", label: "Reflect", icon: "leaf", path: "/reflection" },
   { id: "companion", label: "Talk", icon: "sparkle", path: "/companion" },
 ];
+
+// ── Icon-only navigation (dashboard redesign) ──────────────────────────────
+// Four primary destinations + Discover. Icons guide the curious; labels are
+// aria-only. Everything else lives in the Discover drawer.
+
+export const PRIMARY_NAV = [
+  { id: "dashboard", label: "Home", icon: "house", path: "/dashboard" },
+  { id: "loop", label: "Loop", icon: "loop", path: "/loop" },
+  { id: "companion", label: "Companion", icon: "chat", path: "/companion" },
+  { id: "reflection", label: "Reflect", icon: "pen", path: "/reflection" },
+];
+
+export const DISCOVER_FEATURES = [
+  {
+    id: "reset",
+    label: "Reset Space",
+    icon: "meditate",
+    path: "/meditation",
+    purpose: FEATURE_PURPOSE.reset,
+  },
+  {
+    id: "curator",
+    label: "Curator",
+    icon: "books",
+    path: "/curator",
+    purpose: FEATURE_PURPOSE.curator,
+  },
+  {
+    id: "progress",
+    label: "Progress / Tree",
+    icon: "sprout",
+    path: "/progress",
+    purpose: FEATURE_PURPOSE.progress,
+  },
+  {
+    id: "weeklyMirror",
+    label: "Weekly Mirror",
+    icon: "sparkle",
+    path: "/mirror",
+    purpose: FEATURE_PURPOSE.weeklyMirror,
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: "settings",
+    path: "/profile",
+    purpose: "Your account and preferences.",
+  },
+];

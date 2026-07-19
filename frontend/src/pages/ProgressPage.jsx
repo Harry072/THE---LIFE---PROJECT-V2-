@@ -46,7 +46,7 @@ export default function ProgressPage() {
       <Sidebar />
 
       <main style={{
-        marginLeft: 240,
+        marginLeft: 60,
         position: "relative", zIndex: 1,
       }}>
         <TopBar />
@@ -289,19 +289,9 @@ export default function ProgressPage() {
         </div>
       </main>
 
-      {/* Responsive CSS */}
+      {/* Responsive CSS — the rail is 60px at all desktop widths */}
       <style>{`
-        @media (max-width: 1023px) {
-          aside { width: 64px !important; }
-          aside nav span,
-          aside [data-widget],
-          aside [data-profile-text] {
-            display: none !important;
-          }
-          main { margin-left: 64px !important; }
-        }
         @media (max-width: 767px) {
-          aside { display: none; }
           main { margin-left: 0 !important; }
           .tree-stat-grid {
             grid-template-columns: repeat(2, 1fr) !important;

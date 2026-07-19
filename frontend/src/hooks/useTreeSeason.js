@@ -55,7 +55,11 @@ export function useTreeSeason({ includeJourney = false } = {}) {
 
     load();
     return () => {
+      // StrictMode dev double-mount: release the guard so the re-run
+      // fetches fresh — otherwise the cancelled first run wins and the
+      // season/journey silently never arrive in dev.
       cancelled = true;
+      fetchedRef.current = false;
     };
   }, [includeJourney]);
 

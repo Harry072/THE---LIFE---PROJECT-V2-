@@ -96,10 +96,18 @@ _PERCEIVE_RULES: list[tuple[str, list[str]]] = [
     ("journal_reference", [
         r"\bjournal\b", r"\bi wrote\b", r"\bmy (entries|reflections?)\b",
         r"\bwrote about\b", r"\bbeen writing\b",
+        # "i wrote" only covers simple past tense. "What did I write about
+        # X" / "have I written about X" reference the same past writing
+        # through a different aux-verb construction and were falling through
+        # to normal_chat entirely — same class of gap as _BANNED_OPENERS
+        # needing a category match instead of an enumerated phrase list.
+        r"\bdid i write\b", r"\bhave i written\b",
     ]),
     ("practical_question", [
         r"\bhow (do|can|should) i\b", r"\bhow to\b", r"\bplan\b",
         r"\broutine\b", r"\bschedule\b", r"\bsteps\b", r"\bwhat should i do\b",
+        r"\bwhat can i do\b", r"\bcan you suggest\b",
+        r"\bany (suggestions?|tips?|advice)\b", r"\bhelp (me|with)\b",
     ]),
 ]
 
@@ -115,6 +123,26 @@ def perceive(message: str) -> str:
         if any(pattern.search(text) for pattern in patterns):
             return classification
     return "normal_chat"
+
+
+# ── STEP 2 support: correction detection ─────────────────────────────────────
+# Independent of classification — a correction ("you misunderstood") can occur
+# inside any topic, so this is checked separately, not as a fifth _PERCEIVE_RULES
+# entry. Drives STEP 6's directive swap, not tool planning.
+
+CORRECTION_SIGNALS = [
+    r"\bmisunderstood\b", r"\bmisread\b", r"\bmisinterpreted\b",
+    r"\bnot what i meant\b", r"\bnot what i said\b",
+    r"\byou got (it|that) wrong\b", r"\bthat'?s not it\b",
+]
+
+_COMPILED_CORRECTION = [re.compile(pattern, re.IGNORECASE) for pattern in CORRECTION_SIGNALS]
+
+
+def detect_correction(message: str) -> bool:
+    """True if the user is telling us we misread them this turn."""
+    text = str(message or "")
+    return any(pattern.search(text) for pattern in _COMPILED_CORRECTION)
 
 
 def detect_message_emotion(message: str) -> str | None:
@@ -147,7 +175,15 @@ MODE_DIRECTIVES = {
     "INSIGHT": (
         "Respond in INSIGHT mode. A real, data-backed pattern appears below — "
         "name it specifically: how many times, how recently. Use the user's own "
-        "words for the feeling. End with one honest question, not advice."
+        "words for the feeling. End with one honest question, not advice.\n\n"
+        "When naming a pattern, lead with your own noticing, not a declaration "
+        "about their state:\n"
+        "PREFER: 'What I keep noticing is...' / 'Something that stays with me "
+        "is...' / 'I keep coming back to...'\n"
+        "AVOID: 'You are...' as a flat diagnostic opener.\n"
+        "Natural 'you' elsewhere — direct address, warmth, questions — is "
+        "correct and expected. This targets diagnostic declarations, not the "
+        "pronoun itself."
     ),
     "QUESTION": (
         "Respond in QUESTION mode. Ask exactly one sharp clarifying question. "
@@ -155,7 +191,13 @@ MODE_DIRECTIVES = {
     ),
     "DIRECT": (
         "Respond in DIRECT mode. One concrete next step, warm but unambiguous. "
-        "Ground it in the behavioral signals below if present."
+        "Ground it in the behavioral signals below if present.\n\n"
+        "When giving practical help:\n"
+        "→ Give ONE specific suggestion, not a list\n"
+        "→ Ground it in something they actually said\n"
+        "→ If you have no specific grounding — ask one question first before advising\n"
+        "→ Never give advice that could appear in any self-help article\n"
+        "The test: could a stranger have said this? If yes — it's too generic. Go deeper."
     ),
 }
 
@@ -241,7 +283,31 @@ ECHO_BLOCK = """NEVER:
 → Start with 'You are torn between...'
 → Validate before responding
 
+NEVER start a response with:
+→ You're feeling
+→ You're recognising
+→ You're taking steps
+→ You're curious about
+→ You're acknowledging
+→ You seem to be
+These are analysis openers. They process the user instead of responding to them.
+
+If you misread the user and they correct you:
+Do NOT explain your mistake in a paragraph. Just ask again. One sentence. Move forward.
+'Fair enough. What's actually going on?' is better than three sentences of apology.
+
 TEST: if someone read only your response without reading the user's message, they should sense exactly what the user was carrying. That is genuine listening expressed in text."""
+
+
+CORRECTION_HANDLING_BLOCK = """[CORRECTION DETECTED — replaces the mode close below, this turn only]
+The user just told you that you misread them.
+→ One sentence maximum.
+→ Acknowledge briefly and move forward — do not hold space, do not explain your misreading.
+→ Ask the right question to actually understand.
+→ Never justify or apologise across multiple sentences.
+
+WRONG: 'I apologise for the misunderstanding. It seems I may have misread your signals and I want to make sure I understand...'
+RIGHT: 'Got it. What's actually going on?'"""
 
 
 def _question_budget_block(questions_asked: int) -> str:
@@ -271,6 +337,7 @@ class AgentTurn:
     tool_results: dict = field(default_factory=dict)
     directive_block: str = ""
     trace: dict = field(default_factory=dict)
+    is_correction: bool = False
 
 
 def _render_tool_signals(tool_results: dict) -> str:
@@ -327,7 +394,10 @@ def run_react_loop(
 
     # ── STEP 2: PERCEIVE ────────────────────────────────────────────────────
     classification = perceive(sanitized.text)
-    trace["steps"].append({"step": "perceive", "classification": classification})
+    is_correction = detect_correction(sanitized.text)
+    trace["steps"].append({
+        "step": "perceive", "classification": classification, "is_correction": is_correction,
+    })
 
     # ── STEP 3: REASON ──────────────────────────────────────────────────────
     questions_asked = count_questions_asked(conversation_history)
@@ -403,12 +473,15 @@ def run_react_loop(
     trace["steps"].append({"step": "observe", "observations": observations, "mode_final": mode})
 
     # ── STEP 6: RESPOND (directive for the single provider call) ────────────
+    # Correction handling REPLACES the mode's close directive for this turn —
+    # REFLECT's own close ("Hold the space... No question") directly
+    # contradicts "ask the right question," so both are never sent together.
     directive_lines = [
         "[AGENT DIRECTIVE — internal, never mention to the user]",
         VOICE_DIRECTIVE,
         RESPONSE_STRUCTURE_BLOCK,
         MODE_DIRECTIVES[mode],
-        MODE_CLOSE_DIRECTIVES[mode],
+        CORRECTION_HANDLING_BLOCK if is_correction else MODE_CLOSE_DIRECTIVES[mode],
         ECHO_BLOCK,
         _question_budget_block(questions_asked),
     ]
@@ -430,6 +503,7 @@ def run_react_loop(
         response_mode=mode,
         tools_called=tools_called,
         tool_results=tool_results,
+        is_correction=is_correction,
         directive_block="\n".join(directive_lines),
         trace=trace,
     )

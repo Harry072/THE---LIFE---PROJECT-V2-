@@ -14,6 +14,7 @@ import ProfilePage from './pages/ProfilePage';
 import TheLoopPage from './pages/TheLoopPage';
 import CuratorPage from './features/curator/CuratorPage';
 import LifeCompanionPage from './pages/LifeCompanionPage';
+import WeeklyMirrorPage from './pages/WeeklyMirrorPage';
 import MobileBottomNav from './components/MobileBottomNav';
 
 const ProtectedRoute = ({ children }) => {
@@ -72,6 +73,9 @@ function AppRoutes() {
         } />
         <Route path="/progress" element={
           <ProtectedRoute><ProgressPage /></ProtectedRoute>
+        } />
+        <Route path="/mirror" element={
+          <ProtectedRoute><WeeklyMirrorPage /></ProtectedRoute>
         } />
         <Route path="/profile" element={
           <ProtectedRoute><ProfilePage /></ProtectedRoute>

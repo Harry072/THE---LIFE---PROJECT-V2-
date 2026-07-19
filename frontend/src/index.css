@@ -184,14 +184,12 @@ main {
   flex: 1;
 }
 
-/* Sidebar-aware page layout — use className="sidebar-main" on <main> */
+/* Sidebar-aware page layout — use className="sidebar-main" on <main>.
+   The rail is a fixed 60px at every desktop width; mobile has no rail. */
 .sidebar-main {
-  margin-left: 240px;
+  margin-left: 60px;
   position: relative;
   z-index: 1;
-}
-@media (max-width: 1023px) {
-  .sidebar-main { margin-left: 64px; }
 }
 @media (max-width: 767px) {
   .sidebar-main { margin-left: 0; }

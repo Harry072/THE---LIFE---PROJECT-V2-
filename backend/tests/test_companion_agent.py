@@ -1,14 +1,19 @@
 import unittest
 
 from ai.companion_agent import (
+    CORRECTION_HANDLING_BLOCK,
     ECHO_BLOCK,
+    MODE_CLOSE_DIRECTIVES,
+    MODE_DIRECTIVES,
     RESPONSE_STRUCTURE_BLOCK,
     VOICE_DIRECTIVE,
     count_questions_asked,
+    detect_correction,
     detect_distress,
     perceive,
     run_react_loop,
 )
+from ai.prompts import COMPANION_SYSTEM_PROMPT
 from tests.test_companion_tools import FakeSupabase, days_ago, reflection_row
 
 
@@ -58,10 +63,59 @@ class PerceiveTests(unittest.TestCase):
             ("I wrote about this in my journal yesterday", "journal_reference"),
             ("How do I plan my mornings better?", "practical_question"),
             ("Today was okay I guess", "normal_chat"),
+            # Voice-fix additions: practical asks that don't fit the old
+            # how-to/plan/routine/steps phrasing must still reach DIRECT mode.
+            ("can you suggest anything to help with scrolling habits", "practical_question"),
+            ("any tips for staying focused", "practical_question"),
+            ("what can i do about this", "practical_question"),
+            # Audit finding #1 (2026-07-17): "i wrote" only covers simple
+            # past tense — this exact live message (Message A) fell through
+            # to normal_chat and journal_search was never invoked even
+            # though matching journal entries existed. This is the literal
+            # reproduction string from that audit.
+            ("what did I write about feeling stuck last week", "journal_reference"),
+            ("have I written anything about this before", "journal_reference"),
         ]
         for message, expected in cases:
             with self.subTest(message=message):
                 self.assertEqual(perceive(message), expected)
+
+    def test_emotional_disclosure_without_practical_ask_stays_normal_chat(self):
+        # Guards against the new practical_question patterns over-matching —
+        # this is an emotional statement, not a request for suggestions.
+        self.assertEqual(perceive("i feel a bit lost about myself"), "normal_chat")
+
+
+class SystemPromptLanguageRulesTests(unittest.TestCase):
+    def test_system_prompt_bans_analysis_openers_too(self):
+        # Root-cause #1 had TWO live origins: ECHO_BLOCK (already partially
+        # fixed) and COMPANION_SYSTEM_PROMPT's own [LANGUAGE RULES] section,
+        # which previously said nothing about "You're feeling" at all.
+        self.assertIn("You're feeling", COMPANION_SYSTEM_PROMPT)
+        self.assertIn("analysis openers", COMPANION_SYSTEM_PROMPT)
+
+
+class CorrectionDetectionTests(unittest.TestCase):
+    def test_correction_phrases_detected(self):
+        cases = [
+            "no, i am happy about things you just misunderstood",
+            "that's not what i meant at all",
+            "you misread that completely",
+            "that's not it, let me explain again",
+        ]
+        for message in cases:
+            with self.subTest(message=message):
+                self.assertTrue(detect_correction(message))
+
+    def test_ordinary_messages_are_not_corrections(self):
+        cases = [
+            "can you suggest anything to help with scrolling habits",
+            "i feel a bit lost about myself",
+            "everything feels wrong today",
+        ]
+        for message in cases:
+            with self.subTest(message=message):
+                self.assertFalse(detect_correction(message))
 
 
 class ReactLoopTests(unittest.TestCase):
@@ -210,6 +264,63 @@ class ReactLoopTests(unittest.TestCase):
 
         self.assertIn("[RETRIEVED USER DATA", turn.directive_block)
         self.assertIn("[END RETRIEVED USER DATA]", turn.directive_block)
+
+    def test_scrolling_habits_message_reaches_direct_mode_with_new_guidance(self):
+        # Voice-fix Problem 2: this exact message used to fall through to
+        # REFLECT (no tools, "no advice") because the old practical_question
+        # regex list didn't match it. The DIRECT-mode text improvement is
+        # unreachable unless the classifier gap is also fixed.
+        turn = run_react_loop(
+            user_id=USER_ID, message="can you suggest anything to help with scrolling habits",
+            conversation_history=[], supabase=stuck_journal_supabase(),
+        )
+
+        self.assertEqual(turn.classification, "practical_question")
+        self.assertEqual(turn.response_mode, "DIRECT")
+        self.assertIn("could a stranger have said this", turn.directive_block)
+        self.assertIn("ask one question first before advising", turn.directive_block)
+
+    def test_correction_message_replaces_close_with_correction_block(self):
+        # Voice-fix Problem 3: "you misunderstood" has no dedicated
+        # classification, so without is_correction wiring this falls through
+        # to REFLECT, whose own close ("Hold the space... No question")
+        # directly contradicts what a correction turn needs.
+        turn = run_react_loop(
+            user_id=USER_ID, message="no, i am happy about things you just misunderstood",
+            conversation_history=[], supabase=stuck_journal_supabase(),
+        )
+
+        self.assertTrue(turn.is_correction)
+        self.assertIn(CORRECTION_HANDLING_BLOCK, turn.directive_block)
+        self.assertNotIn(MODE_CLOSE_DIRECTIVES[turn.response_mode], turn.directive_block)
+        self.assertIn("Got it. What's actually going on?", turn.directive_block)
+
+    def test_non_correction_message_keeps_normal_mode_close(self):
+        turn = run_react_loop(
+            user_id=USER_ID, message="i feel a bit lost about myself",
+            conversation_history=[], supabase=stuck_journal_supabase(),
+        )
+
+        self.assertFalse(turn.is_correction)
+        self.assertNotIn(CORRECTION_HANDLING_BLOCK, turn.directive_block)
+        self.assertIn(MODE_CLOSE_DIRECTIVES[turn.response_mode], turn.directive_block)
+
+    def test_echo_block_bans_full_analysis_opener_list(self):
+        turn = run_react_loop(
+            user_id=USER_ID, message="i feel a bit lost about myself",
+            conversation_history=[], supabase=stuck_journal_supabase(),
+        )
+
+        for banned in (
+            "You're feeling", "You're recognising", "You're taking steps",
+            "You're curious about", "You're acknowledging", "You seem to be",
+        ):
+            with self.subTest(banned=banned):
+                self.assertIn(banned, turn.directive_block)
+
+    def test_direct_mode_directive_has_new_practical_help_rules(self):
+        self.assertIn("Give ONE specific suggestion, not a list", MODE_DIRECTIVES["DIRECT"])
+        self.assertIn("could a stranger have said this", MODE_DIRECTIVES["DIRECT"])
 
 
 if __name__ == "__main__":

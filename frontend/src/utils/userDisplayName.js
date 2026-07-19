@@ -1,26 +1,37 @@
-const normalizeName = (value) => {
+// Display-name resolution — mirrors the backend orchestrator's chain:
+// profile name column (absent today, tolerated) → auth metadata full_name
+// → username → email prefix, every candidate cleaned. A handle-looking
+// string ("1har4y09") can never reach the screen: digits and separators
+// are stripped and the first letter capitalised, so the worst case for a
+// digit-heavy email prefix is a short clean name, never the raw handle.
+
+const cleanDisplayName = (value) => {
   if (typeof value !== "string") return "";
-  return value.trim().replace(/\s+/g, " ");
+  const stripped = value.replace(/[0-9_.\-]+/g, " ");
+  const collapsed = stripped.replace(/\s+/g, " ").trim();
+  if (!collapsed) return "";
+  return collapsed.charAt(0).toUpperCase() + collapsed.slice(1);
 };
 
-const fallbackFromEmail = (email, fallback) => {
-  if (typeof email !== "string" || !email.includes("@")) return fallback;
+export function getPreferredUsername(user, profile, fallback = "Explorer") {
+  const fromProfile = cleanDisplayName(
+    profile?.display_name || profile?.full_name
+  );
+  if (fromProfile) return fromProfile;
 
-  const localPart = email.split("@")[0] || "";
-  const cleaned = localPart.trim().replace(/\s+/g, "");
+  const fromFullName = cleanDisplayName(user?.user_metadata?.full_name);
+  if (fromFullName) return fromFullName;
 
-  if (!cleaned) return fallback;
-  return cleaned;
-};
+  const fromUsername = cleanDisplayName(user?.user_metadata?.username);
+  if (fromUsername) return fromUsername;
 
-export function getPreferredUsername(user, _profile, fallback = "Explorer") {
-  const metadataUsername = normalizeName(user?.user_metadata?.username);
-  if (metadataUsername) return metadataUsername;
+  const email = user?.email;
+  if (typeof email === "string" && email.includes("@")) {
+    const fromEmail = cleanDisplayName(email.split("@")[0]);
+    if (fromEmail) return fromEmail;
+  }
 
-  const metadataFullName = normalizeName(user?.user_metadata?.full_name);
-  if (metadataFullName) return metadataFullName;
-
-  return fallbackFromEmail(user?.email, fallback);
+  return fallback;
 }
 
 export function getPreferredInitial(user, profile, fallback = "E") {
@@ -31,4 +42,16 @@ export function getPreferredInitial(user, profile, fallback = "E") {
 export function getPreferredAvatarUrl(user) {
   const avatarUrl = user?.user_metadata?.avatar_url;
   return typeof avatarUrl === "string" ? avatarUrl.trim() : "";
+}
+
+// Every word capitalised, not just the first — applied at each render
+// site regardless of what the source (backend payload, profile row, auth
+// metadata) returned. cleanDisplayName above only capitalises the first
+// letter of the whole string, so "harpreet singh" needs this on top.
+export function toTitleCase(value) {
+  if (typeof value !== "string" || !value) return value;
+  return value
+    .split(" ")
+    .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word))
+    .join(" ");
 }

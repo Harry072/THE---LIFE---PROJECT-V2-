@@ -191,13 +191,132 @@ class ResponseFormatTests(unittest.TestCase):
         self.assertNotIn("-", text.split(".")[0])
         self.assertIn("bullets_flattened", notes)
 
-    def test_banned_openers_stripped(self):
+    def test_banned_opener_drops_the_whole_sentence(self):
+        # Option B: a prefix strip left "Today was heavy for you." here
+        # (fine), but the same mechanism left bare fragments on other
+        # openers (see below) — whole-sentence drop is now the one rule
+        # for every pattern in _BANNED_OPENERS, old and new.
         text, notes = enforce_response_format(
-            "It sounds like today was heavy for you.", questions_allowed=True
+            "It sounds like today was heavy for you. Let's start with one small thing.",
+            questions_allowed=True,
         )
 
-        self.assertTrue(text.startswith("Today was heavy"))
-        self.assertIn("banned_opener_stripped", notes)
+        self.assertEqual(text, "Let's start with one small thing.")
+        self.assertIn("banned_opener_sentence_dropped", notes)
+
+    def test_analysis_openers_drop_the_whole_sentence(self):
+        # Category-level match ("you're " + one word), not an enumerated
+        # phrase list — a live trace caught the model opening with "You're
+        # not sure..." which wasn't on any named list. Whole-sentence drop
+        # (not prefix-strip) because a prefix strip left bare fragments
+        # like "About who you are right now..." when the banned phrase
+        # wasn't followed by an already-complete clause.
+        cases = [
+            "You're feeling overwhelmed by all of it.",
+            "You're recognising a pattern here.",
+            "You're taking steps in the right direction.",
+            "You're curious about why this keeps happening.",
+            "You're acknowledging something hard.",
+            "You're not sure who you are right now.",
+            "You are carrying a lot lately.",
+            "You seem to be carrying a lot today.",
+        ]
+        for opener_sentence in cases:
+            with self.subTest(opener_sentence=opener_sentence):
+                text, notes = enforce_response_format(
+                    f"{opener_sentence} Let's start with one small thing.",
+                    questions_allowed=True,
+                )
+                self.assertEqual(text, "Let's start with one small thing.")
+                self.assertIn("banned_opener_sentence_dropped", notes)
+
+    def test_declarative_verb_openers_drop_the_whole_sentence(self):
+        # Audit finding #3 (2026-07-17): a live trace with the EXACT message
+        # "Can i give you a little name...i want to name you 'reet'." leaked
+        # "You want to give me a name that feels personal to you..." past
+        # the copula-only patterns above ("you're X" / "you are X") — "want"
+        # isn't a copula. This is the reproduction case plus its verb family.
+        cases = [
+            "You want to give me a name that feels personal to you, and 'reet' is what you've chosen.",
+            "You feel like this matters more than you're saying.",
+            "You think this is your fault somehow.",
+            "You need to hear that this is okay.",
+            "You know exactly why this keeps happening.",
+            "You wish things were different right now.",
+        ]
+        for opener_sentence in cases:
+            with self.subTest(opener_sentence=opener_sentence):
+                text, notes = enforce_response_format(
+                    f"{opener_sentence} Let's start with one small thing.",
+                    questions_allowed=True,
+                )
+                self.assertEqual(text, "Let's start with one small thing.")
+                self.assertIn("banned_opener_sentence_dropped", notes)
+
+    def test_declarative_verb_mid_sentence_is_not_touched(self):
+        # The rule targets OPENERS, not the verb anywhere in the reply —
+        # matches Part 4's "natural you elsewhere is correct and expected."
+        text, notes = enforce_response_format(
+            "That's a unique name, and it's interesting that you want to "
+            "create a sense of personal connection with me.",
+            questions_allowed=True,
+        )
+
+        self.assertIn("you want to create", text)
+        self.assertNotIn("banned_opener_sentence_dropped", notes)
+
+    def test_echo_repetition_sentence_dropped_whole(self):
+        # Isolated to prove the NEW check, not the opener check by
+        # coincidence: "You've been struggling with your sleep lately"
+        # does not match any _BANNED_OPENERS pattern (no you're/you are/
+        # you seem to be/you want/feel/think/need/know/wish), so this can
+        # only be caught by word-overlap against the user's own message.
+        user_message = "I've been struggling with my sleep lately."
+        reply = (
+            "You've been struggling with your sleep lately. "
+            "Let's start with one small thing tonight."
+        )
+        text, notes = enforce_response_format(
+            reply, questions_allowed=True, user_message=user_message,
+        )
+
+        self.assertNotIn("struggling with your sleep", text)
+        self.assertIn("Let's start with one small thing tonight", text)
+        self.assertIn("echo_repetition_sentence_dropped", notes)
+        self.assertNotIn("banned_opener_sentence_dropped", notes)
+
+    def test_echo_repetition_below_threshold_is_kept(self):
+        # A sentence that merely shares topic words with the user's message
+        # (not a restatement) must survive — the 70% threshold is meant to
+        # catch near-duplicates, not any shared vocabulary.
+        user_message = "I've been struggling with my sleep lately."
+        reply = "Rest matters, and tonight might be a good night to protect it."
+        text, notes = enforce_response_format(
+            reply, questions_allowed=True, user_message=user_message,
+        )
+
+        self.assertEqual(text, reply)
+        self.assertNotIn("echo_repetition_sentence_dropped", notes)
+
+    def test_echo_check_reuses_validator_threshold_exactly(self):
+        from ai.validator import _word_overlap_ratio
+        from ai.companion_guardrails import ECHO_OVERLAP_THRESHOLD
+
+        self.assertEqual(ECHO_OVERLAP_THRESHOLD, 0.70)
+        # Same function object, not a reimplementation.
+        import ai.companion_guardrails as guardrails_module
+        self.assertIs(guardrails_module._word_overlap_ratio, _word_overlap_ratio)
+
+    def test_banned_opener_as_only_sentence_drops_to_empty(self):
+        # A reply that is ENTIRELY a banned opener has nothing left to
+        # keep. enforce_response_format alone returns "" here — it's
+        # apply_guardrails (tested below) that supplies SAFE_FALLBACK_LINE.
+        text, notes = enforce_response_format(
+            "You're feeling overwhelmed by all of it.", questions_allowed=True,
+        )
+
+        self.assertEqual(text, "")
+        self.assertIn("banned_opener_sentence_dropped", notes)
 
     def test_i_understand_removed(self):
         text, notes = enforce_response_format(
@@ -215,8 +334,106 @@ class ResponseFormatTests(unittest.TestCase):
         self.assertNotIn("?", text)
         self.assertIn("question_over_budget_removed", notes)
 
+    def test_insight_mode_allows_four_paragraphs_three_sentences(self):
+        # Part 5: INSIGHT specifically may extend to 4 x 3. Each paragraph
+        # here has exactly 3 sentences and there are exactly 4 paragraphs —
+        # both must survive whole under mode="INSIGHT".
+        paragraph = "First point here. Second point here. Third point here."
+        reply = "\n\n".join([paragraph] * 4)
+
+        text, notes = enforce_response_format(
+            reply, questions_allowed=True, mode="INSIGHT",
+        )
+
+        self.assertEqual(len(text.split("\n\n")), 4)
+        for shaped_paragraph in text.split("\n\n"):
+            self.assertEqual(shaped_paragraph.count("."), 3)
+        self.assertNotIn("paragraphs_trimmed", notes)
+        self.assertNotIn("paragraph_trimmed", notes)
+        self.assertNotIn("length_violation_non_insight_mode", notes)
+
+    def test_insight_mode_still_caps_at_five_paragraphs(self):
+        # The exception is 4, not unlimited — a 5th paragraph must still
+        # be trimmed even under mode="INSIGHT".
+        paragraph = "One sentence here."
+        reply = "\n\n".join([paragraph] * 5)
+
+        text, notes = enforce_response_format(
+            reply, questions_allowed=True, mode="INSIGHT",
+        )
+
+        self.assertEqual(len(text.split("\n\n")), 4)
+        self.assertIn("paragraphs_trimmed", notes)
+        self.assertNotIn("length_violation_non_insight_mode", notes)
+
+    def test_reflect_mode_exceeding_three_paragraphs_flagged_and_trimmed(self):
+        # Part 5's explicit ask: a REFLECT/DIRECT/QUESTION reply that
+        # overflows 3 paragraphs must be BOTH trimmed (never sent long)
+        # AND carry the mode-specific tag, visible in the trace, not
+        # folded anonymously into the generic "paragraphs_trimmed" note.
+        paragraph = "One sentence here."
+        reply = "\n\n".join([paragraph] * 4)
+
+        text, notes = enforce_response_format(
+            reply, questions_allowed=True, mode="REFLECT",
+        )
+
+        self.assertEqual(len(text.split("\n\n")), 3)
+        self.assertIn("paragraphs_trimmed", notes)
+        self.assertIn("length_violation_non_insight_mode", notes)
+
+    def test_default_mode_treated_as_non_insight(self):
+        # mode="" (the default) must behave exactly like REFLECT/DIRECT/
+        # QUESTION — the tight cap, not the INSIGHT exception.
+        paragraph = "One sentence here."
+        reply = "\n\n".join([paragraph] * 4)
+
+        text, notes = enforce_response_format(reply, questions_allowed=True)
+
+        self.assertEqual(len(text.split("\n\n")), 3)
+        self.assertIn("length_violation_non_insight_mode", notes)
+
 
 class GuardrailPipelineTests(unittest.TestCase):
+    def test_ungrounded_insight_never_gets_the_length_exception(self):
+        # Part 5's "only triggered by grounded data" requirement, proven at
+        # the pipeline level: mode="INSIGHT" requested, but tool_results has
+        # no pattern_check >= 2, so guardrail 4 downgrades to REFLECT BEFORE
+        # enforce_response_format runs — the 4-paragraph exception must
+        # never apply here, because apply_guardrails wires final_mode
+        # (post-downgrade), not the raw incoming mode.
+        paragraph = "One sentence here."
+        long_reply = "\n\n".join([paragraph] * 4)
+
+        result = apply_guardrails(
+            long_reply,
+            mode="INSIGHT",
+            tools_called=[],
+            tool_results={},  # no pattern_check -> ungrounded
+            questions_allowed=True,
+        )
+
+        self.assertEqual(result.final_mode, "REFLECT")
+        self.assertEqual(len(result.reply.split("\n\n")), 3)
+        self.assertIn("grounded_insight_downgrade", result.fired)
+        self.assertIn("length_violation_non_insight_mode", result.fired)
+
+    def test_grounded_insight_gets_the_length_exception(self):
+        paragraph = "First point here. Second point here. Third point here."
+        long_reply = "\n\n".join([paragraph] * 4)
+
+        result = apply_guardrails(
+            long_reply,
+            mode="INSIGHT",
+            tools_called=["journal_search", "pattern_check"],
+            tool_results={"pattern_check": {"frequency": 3, "pattern_description": "x"}},
+            questions_allowed=True,
+        )
+
+        self.assertEqual(result.final_mode, "INSIGHT")
+        self.assertEqual(len(result.reply.split("\n\n")), 4)
+        self.assertNotIn("length_violation_non_insight_mode", result.fired)
+
     def test_full_pipeline_on_a_bad_reply(self):
         bad_reply = (
             "It sounds like you have anxiety. "
@@ -239,6 +456,21 @@ class GuardrailPipelineTests(unittest.TestCase):
         self.assertIn("Try one small step tonight", result.reply)
         for expected in ["grounded_insight_downgrade", "therapist_drift", "fabricated_memory"]:
             self.assertIn(expected, result.fired)
+
+    def test_reply_that_is_only_a_banned_opener_falls_back_to_safe_line(self):
+        # New reachable edge case under whole-sentence-drop: a single-
+        # sentence reply that is entirely a banned opener now drops to
+        # nothing, and apply_guardrails must never send silence.
+        result = apply_guardrails(
+            "You're feeling overwhelmed by all of it.",
+            mode="REFLECT",
+            tools_called=[],
+            tool_results={},
+            questions_allowed=True,
+        )
+
+        self.assertEqual(result.reply, SAFE_FALLBACK_LINE)
+        self.assertIn("empty_after_guardrails_fallback", result.fired)
 
     def test_reply_destroyed_by_guardrails_gets_safe_fallback(self):
         result = apply_guardrails(

@@ -6,6 +6,8 @@ import LoopTaskCard from "../components/loop/LoopTaskCard";
 import LoopIntroVideo from "../components/loop/LoopIntroVideo";
 import LoopNotificationToast from "../components/loop/LoopNotificationToast";
 import PostActionFeedbackModal from "../components/loop/PostActionFeedbackModal";
+import PatternRevealModal from "../components/dashboard/PatternRevealModal";
+import { usePatternReveal } from "../hooks/usePatternReveal";
 import { useContextualGreeting } from "../hooks/useContextualGreeting";
 import { useEnsureTodayLoopTasks } from "../hooks/useEnsureTodayLoopTasks";
 import Icon from "../components/Icon";
@@ -96,6 +98,24 @@ export default function TheLoopPage() {
     && hasAllCoreCategories
     && sorted.every((task) => task.done || task.skipped);
   const signalLine = (whisper || DEFAULT_SIGNAL).trim();
+
+  // Reflection Layer 4 — the pattern reveal fires where tasks are
+  // completed. "Later" stays local; /seen fires only via "Show me".
+  const {
+    pending: patternRevealPending,
+    description: patternRevealDescription,
+    question: patternRevealQuestion,
+    checkForReveal,
+    markSeen: markPatternRevealSeen,
+    dismissForToday: dismissPatternRevealForToday,
+  } = usePatternReveal();
+  const [showPatternRevealModal, setShowPatternRevealModal] = useState(false);
+
+  useEffect(() => {
+    if (allDone) {
+      checkForReveal();
+    }
+  }, [allDone, checkForReveal]);
 
   useEffect(() => {
     if (error) {
@@ -299,6 +319,62 @@ export default function TheLoopPage() {
             <p>Progress is built in tiny, honest steps.</p>
           </div>
         )}
+
+        {allDone && patternRevealPending && (
+          <div style={{
+            marginTop: 10,
+            padding: "13px 18px",
+            borderRadius: 10,
+            background: "rgba(126,217,154,0.05)",
+            border: "1px solid rgba(126,217,154,0.15)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--text-dim)" }}>
+              I&rsquo;ve noticed something about you. Want to see it?
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={dismissPatternRevealForToday}
+                style={{
+                  padding: "10px 12px",
+                  minHeight: 44,
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.07)",
+                  background: "transparent",
+                  color: "var(--text-faint)",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-body)",
+                  fontSize: 12,
+                }}
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPatternRevealModal(true)}
+                style={{
+                  padding: "10px 14px",
+                  minHeight: 44,
+                  borderRadius: 8,
+                  border: "1px solid rgba(126, 217, 154, 0.32)",
+                  background: "var(--green-bright)",
+                  color: "#06100b",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontFamily: "var(--font-body)",
+                  fontSize: 12,
+                }}
+              >
+                Show me
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <LoopNotificationToast
@@ -324,6 +400,16 @@ export default function TheLoopPage() {
             setFeedbackIsSkip(false);
             setFeedbackError("");
             setFeedbackMetrics(null);
+          }}
+        />
+      ) : null}
+      {showPatternRevealModal ? (
+        <PatternRevealModal
+          description={patternRevealDescription}
+          question={patternRevealQuestion}
+          onClose={() => {
+            setShowPatternRevealModal(false);
+            markPatternRevealSeen();
           }}
         />
       ) : null}

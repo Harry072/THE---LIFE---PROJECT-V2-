@@ -1,44 +1,61 @@
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Icon from "./Icon";
-import { MOBILE_PRIMARY_NAV } from "../data/lifeNavigation";
+import DiscoverDrawer from "./DiscoverDrawer";
+import { PRIMARY_NAV } from "../data/lifeNavigation";
 
 function isActiveRoute(item, pathname) {
   if (item.path === "/dashboard") {
     return pathname === "/dashboard";
   }
-
-  if (item.path === "/meditation") {
-    return pathname === "/meditation" || pathname === "/music";
-  }
-
   return pathname === item.path || pathname.startsWith(item.path);
 }
 
+/**
+ * Icon-only bottom tab bar (mobile). Four destinations + Discover.
+ * Labels are aria-only — icons guide the curious; text lists tell the
+ * exhausted user there are too many things to do.
+ */
 export default function MobileBottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [discoverOpen, setDiscoverOpen] = useState(false);
 
   return (
     <>
       <div className="mobile-bottom-nav-spacer" aria-hidden="true" />
       <nav className="mobile-bottom-nav" aria-label="Primary mobile navigation">
-        {MOBILE_PRIMARY_NAV.map((item) => {
+        {PRIMARY_NAV.map((item) => {
           const active = isActiveRoute(item, location.pathname);
-
           return (
             <button
               key={item.id}
               type="button"
               className={active ? "is-active" : ""}
               onClick={() => navigate(item.path)}
+              aria-label={item.label}
               aria-current={active ? "page" : undefined}
+              title={item.label}
             >
-              <Icon name={item.icon} size={18} />
-              <span>{item.label}</span>
+              <Icon name={item.icon} size={21} />
             </button>
           );
         })}
+        <button
+          type="button"
+          className={discoverOpen ? "is-active" : ""}
+          onClick={() => setDiscoverOpen(true)}
+          aria-label="Discover"
+          aria-haspopup="dialog"
+          title="Discover"
+        >
+          <Icon name="compass" size={21} />
+        </button>
       </nav>
+
+      {discoverOpen ? (
+        <DiscoverDrawer onClose={() => setDiscoverOpen(false)} />
+      ) : null}
 
       <style>{`
         .mobile-bottom-nav,
@@ -49,7 +66,7 @@ export default function MobileBottomNav() {
         @media (max-width: 767px) {
           .mobile-bottom-nav-spacer {
             display: block;
-            height: calc(76px + env(safe-area-inset-bottom));
+            height: calc(70px + env(safe-area-inset-bottom));
             flex: 0 0 auto;
           }
 
@@ -75,35 +92,21 @@ export default function MobileBottomNav() {
 
           .mobile-bottom-nav button {
             min-width: 0;
-            min-height: 50px;
+            min-height: 44px;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 4px;
             border: 0;
             border-radius: 16px;
             background: transparent;
             color: var(--text-faint);
             cursor: pointer;
-            font-family: var(--font-body);
-            padding: 6px 2px;
+            padding: 10px 2px;
           }
 
           .mobile-bottom-nav button.is-active {
             color: var(--green-bright);
             background: rgba(46, 204, 113, 0.1);
-          }
-
-          .mobile-bottom-nav span {
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0;
-            line-height: 1;
           }
         }
       `}</style>
