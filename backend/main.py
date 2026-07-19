@@ -168,12 +168,11 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_origins(),
-    allow_origin_regex=r"https://the-life-project-v2-.*\.vercel\.app",
+    allow_origin_regex=r"https://the-life-project.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.get("/health")
 def health():
