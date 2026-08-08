@@ -1,3 +1,8 @@
+# NOT LIVE CODE.
+# Reference schema for future cross-session companion memory.
+# Do not import. Kept for its detected_patterns / past_sessions
+# shape, which the live single-turn memory path does not have.
+
 from copy import deepcopy
 
 
@@ -66,4 +71,3 @@ IMPORTANT: Reference this history naturally when relevant.
 Do not dump it on the user. Use it to deepen your understanding.
 If you see the same pattern appearing again, name it directly.
 """.strip()
-

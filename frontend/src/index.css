@@ -185,9 +185,9 @@ main {
 }
 
 /* Sidebar-aware page layout — use className="sidebar-main" on <main>.
-   The rail is a fixed 60px at every desktop width; mobile has no rail. */
+   The rail is a fixed 180px at every desktop width; mobile has no rail. */
 .sidebar-main {
-  margin-left: 60px;
+  margin-left: 180px;
   position: relative;
   z-index: 1;
 }
@@ -256,7 +256,7 @@ textarea,
   min-height: 100vh;
   width: 100%;
   overflow-x: hidden;
-  padding: clamp(28px, 5vw, 64px) 18px 96px;
+  padding: clamp(28px, 5vw, 64px) 32px 96px;
   color: var(--loop-text);
   background: var(--loop-bg);
   isolation: isolate;
@@ -376,10 +376,12 @@ textarea,
 
 .loop-funnel-list {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .loop-funnel-task {
+  position: relative;
+  overflow: hidden;
   width: 100%;
   border: 1px solid var(--loop-line-soft);
   border-radius: 22px;
@@ -387,86 +389,54 @@ textarea,
     linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015)),
     var(--loop-panel-strong);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
-  overflow: hidden;
-}
-
-.loop-funnel-task.is-expanded {
-  border-color: rgba(88, 216, 131, 0.78);
-  box-shadow:
-    0 0 0 1px rgba(88, 216, 131, 0.18),
-    0 26px 70px rgba(0, 0, 0, 0.36);
-  background:
-    linear-gradient(180deg, rgba(7, 45, 39, 0.35), rgba(6, 20, 22, 0.93)),
-    var(--loop-panel-strong);
 }
 
 .loop-funnel-task.is-complete {
-  opacity: 0.78;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.08)),
+    var(--loop-panel-strong);
 }
 
-.loop-task-topline {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  align-items: center;
-  gap: 14px;
-  padding: 24px 28px;
-}
-
-.loop-task-check,
-.loop-task-summary,
-.loop-task-primary,
-.loop-task-skip,
-.loop-funnel-empty button,
-.loop-funnel-error button {
-  font: inherit;
-}
-
-.loop-task-check {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border: 1.5px solid rgba(203, 213, 225, 0.48);
-  border-radius: 999px;
-  color: white;
-  background: transparent;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-.loop-task-check:disabled {
-  cursor: default;
-}
-
-.loop-funnel-task.is-complete .loop-task-check {
-  border-color: rgba(88, 216, 131, 0.68);
-  background: linear-gradient(135deg, rgba(88, 216, 131, 0.95), rgba(35, 136, 83, 0.92));
-  box-shadow: 0 0 30px rgba(88, 216, 131, 0.24);
-}
-
-.loop-task-summary {
-  min-width: 0;
+.loop-task-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
   width: 100%;
-  display: grid;
-  gap: 12px;
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  touch-action: manipulation;
+  height: 100%;
+  object-fit: cover;
+  object-position: center right;
+  opacity: 0.22;
+  pointer-events: none;
 }
 
-.loop-task-title-row {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px;
-  align-items: center;
-  gap: 16px;
+.loop-task-bg-gradient {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.75) 45%, rgba(0, 0, 0, 0.20) 100%);
+  pointer-events: none;
+}
+
+.loop-task-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 28px 32px;
+}
+
+.loop-task-kotler {
+  color: var(--loop-faint);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .loop-task-title {
+  margin: 0;
   min-width: 0;
   color: var(--loop-text);
   font-family: var(--font-display);
@@ -478,155 +448,67 @@ textarea,
 }
 
 .loop-funnel-task.is-complete .loop-task-title {
-  color: rgba(226, 232, 240, 0.62);
+  opacity: 0.6;
   text-decoration: line-through;
   text-decoration-thickness: 1px;
-  text-decoration-color: rgba(226, 232, 240, 0.35);
+  text-decoration-color: currentColor;
 }
 
-.loop-task-chevron {
-  color: rgba(203, 213, 225, 0.70);
-  transition: transform 0.22s ease;
-}
-
-.loop-task-meta-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  color: var(--loop-muted);
-  font-size: 15px;
-  line-height: 1.2;
-}
-
-.loop-task-kotler {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-  color: rgba(226, 232, 240, 0.88);
-}
-
-.loop-task-kotler span {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.70);
-}
-
-.loop-task-meta-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.48);
-}
-
-.loop-task-difficulty {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 5px 14px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 999px;
-  color: rgba(226, 232, 240, 0.82);
-  background: rgba(148, 163, 184, 0.08);
-}
-
-.loop-task-expanded {
-  margin: 0 28px 26px 98px;
-  padding: 20px 26px 24px;
-  border: 1px solid rgba(226, 232, 240, 0.09);
-  border-radius: 18px;
-  background: rgba(0, 0, 0, 0.16);
-}
-
-.loop-task-detail-row {
-  display: grid;
-  grid-template-columns: 28px 160px minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
-  padding: 16px 0;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.09);
-}
-
-.loop-task-detail-row:first-child {
-  padding-top: 4px;
-}
-
-.loop-task-detail-row:last-of-type {
-  border-bottom: 0;
-}
-
-.loop-task-detail-icon,
-.loop-task-detail-label {
-  color: var(--loop-green);
-}
-
-.loop-task-detail-label,
-.loop-task-detail-value {
+.loop-task-description {
   margin: 0;
+  max-width: 640px;
+  color: var(--loop-muted);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
-.loop-task-detail-label {
-  font-size: 15px;
-  line-height: 1.5;
-}
-
-.loop-task-detail-value {
-  color: rgba(226, 232, 240, 0.82);
-  font-family: var(--font-display);
-  font-size: 16px;
-  line-height: 1.5;
-}
-
-.loop-task-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  margin-top: 20px;
-}
-
-.loop-task-primary {
-  width: min(420px, 100%);
-  min-height: 62px;
+.loop-task-mark-done {
+  align-self: flex-end;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  margin: 0 auto;
-  padding: 0 24px;
-  border: 1px solid rgba(147, 245, 178, 0.38);
-  border-radius: 18px;
-  color: #f8fff9;
-  background: linear-gradient(180deg, rgba(88, 216, 131, 0.92), rgba(33, 129, 79, 0.92));
-  box-shadow:
-    0 18px 45px rgba(31, 150, 84, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
-  font-family: var(--font-display);
-  font-size: 21px;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 6px;
+  padding: 10px 20px;
+  border: 1px solid rgba(88, 216, 131, 0.42);
+  border-radius: 999px;
+  color: var(--loop-green);
+  background: transparent;
+  font: inherit;
+  font-family: var(--font-body);
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
-.loop-task-skip {
-  border: 0;
-  color: rgba(226, 232, 240, 0.68);
-  background: transparent;
-  font-size: 14px;
-  line-height: 1.4;
-  cursor: pointer;
-  touch-action: manipulation;
+.loop-task-mark-done:hover {
+  background: rgba(88, 216, 131, 0.08);
 }
 
-.loop-task-skip:hover {
-  color: rgba(226, 232, 240, 0.88);
+.loop-task-mark-done:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.loop-task-done-badge {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-top: 6px;
+  border-radius: 999px;
+  color: #06100b;
+  background: linear-gradient(135deg, rgba(88, 216, 131, 0.95), rgba(35, 136, 83, 0.92));
+  box-shadow: 0 0 20px rgba(88, 216, 131, 0.20);
 }
 
 .loop-funnel-error,
-.loop-funnel-loading,
 .loop-funnel-empty,
 .loop-funnel-complete {
   border: 1px solid var(--loop-line);
@@ -645,7 +527,6 @@ textarea,
 }
 
 .loop-funnel-error p,
-.loop-funnel-loading p,
 .loop-funnel-empty p,
 .loop-funnel-complete p {
   margin: 0;
@@ -675,7 +556,6 @@ textarea,
   place-items: center;
 }
 
-.loop-funnel-loading,
 .loop-funnel-empty {
   min-height: 240px;
   display: grid;
@@ -684,15 +564,6 @@ textarea,
   padding: 36px;
   text-align: center;
   color: var(--loop-muted);
-}
-
-.loop-funnel-loading span {
-  width: 42px;
-  height: 42px;
-  border: 3px solid rgba(88, 216, 131, 0.14);
-  border-top-color: var(--loop-green);
-  border-radius: 999px;
-  animation: loopSpin 1s linear infinite;
 }
 
 .loop-funnel-empty button {
@@ -705,6 +576,8 @@ textarea,
   cursor: pointer;
 }
 
+/* REMOVED — TheLoopPage.jsx line 369 deleted. Rules below are unused;
+   left in place intentionally rather than as a separate cleanup pass. */
 .loop-funnel-complete {
   width: fit-content;
   max-width: 100%;
@@ -720,10 +593,7 @@ textarea,
   color: rgba(88, 216, 131, 0.76);
 }
 
-.loop-task-check:focus-visible,
-.loop-task-summary:focus-visible,
-.loop-task-primary:focus-visible,
-.loop-task-skip:focus-visible,
+.loop-task-mark-done:focus-visible,
 .loop-intro-replay-button:focus-visible,
 .loop-funnel-empty button:focus-visible,
 .loop-funnel-error button:focus-visible {
@@ -836,13 +706,9 @@ textarea,
   outline-offset: 3px;
 }
 
-@keyframes loopSpin {
-  to { transform: rotate(360deg); }
-}
-
 @media (max-width: 760px) {
   .loop-funnel-page {
-    padding: 18px 12px 96px;
+    padding: 18px 24px 96px;
   }
 
   .loop-funnel-shell {
@@ -871,62 +737,17 @@ textarea,
     border-radius: 12px;
   }
 
-  .loop-task-topline {
-    grid-template-columns: 46px 1fr;
-    gap: 10px;
-    padding: 20px 16px;
-  }
-
-  .loop-task-check {
-    width: 38px;
-    height: 38px;
-  }
-
-  .loop-task-title-row {
-    grid-template-columns: minmax(0, 1fr) 22px;
-    gap: 10px;
+  .loop-task-content {
+    padding: 20px 18px;
+    gap: 8px;
   }
 
   .loop-task-title {
     font-size: clamp(20px, 6.4vw, 25px);
   }
 
-  .loop-task-meta-row {
-    gap: 8px 10px;
+  .loop-task-description {
     font-size: 14px;
-  }
-
-  .loop-task-difficulty {
-    min-height: 28px;
-    padding: 4px 11px;
-  }
-
-  .loop-task-expanded {
-    margin: 0 14px 18px;
-    padding: 16px 16px 18px;
-    border-radius: 16px;
-  }
-
-  .loop-task-detail-row {
-    grid-template-columns: 24px 1fr;
-    gap: 8px 12px;
-    padding: 14px 0;
-  }
-
-  .loop-task-detail-label {
-    grid-column: 2;
-  }
-
-  .loop-task-detail-value {
-    grid-column: 1 / -1;
-    padding-left: 36px;
-    font-size: 15px;
-  }
-
-  .loop-task-primary {
-    min-height: 56px;
-    border-radius: 16px;
-    font-size: 18px;
   }
 
   .loop-funnel-error {
@@ -1133,11 +954,7 @@ textarea,
 }
 
 .growth-tree-stat-panel {
-  position: absolute;
-  top: 16px;
-  left: 20px;
-  right: 20px;
-  z-index: 10;
+  margin-bottom: 14px;
   padding: 14px 18px;
   border: 1px solid rgba(46, 204, 113, 0.15);
   border-radius: 14px;
@@ -1147,16 +964,14 @@ textarea,
 }
 
 .growth-tree-shell.is-compact .growth-tree-stat-panel {
-  top: 12px;
-  right: 12px;
-  left: 12px;
+  margin-bottom: 10px;
   padding: 10px 12px;
 }
 
 .growth-tree-stat-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   margin-bottom: 10px;
 }
@@ -1169,8 +984,7 @@ textarea,
 }
 
 .growth-tree-score span,
-.growth-tree-score strong,
-.growth-tree-task-count {
+.growth-tree-score strong {
   white-space: nowrap;
 }
 
@@ -1194,16 +1008,6 @@ textarea,
 
 .growth-tree-shell.is-compact .growth-tree-score strong {
   font-size: 16px;
-}
-
-.growth-tree-task-count {
-  color: var(--green-bright);
-  font-family: var(--font-body);
-  font-size: 14px;
-}
-
-.growth-tree-shell.is-compact .growth-tree-task-count {
-  font-size: 11px;
 }
 
 .growth-tree-progress-track {
@@ -1391,19 +1195,13 @@ textarea,
   }
 }
 
-/* Milestone moment — one quiet line above the season message.
-   Fade in 0.8s, hold 12s, fade out 0.8s. No motion, no celebration. */
+/* Milestone moment — one quiet line below the tree image, no card chrome.
+   Fade in 0.6s, hold 12s, fade out 0.6s. No motion, no celebration. */
 .growth-tree-milestone {
   margin-top: 12px;
-  padding: 12px 16px;
-  border: 1px solid rgba(126, 217, 154, 0.16);
-  border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015)),
-    rgba(7, 12, 10, 0.72);
   text-align: center;
-  animation: growthTreeMilestoneIn 0.8s ease-in-out both;
-  transition: opacity 0.8s ease-in-out;
+  animation: growthTreeMilestoneIn 0.6s ease-in-out both;
+  transition: opacity 0.6s ease-in-out;
 }
 
 .growth-tree-milestone.is-leaving {
@@ -1412,10 +1210,11 @@ textarea,
 
 .growth-tree-milestone p {
   margin: 0;
-  color: rgba(236, 241, 232, 0.92);
+  color: var(--text-faint);
   font-family: var(--font-display);
+  font-style: italic;
   font-size: 16px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.4;
 }
 
@@ -1495,9 +1294,7 @@ textarea,
   }
 
   .growth-tree-stat-panel {
-    top: 12px;
-    right: 12px;
-    left: 12px;
+    margin-bottom: 11px;
     padding: 11px 12px;
   }
 
@@ -2148,11 +1945,21 @@ input[type="color"] {
   font-weight: 700;
 }
 
+/* Explicit column placement — with "Add entry" relocated out of this row,
+   the back button and save cluster are sometimes the only two children
+   (desktop). Without this, auto-placement would collapse them into the
+   first two tracks instead of opposite ends. */
+.reflection-back-button {
+  grid-column: 1;
+}
+
 .reflection-mobile-archive-button {
+  grid-column: 2;
   justify-self: center;
 }
 
 .reflection-save-cluster {
+  grid-column: 3;
   justify-self: end;
   display: grid;
   justify-items: center;
@@ -2293,6 +2100,41 @@ input[type="color"] {
   line-height: 1.8;
 }
 
+/* Mobile-only collapse toggle (Fix 3) — desktop never renders these,
+   the card is always the full image+copy layout there. */
+.reflection-marcus-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: rgba(101, 227, 151, 0.80);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.30em;
+  text-transform: uppercase;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.reflection-marcus-collapse {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-top: 6px;
+  border: 1px solid rgba(101, 227, 151, 0.20);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(101, 227, 151, 0.70);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 .reflection-weather-section {
   width: min(920px, 100%);
   margin: 0 auto 16px;
@@ -2379,9 +2221,16 @@ input[type="color"] {
 }
 
 .reflection-canvas-section {
-  position: relative;
   width: min(920px, 100%);
   margin: 16px auto 0;
+}
+
+/* Scoped positioning context for the textarea + its absolutely-positioned
+   phantom prompt / char-count footer — kept separate from
+   .reflection-canvas-section so adding the Add-entry row below (normal
+   flow) doesn't grow the box those two measure "bottom" against. */
+.reflection-canvas-box {
+  position: relative;
 }
 
 .reflection-single-canvas {
@@ -2441,6 +2290,45 @@ input[type="color"] {
   align-items: center;
   gap: 10px;
   font-size: 13px;
+}
+
+/* Relocated from the top nav (Fix 1) — own class, not shared with
+   .reflection-mobile-archive-button, per instruction. Normal flow below
+   the textarea box (the textarea's own absolutely-positioned children
+   don't affect this element's position). */
+.reflection-add-entry-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.reflection-add-entry-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid rgba(214, 190, 143, 0.38);
+  border-radius: 999px;
+  color: rgba(248, 246, 238, 0.85);
+  background: rgba(255, 255, 255, 0.035);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reflection-add-entry-inline:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+@media (max-width: 479px) {
+  .reflection-add-entry-row {
+    position: sticky;
+    bottom: 0;
+    right: 0;
+    z-index: 10;
+  }
 }
 
 .reflection-footer-row {
@@ -2543,6 +2431,9 @@ input[type="color"] {
 
 .reflection-back-button:focus-visible,
 .reflection-mobile-archive-button:focus-visible,
+.reflection-add-entry-inline:focus-visible,
+.reflection-marcus-toggle:focus-visible,
+.reflection-marcus-collapse:focus-visible,
 .reflection-save-button:focus-visible,
 .reflection-icon-button:focus-visible,
 .reflection-archive-entry:focus-visible,
@@ -2697,6 +2588,7 @@ input[type="color"] {
 
   .reflection-back-button,
   .reflection-mobile-archive-button {
+    grid-column: 1;
     justify-self: stretch;
     justify-content: center;
   }

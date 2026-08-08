@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
   CircleDot,
   Clock,
   Cloud,
@@ -9,6 +11,7 @@ import {
   Leaf,
   Lock,
   Moon,
+  Plus,
   ShieldCheck,
   Sprout,
   Sun,
@@ -18,6 +21,8 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useReflection } from "../hooks/useReflection";
+import ContinuationCard from "../components/ContinuationCard";
+import { evaluateCompletion, endChain } from "../hooks/useContinuationChain";
 
 const INNER_WEATHER = [
   { id: "clear", label: "Clear", note: "Steady", Icon: Sun },
@@ -636,6 +641,11 @@ export default function ReflectionPage() {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [selectedArchiveId, setSelectedArchiveId] = useState(null);
   const [archiveDetailOpen, setArchiveDetailOpen] = useState(false);
+  const [chainResult, setChainResult] = useState(null);
+  // Mobile only (isCompact) — collapsed by default so a user with several
+  // saved entries isn't forced to scroll past the full card on every
+  // visit. Desktop always renders the full card; this state is unused there.
+  const [marcusExpanded, setMarcusExpanded] = useState(false);
   const textareaRef = useRef(null);
 
   useEffect(() => {
@@ -684,7 +694,22 @@ export default function ReflectionPage() {
 
   const handleSave = async () => {
     if (saving || !hasContent) return;
-    await saveDraft();
+    const result = await saveDraft();
+    if (result?.success) {
+      const chain = await evaluateCompletion("journal_saved");
+      if (chain) setChainResult(chain);
+    }
+  };
+
+  const handleChainAccept = () => {
+    const route = chainResult?.nextRoute;
+    setChainResult(null);
+    if (route) navigate(route);
+  };
+
+  const handleChainDismiss = () => {
+    endChain();
+    setChainResult(null);
   };
 
   const openArchive = async () => {
@@ -693,7 +718,15 @@ export default function ReflectionPage() {
     await loadEntries();
   };
 
-  const handleNewEntry = () => {
+  // Previously called startNewEntry() directly, discarding unsaved
+  // content. Fixed: save first, and only reset once the save has actually
+  // succeeded — content must never be lost. On failure, saveDraft() has
+  // already set the error status itself; startNewEntry() must not run.
+  const handleNewEntry = async () => {
+    if (hasContent) {
+      const result = await saveDraft();
+      if (!result?.success) return;
+    }
     startNewEntry();
     setArchiveOpen(false);
     setArchiveDetailOpen(false);
@@ -773,15 +806,6 @@ export default function ReflectionPage() {
               </button>
             )}
 
-            <button
-              type="button"
-              className="reflection-mobile-archive-button"
-              onClick={handleNewEntry}
-            >
-              <Feather size={17} strokeWidth={1.7} />
-              <span>Add entry</span>
-            </button>
-
             <div className="reflection-save-cluster">
               <button
                 type="button"
@@ -808,25 +832,6 @@ export default function ReflectionPage() {
                 : "Name what is happening without turning it into a verdict."}
             </span>
           </header>
-
-          <section className="reflection-marcus-card" aria-labelledby="marcus-title">
-            <div className="reflection-marcus-image-wrap">
-              <img
-                src="/media/marcus-statue-portrait.png"
-                alt="Marcus Aurelius inspired statue portrait"
-                className="reflection-marcus-image"
-              />
-            </div>
-            <div className="reflection-marcus-copy">
-              <p>Evening Practice</p>
-              <h2 id="marcus-title">Marcus&apos; Private Journal</h2>
-              <span>
-                Before ruling an empire, Marcus tried to rule himself. This space is
-                inspired by the same private discipline: a few honest lines, written
-                without performance, to return to humility and inner steadiness.
-              </span>
-            </div>
-          </section>
 
           <section className="reflection-weather-section">
             <p>No need to explain your whole day. One honest sentence is enough.</p>
@@ -862,24 +867,82 @@ export default function ReflectionPage() {
           </section>
 
           <section className="reflection-canvas-section" aria-label="Private journal entry">
-            <textarea
-              ref={textareaRef}
-              className="journal-textarea reflection-single-canvas"
-              value={draftContent}
-              onChange={(event) => setDraftContent(event.target.value)}
-              placeholder="Write from your truth..."
-              maxLength={2500}
-              aria-label="Write your private reflection"
-            />
-            {!draftContent.trim() && (
-              <p className="reflection-phantom-prompt">{JOURNAL_PROMPT}</p>
-            )}
-            <div className="reflection-canvas-footer">
-              <span>
-                <Feather size={18} strokeWidth={1.55} />
-                {draftContent.length}
-              </span>
+            <div className="reflection-canvas-box">
+              <textarea
+                ref={textareaRef}
+                className="journal-textarea reflection-single-canvas"
+                value={draftContent}
+                onChange={(event) => setDraftContent(event.target.value)}
+                placeholder="Write from your truth..."
+                maxLength={2500}
+                aria-label="Write your private reflection"
+              />
+              {!draftContent.trim() && (
+                <p className="reflection-phantom-prompt">{JOURNAL_PROMPT}</p>
+              )}
+              <div className="reflection-canvas-footer">
+                <span>
+                  <Feather size={18} strokeWidth={1.55} />
+                  {draftContent.length}
+                </span>
+              </div>
             </div>
+            {hasContent && (
+              <div className="reflection-add-entry-row">
+                <button
+                  type="button"
+                  className="reflection-add-entry-inline"
+                  onClick={handleNewEntry}
+                >
+                  <Plus size={16} strokeWidth={2.2} />
+                  <span>Add entry</span>
+                </button>
+              </div>
+            )}
+          </section>
+
+          <section className="reflection-marcus-card" aria-labelledby="marcus-title">
+            {isCompact && !marcusExpanded ? (
+              <button
+                type="button"
+                className="reflection-marcus-toggle"
+                onClick={() => setMarcusExpanded(true)}
+                aria-expanded={false}
+              >
+                <span>Evening Practice</span>
+                <ChevronDown size={16} strokeWidth={1.9} />
+              </button>
+            ) : (
+              <>
+                <div className="reflection-marcus-image-wrap">
+                  <img
+                    src="/media/marcus-statue-portrait.png"
+                    alt="Marcus Aurelius inspired statue portrait"
+                    className="reflection-marcus-image"
+                  />
+                </div>
+                <div className="reflection-marcus-copy">
+                  <p>Evening Practice</p>
+                  <h2 id="marcus-title">Marcus&apos; Private Journal</h2>
+                  <span>
+                    Before ruling an empire, Marcus tried to rule himself. This space is
+                    inspired by the same private discipline: a few honest lines, written
+                    without performance, to return to humility and inner steadiness.
+                  </span>
+                </div>
+                {isCompact && (
+                  <button
+                    type="button"
+                    className="reflection-marcus-collapse"
+                    onClick={() => setMarcusExpanded(false)}
+                    aria-expanded={true}
+                    aria-label="Collapse Evening Practice"
+                  >
+                    <ChevronUp size={16} strokeWidth={1.9} />
+                  </button>
+                )}
+              </>
+            )}
           </section>
 
           <div className="reflection-footer-row">
@@ -907,6 +970,19 @@ export default function ReflectionPage() {
           >
             {statusCopy}
           </p>
+
+          {chainResult && (
+            <div style={{ marginTop: 16 }}>
+              <ContinuationCard
+                headline={chainResult.headline}
+                question={chainResult.question}
+                nextFeatureName={chainResult.nextFeatureName}
+                isTerminal={chainResult.isTerminal}
+                onAccept={handleChainAccept}
+                onDismiss={handleChainDismiss}
+              />
+            </div>
+          )}
         </main>
         )}
       </div>

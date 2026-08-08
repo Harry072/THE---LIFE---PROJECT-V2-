@@ -188,7 +188,16 @@ SESSION_SOFT_CLOSE_AT = 18   # this ordinal and after: close the session warmly
 SESSION_MESSAGE_LIMIT = 20   # this ordinal and after: deterministic pause, no API call
 DAILY_API_CALL_LIMIT = 50    # per user per rolling 24h across all sessions
 
-SESSION_PAUSE_MESSAGE = "This is a good place to pause. Come back when you're ready."
+# Names the mechanism and the exit. Deliberately makes no claim about what
+# carries into the new chat: user-scoped signals (tasks, reflections) do
+# carry, but the conversational thread does not, so "picks up where you
+# left off" would overclaim. Must stay true on EVERY emission -- a capped
+# conversation can never unfreeze (see check_rate_limits), so this repeats
+# indefinitely and carries no per-occurrence state.
+SESSION_PAUSE_MESSAGE = (
+    "This conversation has reached its full length. "
+    "Start a new chat to keep talking."
+)
 DAILY_LIMIT_MESSAGE = (
     "We've talked a lot in the last day, and I want what you share to have "
     "room to settle. Let's pick this up tomorrow — what you've said stays with me."

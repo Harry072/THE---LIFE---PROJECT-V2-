@@ -2,12 +2,14 @@
  * ProgressPage — Full-size tree view with detailed growth stats.
  * Primary view of the Growth Tree with stage timeline below.
  */
+import { useEffect } from "react";
 import GrowthTree from "../components/GrowthTree";
 import { useGrowthTree } from "../hooks/useGrowthTree";
 import { useTreeSeason } from "../hooks/useTreeSeason";
 import TreeStatCards from "../components/TreeStatCards";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
+import { evaluateCompletion } from "../hooks/useContinuationChain";
 
 // "2026-05-05" -> "May 5" (year shown only when it isn't this year).
 function formatJourneyDate(isoDate) {
@@ -23,6 +25,13 @@ function formatJourneyDate(isoDate) {
 export default function ProgressPage() {
   const { stage, STAGES } = useGrowthTree();
   const { journey } = useTreeSeason({ includeJourney: true });
+
+  // Fires once on page open — the feature's ask is "look at your tree,"
+  // and opening satisfies it. No scroll or time threshold: that would be
+  // inventing an obstacle the feature never had.
+  useEffect(() => {
+    evaluateCompletion("tree_viewed");
+  }, []);
 
   return (
     <div style={{
@@ -46,7 +55,7 @@ export default function ProgressPage() {
       <Sidebar />
 
       <main style={{
-        marginLeft: 60,
+        marginLeft: 180,
         position: "relative", zIndex: 1,
       }}>
         <TopBar />

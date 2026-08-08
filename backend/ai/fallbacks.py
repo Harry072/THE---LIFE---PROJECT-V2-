@@ -134,6 +134,10 @@ COMPANION_ACTIONS = {
     "curator": {"type": "curator", "label": "Open Curator", "route": "/curator"},
     "weekly_mirror": {"type": "weekly_mirror", "label": "Open Dashboard", "route": "/dashboard"},
     "real_world_action": {"type": "real_world_action", "label": "Carry This Step", "route": None},
+    # route=None on purpose: starting a chat is local state (startNewChat),
+    # not navigation. LifeCompanionPage's handleSuggestedAction branches on
+    # the type; SuggestedActionCard renders any non-"none" action generically.
+    "new_conversation": {"type": "new_conversation", "label": "Start a new chat", "route": None},
     "none": {"type": "none", "label": "", "route": None},
 }
 

@@ -31,7 +31,7 @@ from ai.task_intelligence import (
 )
 from ai.task_retrieval import retrieve_candidates
 from ai.companion_agent import count_questions_asked, detect_distress, run_react_loop
-from ai.companion_guardrails import apply_guardrails
+from ai.companion_guardrails import apply_guardrails, has_memory_grounding
 from ai.companion_orchestrator import build_orchestrator_payload, feed_orchestrator
 from ai.companion_security import (
     DAILY_LIMIT_MESSAGE,
@@ -819,6 +819,7 @@ def build_life_companion_response(
     meta: dict | None = None,
     conversation_id: str | None = None,
     conversation: dict | None = None,
+    conversation_closed: bool = False,
 ) -> dict:
     response = {
         "status": status,
@@ -846,6 +847,11 @@ def build_life_companion_response(
         response["conversation_id"] = conversation_id
     if conversation is not None:
         response["conversation"] = conversation
+    # Response-level only, never stored: this turn is deliberately not
+    # persisted. Emitted only when the frozen state is permanent, so the
+    # frontend can retire the composer instead of accepting input into a void.
+    if conversation_closed:
+        response["conversation_closed"] = True
     return response
 
 
@@ -1990,14 +1996,80 @@ async def get_growth_tree_score(authorization: str | None = Header(default=None)
         raise HTTPException(status_code=500, detail="Failed to read score") from error
 
 
+def _maybe_feed_loop_completion_signal(background_tasks: BackgroundTasks, user_id: str) -> None:
+    """Part 4 — when today's Loop is fully done or skipped, schedule one
+    companion_context signal via the exact retry-once/fail-open background
+    task already used for the Companion flow (feed_orchestrator, see its
+    one other call site above). Guarded so it only ever schedules once per
+    user per day. Never raises — a failure here must never affect the
+    dashboard response itself, which is why every step is wrapped.
+
+    Deliberately does NOT reuse master_orchestrator._fetch_tasks_today's
+    core-category check, which is stale (awareness/action/meaning only —
+    missing reflection/reset; see the comment left on that function). This
+    query uses the current five-category set directly.
+    """
+    try:
+        today = datetime.utcnow().date().isoformat()
+        rows = (
+            supabase.table("loop_tasks")
+            .select("completed_at,skipped,category")
+            .eq("user_id", user_id)
+            .eq("for_date", today)
+            .execute()
+        ).data or []
+        if not rows:
+            return
+        if not all(row.get("completed_at") or row.get("skipped") for row in rows):
+            return
+
+        existing = (
+            supabase.table("companion_context")
+            .select("session_quality")
+            .eq("user_id", user_id)
+            .eq("date", today)
+            .maybe_single()
+            .execute()
+        )
+        if existing.data and existing.data.get("session_quality"):
+            return  # already recorded today — don't re-fire
+
+        today_categories = {normalize_category(row.get("category")) for row in rows}
+        avoided = next((c for c in CORE_CATEGORY_ORDER if c not in today_categories), None)
+
+        background_tasks.add_task(
+            feed_orchestrator,
+            supabase,
+            {
+                "user_id": user_id,
+                "date": today,
+                "session_quality": "deep",
+                "task_recommendation": avoided,
+            },
+        )
+    except Exception as error:
+        print(
+            "LOOP_COMPLETION_SIGNAL "
+            f"status=check_failed user_id={user_id} "
+            f"error_type={type(error).__name__}"
+        )
+
+
 @app.get("/api/dashboard")
-async def get_dashboard(authorization: str | None = Header(default=None)):
+async def get_dashboard(
+    authorization: str | None = Header(default=None),
+    background_tasks: BackgroundTasks = None,
+):
     """Master orchestrator — the dashboard's single payload. user_id from
     the token only. The module fails safe internally; this catch-all is the
     last line: the dashboard always renders, never errors."""
     token_user_id = validate_supabase_access_token(authorization)
+    if background_tasks is None:
+        background_tasks = BackgroundTasks()
     try:
-        return get_dashboard_payload(supabase, token_user_id)
+        payload = get_dashboard_payload(supabase, token_user_id)
+        _maybe_feed_loop_completion_signal(background_tasks, token_user_id)
+        return payload
     except Exception as error:
         print(
             "MASTER_ORCHESTRATOR "
@@ -2125,9 +2197,16 @@ async def life_companion_chat(
             pause_reply = (
                 SESSION_PAUSE_MESSAGE if rate_status.session_exceeded else DAILY_LIMIT_MESSAGE
             )
+            # Only the SESSION cap is permanent. Its count query has no time
+            # filter, and this branch never persists the turn, so the count can
+            # neither fall nor rise -- the conversation is frozen for good and
+            # the composer should say so. The DAILY cap self-heals: its query is
+            # a rolling 24h window, so rows age out and the user recovers
+            # without acting. Flagging daily as closed would be a lie.
+            conversation_closed = rate_status.session_exceeded
             companion_response = build_companion_payload(
                 reply=pause_reply,
-                action_type="none",
+                action_type="new_conversation" if conversation_closed else "none",
                 tone="grounded",
                 risk_level="none",
                 reply_format="conversation",
@@ -2137,6 +2216,7 @@ async def life_companion_chat(
             return build_life_companion_response(
                 "rate_limited",
                 companion_response,
+                conversation_closed=conversation_closed,
                 meta=build_life_companion_meta(
                     provider_selected="deterministic",
                     final_response_mode="rate_limited",
@@ -2188,6 +2268,21 @@ async def life_companion_chat(
         context["latest_request_slots"] = request_slots
         context["understanding"] = understanding
         context["agent_directive_block"] = agent_turn.directive_block
+        # Same predicate GUARDRAIL 1 uses to license a memory claim, computed
+        # once here (where agent_turn is in scope) and carried to the prompt
+        # builder. The memory block's "reference details / name patterns"
+        # instructions are emitted only when this is True — otherwise the
+        # model is told to do the exact thing check_fabricated_memory then
+        # deletes. One predicate, one call site, no parallel copy to drift.
+        context["has_memory_grounding"] = has_memory_grounding(
+            agent_turn.tools_called,
+            agent_turn.tool_results,
+        )
+        # The agent's FINAL response mode. The validator's content contract is
+        # narrowed against it so a mode that was instructed not to give advice
+        # is never rejected for failing to give advice. Acute panic markers
+        # override that narrowing — see _validator_intent_from_classification.
+        context["agent_response_mode"] = agent_turn.response_mode or ""
 
         # SECURITY 2: memory summary strings re-enter the prompt every turn —
         # injection-scan them before they do.

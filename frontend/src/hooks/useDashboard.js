@@ -35,6 +35,44 @@ const SAFE_DEFAULT = {
   tasks_today: { total: 0, completed: 0, all_done: false },
 };
 
+// Plain imperative fetch — no React state, no SAFE_DEFAULT fallback. Callers
+// that must fail CLOSED (e.g. the continuation chain's crisis gate) need a
+// real null on any failure, never a safe-looking default that could mask an
+// active crisis flag. useDashboard() below layers its own fail-open
+// behavior on top of this for the dashboard page itself.
+const DASHBOARD_FETCH_TIMEOUT_MS = 8000;
+
+export async function fetchDashboardPayload() {
+  const accessToken = await getSupabaseOrAppAccessToken(supabase);
+  if (!accessToken) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DASHBOARD_FETCH_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/dashboard`, {
+      headers: { "Authorization": `Bearer ${accessToken}` },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    // Abort (8s timeout) fails closed here, same as every other branch in
+    // this function. Any other fetch failure (network down, DNS, CORS)
+    // keeps rethrowing exactly as before this fix — callers (evaluateCompletion,
+    // useDashboard()) already catch and fail closed on that.
+    if (error?.name === "AbortError") return null;
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) return null;
+
+  const data = await response.json().catch(() => null);
+  if (!data?.greeting || !Array.isArray(data.feature_cards)) return null;
+  return data;
+}
+
 export function useDashboard() {
   const [payload, setPayload] = useState(SAFE_DEFAULT);
   const [loading, setLoading] = useState(true);
@@ -47,16 +85,8 @@ export function useDashboard() {
 
     const load = async () => {
       try {
-        const accessToken = await getSupabaseOrAppAccessToken(supabase);
-        if (!accessToken) return;
-
-        const response = await fetch(`${API_BASE_URL}/api/dashboard`, {
-          headers: { "Authorization": `Bearer ${accessToken}` },
-        });
-        if (!response.ok) return;
-
-        const data = await response.json().catch(() => null);
-        if (!cancelled && data?.greeting && Array.isArray(data.feature_cards)) {
+        const data = await fetchDashboardPayload();
+        if (!cancelled && data) {
           setPayload(data);
         }
       } catch (err) {

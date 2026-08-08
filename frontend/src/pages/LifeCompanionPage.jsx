@@ -7,6 +7,7 @@ import CompanionChatPanel from "../components/companion/CompanionChatPanel";
 import ConversationSidebar from "../components/companion/ConversationSidebar";
 import { useLifeCompanion } from "../hooks/useLifeCompanion";
 import { COMPANION_MODES } from "../data/companionModes";
+import { evaluateCompletion } from "../hooks/useContinuationChain";
 
 const REAL_WORLD_STORAGE_KEY = "lifeProject.lifeCompanion.realWorldAction";
 
@@ -28,11 +29,16 @@ export default function LifeCompanionPage() {
     startNewChat,
     appendLocalAssistant,
     clearError,
+    conversationClosed,
   } = useLifeCompanion();
   const [activeMode, setActiveMode] = useState("understand_me");
   const [input, setInput] = useState("");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const userInteractedBeforeHydrationRef = useRef(false);
+  // This session's sent-message count (not messages hydrated from a
+  // reloaded past conversation). One message is a test, two is a
+  // conversation — counts user sends only, fires once at exactly 2.
+  const sentMessageCountRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,11 +91,16 @@ export default function LifeCompanionPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     const cleanInput = input.trim();
-    if (!cleanInput || sending || loadingMessages) return;
+    if (!cleanInput || sending || loadingMessages || conversationClosed) return;
 
     userInteractedBeforeHydrationRef.current = true;
     setInput("");
     clearError();
+
+    sentMessageCountRef.current += 1;
+    if (sentMessageCountRef.current === 2) {
+      evaluateCompletion("companion_engaged");
+    }
 
     await sendMessage({
       conversationId: selectedConversationId,
@@ -100,6 +111,14 @@ export default function LifeCompanionPage() {
 
   const handleSuggestedAction = (action) => {
     if (!action) return;
+
+    // Session-capped conversations are frozen server-side and cannot be
+    // revived; the only way forward is a fresh conversation_id. Routes to the
+    // same startNewChat the sidebar already uses -- no duplicate path.
+    if (action.type === "new_conversation") {
+      handleNewChat();
+      return;
+    }
 
     if (action.type === "real_world_action") {
       window.localStorage.setItem(
@@ -209,10 +228,18 @@ export default function LifeCompanionPage() {
                   }
                 }}
                 maxLength={1200}
-                placeholder="Say what is happening..."
+                disabled={conversationClosed}
+                placeholder={
+                  conversationClosed
+                    ? "This conversation has reached its full length."
+                    : "Say what is happening..."
+                }
                 aria-label="Message Life Companion"
               />
-              <button type="submit" disabled={sending || loadingMessages || !input.trim()}>
+              <button
+                type="submit"
+                disabled={sending || loadingMessages || conversationClosed || !input.trim()}
+              >
                 <Icon name="arrow" size={17} />
               </button>
             </form>
@@ -654,6 +681,15 @@ export default function LifeCompanionPage() {
           padding: 16px;
           border-top: 1px solid rgba(126, 217, 154, 0.1);
           background: rgba(2, 8, 6, 0.62);
+        }
+
+        /* Session-capped: the composer is retired, not merely busy. Dimmed and
+           not-allowed so it reads as a closed door rather than a stuck field.
+           Resize is disabled too -- there is nothing to write. */
+        .companion-input-bar textarea:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+          resize: none;
         }
 
         .companion-input-bar textarea {

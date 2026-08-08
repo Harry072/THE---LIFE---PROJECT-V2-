@@ -80,7 +80,7 @@ const sortTasks = (rows) => [...rows].sort((a, b) => {
   return String(a.id ?? "").localeCompare(String(b.id ?? ""));
 });
 
-const normalizeLoopCategory = (value, row = {}) => {
+export const normalizeLoopCategory = (value, row = {}) => {
   const subtitle = String(row?.subtitle || "").toLowerCase().replace(/_/g, "-");
   if (subtitle.includes("reflection") || subtitle.includes("journal")) return "reflection";
   if (subtitle.includes("reset") || subtitle.includes("breath") || subtitle.includes("ground")) return "reset";
@@ -91,7 +91,7 @@ const normalizeLoopCategory = (value, row = {}) => {
   return category;
 };
 
-const isCoreLoopTask = (task = {}) => {
+export const isCoreLoopTask = (task = {}) => {
   const category = normalizeLoopCategory(task?.category, task);
   const isOptional = [true, "true", "True", "1", 1].includes(task?.is_optional);
   const isCompatCore = isOptional && String(task?.subtitle || "").toLowerCase().includes("practice");

@@ -31,6 +31,8 @@ def _bullet(label: str, value: object) -> str | None:
 def format_memory_for_prompt(
     safe_memory_summary: dict | str,
     user_intent: str = "",
+    *,
+    has_grounding: bool = False,
 ) -> str:
     """
     Convert safe_memory_summary into a structured memory block for the prompt.
@@ -38,13 +40,22 @@ def format_memory_for_prompt(
     Accepts either the raw dict from build_companion_safe_memory_summary() or
     a plain string (legacy path).  Returns a formatted string with instructions
     on how the model should use the context.
+
+    has_grounding MUST be the value of companion_guardrails.has_memory_grounding()
+    for this turn — the same predicate GUARDRAIL 1 uses to decide whether a
+    memory claim is licensed. It is computed once at the call site and passed
+    down rather than recomputed here, so there is exactly one implementation of
+    "is a memory claim allowed this turn". Defaults to False: omitting the
+    usage instructions can only ever cost a little warmth, whereas emitting
+    them ungrounded produces sentences G1 deletes, which on a one- or
+    two-sentence reply leaves nothing at all.
     """
     # ── Legacy string path ────────────────────────────────────────────────────
     if isinstance(safe_memory_summary, str):
         text = safe_memory_summary.strip()
         if not text:
             return _no_history_block()
-        return _wrap_memory_block(text)
+        return _wrap_memory_block(text, has_grounding=has_grounding)
 
     # ── Dict path (normal case) ───────────────────────────────────────────────
     mem = safe_memory_summary or {}
@@ -113,7 +124,7 @@ def format_memory_for_prompt(
         return _no_history_block()
 
     body = "\n".join(content_lines)
-    return _wrap_memory_block(body)
+    return _wrap_memory_block(body, has_grounding=has_grounding)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -127,13 +138,35 @@ def _no_history_block() -> str:
     )
 
 
-def _wrap_memory_block(body: str) -> str:
-    return (
+def _wrap_memory_block(body: str, *, has_grounding: bool = False) -> str:
+    header = (
         "[User Context from Past Conversations]\n"
-        "The following is what you know about this user. "
-        "Use it the way a friend who remembers would — weave it in naturally, "
-        "never announce you are referencing past data.\n\n"
-        + body
+        "The following is what you know about this user.\n\n"
+    )
+    if has_grounding:
+        # "Use it the way a friend who remembers would" carries the same
+        # referencing pull as the [How to use this context] block below, and
+        # G1 deletes what it produces when nothing was retrieved. Gated on the
+        # same predicate. The FACTS above still render either way — only the
+        # instruction to weave them in is withheld.
+        header = (
+            "[User Context from Past Conversations]\n"
+            "The following is what you know about this user. "
+            "Use it the way a friend who remembers would — weave it in naturally, "
+            "never announce you are referencing past data.\n\n"
+        )
+    block = header + body
+    if not has_grounding:
+        # No retrieval ran this turn, or it returned nothing. GUARDRAIL 1
+        # (check_fabricated_memory) will delete any sentence containing a
+        # memory-claim phrase under exactly this condition, so instructing
+        # the model to reference details, name patterns, and connect to an
+        # ongoing journey would produce sentences the guardrail then strips —
+        # and replies here are typically one or two sentences, so stripping
+        # one empties the whole reply. Emit the facts, not the instruction.
+        return block
+    return (
+        block
         + "\n\n"
         "[How to use this context]\n"
         "- Reference specific details when relevant to what they are saying now\n"

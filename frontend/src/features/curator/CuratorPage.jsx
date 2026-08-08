@@ -18,6 +18,7 @@ import { supabase } from "../../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../../lib/appAuth";
 import { API_BASE_URL } from "../../lib/apiConfig";
 import { useAppState } from "../../contexts/AppStateContext";
+import { evaluateCompletion } from "../../hooks/useContinuationChain";
 import "./CuratorPage.css";
 
 export default function CuratorPage() {
@@ -42,6 +43,9 @@ export default function CuratorPage() {
 
     const book = getBookById(queryBookId);
     if (!book) return;
+
+    // Browsing the shelf is not engagement; opening a book detail is.
+    evaluateCompletion("curator_explored");
 
     window.setTimeout(() => {
       document

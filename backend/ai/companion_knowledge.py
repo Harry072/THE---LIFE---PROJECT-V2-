@@ -794,16 +794,6 @@ KEYWORD_TAGS = {
 }
 
 
-CRISIS_PATTERNS = [
-    r"\bkill myself\b",
-    r"\bend my life\b",
-    r"\bsuicide\b",
-    r"\bself[- ]?harm\b",
-    r"\bhurt myself\b",
-    r"\bi do not want to live\b",
-    r"\bi don't want to live\b",
-]
-
 PROMPT_INJECTION_PATTERNS = [
     r"\bignore (all )?(previous|prior) (instructions?|rules)\b",
     r"\boverride (the )?(system|developer|instructions?)\b",

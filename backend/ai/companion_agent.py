@@ -23,6 +23,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from .companion_intents import CRISIS_CORE_PATTERNS
 from .companion_security import (
     RateLimitStatus,
     sanitize_untrusted_text,
@@ -43,9 +44,19 @@ from .companion_tools import (
 
 DISTRESS_SIGNALS: dict[str, list[str]] = {
     "crisis": [
-        r"\bwant to die\b", r"\bkill myself\b", r"\bsuicid(e|al)\b",
-        r"\bend my life\b", r"\bself[-\s]?harm\b", r"\bhurt myself\b",
-        r"\bdon'?t want to exist\b", r"\bend it\b", r"\bno point living\b",
+        # Morphology-tolerant core, shared with validator.CRISIS_PATTERNS and
+        # companion_intents' nets. See companion_intents.CRISIS_CORE_PATTERNS:
+        # one vocabulary, so a concept added there reaches every gate at once.
+        *CRISIS_CORE_PATTERNS,
+        # "end it" stays a distress keyword (it is in the documented spec,
+        # asserted by test_every_spec_keyword_routes_to_a_tier), but no longer
+        # fires on "end it WITH <someone>" -- a breakup, which was being routed
+        # to suicide helplines. Narrowing by one negative lookahead rather than
+        # deleting the pattern keeps full crisis coverage: "I just end it
+        # today" still escalates, and the inflected/framed forms ("ending it",
+        # "thinking about ending it") are covered by CRISIS_CORE_PATTERNS.
+        r"\bend it\b(?!\s+with)",
+        r"\bdon'?t want to exist\b", r"\bno point living\b",
         r"\bno reason to live\b", r"\bwant it to stop permanently\b",
     ],
     "self_harm_adjacent": [
@@ -199,9 +210,17 @@ def count_questions_asked(conversation_history: list[dict]) -> int:
 
 MODE_DIRECTIVES = {
     "REFLECT": (
-        "Respond in REFLECT mode. Name what the user is carrying, in their own "
-        "emotional vocabulary. No advice, no pattern claims, no references to "
-        "past writing unless journal signals appear below."
+        "Respond in REFLECT mode. Two required parts, in one natural flow, "
+        "not two separate beats. First: name what the user is carrying, in "
+        "their own emotional vocabulary. Second — pick exactly one, and let "
+        "it fuse into the same sentence where it fits:\n"
+        "CONSEQUENCE — what this is making hard, harder, or impossible for "
+        "them right now.\n"
+        "TENSION — two things in what they said that pull against each "
+        "other.\n"
+        "A label restating the feeling is neither. It has nowhere to hide.\n"
+        "No advice, no pattern claims, no references to past writing unless "
+        "journal signals appear below."
     ),
     "INSIGHT": (
         "Respond in INSIGHT mode. A real, data-backed pattern appears below — "
@@ -235,6 +254,18 @@ MODE_DIRECTIVES = {
 SOFT_CLOSE_NOTE = (
     "[SESSION NOTE] This session is nearing its natural end. Close warmly this "
     "turn — no new threads, no questions."
+)
+
+# Emitted when journal_search ran and came back empty. Before this existed the
+# loop recorded that fact in the trace only (STEP 5's observations), so the
+# model was never told, wrote about past entries anyway, and GUARDRAIL 1
+# deleted those sentences afterwards. Telling the model up front is the same
+# correction applied before generation instead of after deletion.
+NO_JOURNAL_MATCH_NOTE = (
+    "[RETRIEVAL RESULT] You searched this user's past reflections for this "
+    "topic and found no match. You have no record of them writing about this. "
+    "Do not reference past entries, earlier conversations, or recurring "
+    "patterns this turn — respond only to what they said just now."
 )
 
 MAX_QUESTIONS_PER_SESSION = 2
@@ -309,10 +340,18 @@ MODE_CLOSE_DIRECTIVES = {
 }
 
 ECHO_BLOCK = """NEVER:
-→ Summarise or repeat what the user just said
+→ Restate what the user just said without adding something new
 → Start with 'You are feeling...'
 → Start with 'You are torn between...'
 → Validate before responding
+
+THEIR WORDS ARE ALLOWED — AS AN ANCHOR, NOT A SUMMARY:
+Their word + something new = good. Their word alone = cut it.
+GOOD: "Stuck — but you moved twice this year."
+GOOD: "You call it empty. That word keeps coming back."
+BAD:  "It sounds like you feel stuck."
+BAD:  "You've been struggling with your sleep lately."
+TEST: delete their words AND generic sympathy filler ("heavy", "weight to carry", "a lot to carry", "hard to carry") from your sentence. If nothing is left, cut it.
 
 NEVER start a response with:
 → You're feeling
@@ -498,7 +537,11 @@ def run_react_loop(
         else:
             mode = "REFLECT"
             observations.append("insufficient pattern data -> staying in REFLECT, no pattern claim")
-    if not (tool_results.get("journal_search") or []) and "journal_search" in tools_called:
+    journal_search_returned_nothing = (
+        "journal_search" in tools_called
+        and not (tool_results.get("journal_search") or [])
+    )
+    if journal_search_returned_nothing:
         observations.append("journal_search empty -> must not reference past writing")
 
     trace["steps"].append({"step": "observe", "observations": observations, "mode_final": mode})
@@ -522,6 +565,8 @@ def run_react_loop(
             "most_skipped_category, pattern_signal. Do not answer generically. "
             "These signals are the answer."
         )
+    if journal_search_returned_nothing:
+        directive_lines.append(NO_JOURNAL_MATCH_NOTE)
     if rate_status and rate_status.soft_close:
         directive_lines.append(SOFT_CLOSE_NOTE)
     signals = _render_tool_signals(tool_results)

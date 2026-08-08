@@ -79,12 +79,6 @@ RECOMMENDATION_REQUEST_SIGNALS = [
     "what are some", "can you list", "give me options",
 ]
 
-CRISIS_SIGNALS = [
-    "want to die", "end my life", "kill myself", "self harm",
-    "hurt myself", "don't want to exist", "want to disappear forever",
-    "everyone better off without me", "no point in living",
-]
-
 BREAKUP_SIGNALS = [
     "breakup", "broke up", "rejected me", "rejection", "left me",
     "she left", "he left", "girlfriend rejected", "boyfriend rejected",
@@ -105,6 +99,13 @@ def detect_emotional_state(message: str) -> str:
     Priority order: crisis > active_pain > moderate > mild > none
     """
     text = message.lower().strip()
+    # Shared regex vocabulary first: EMOTIONAL_STATE_SIGNALS["crisis"] below is
+    # substring-only and therefore blind to inflection ("killing myself" does
+    # not contain the substring "kill myself"). Consulting CRISIS_CORE_PATTERNS
+    # here is what makes a future addition to the shared list reach this net
+    # too, instead of silently covering only the two regex gates.
+    if has_pattern(text, CRISIS_CORE_PATTERNS):
+        return "crisis"
     for level in ["crisis", "active_pain", "moderate", "mild"]:
         for signal in EMOTIONAL_STATE_SIGNALS.get(level, []):
             if signal in text:
@@ -259,18 +260,74 @@ def has_pattern(text: str, patterns: list[str]) -> bool:
     return any(re.search(pattern, text, re.I) for pattern in patterns)
 
 
+# ── SHARED CRISIS VOCABULARY — ONE SOURCE OF TRUTH ───────────────────────────
+# Every crisis net in the codebase consumes CRISIS_CORE_PATTERNS:
+#   companion_agent.DISTRESS_SIGNALS["crisis"]  (pre-loop gate, main.py:2177)
+#   validator.CRISIS_PATTERNS                    (pre-loop gate, main.py:2177)
+#   CRISIS_PATTERNS below                        (detect_companion_intent)
+#   detect_emotional_state                       (gateway crisis response)
+# Adding a concept here reaches all four automatically. Before this existed
+# the lists were maintained separately, which is the structural reason the
+# gerund gap survived in every one of them at once.
+
+
+def _inflected(stem: str, *, extra: tuple[str, ...] = ()) -> str:
+    """Regex alternation covering a stem across regular English inflection:
+    base / -s / -ed / -ing, with silent-e elision ("overdose" -> "overdosing").
+
+    This is MORPHOLOGY, not vocabulary. English verb endings are a closed set
+    that does not grow; the phrasings people actually use are unbounded.
+    Enumerating kill|killing|killed is what let "killing myself" through in
+    the first place — the next unlisted form always walks in. Adding a concept
+    means adding ONE stem; every inflection of it follows for free.
+    """
+    forms = {stem, stem + "s", stem + "ed", stem + "ing"}
+    if stem.endswith("e"):
+        forms |= {stem + "d", stem[:-1] + "ing"}
+    forms |= set(extra)
+    return "(?:" + "|".join(sorted(forms, key=len, reverse=True)) + ")"
+
+
+_KILL = _inflected("kill")
+_END = _inflected("end")
+_HURT = _inflected("hurt")
+_HARM = _inflected("harm")
+_OVERDOSE = _inflected("overdose")
+
+# Ideation framing ("I keep thinking about ...") paired with a lethal target.
+# Some phrasings are only crisis signals when framed this way: "dying" alone
+# is not ("my grandmother is dying"), but "thinking about dying" is.
+_IDEATION_FRAME = (
+    r"(?:want(?:s|ed)?|wish(?:es|ed)?|think(?:s|ing)?\s+about"
+    r"|thought(?:s)?\s+of|keep(?:s)?\s+thinking\s+about)"
+)
+_LETHAL_TARGET = (
+    r"(?:die|dies|died|dying|dead"
+    r"|end(?:ing)?\s+it(?!\s+with)"      # "ending it" but not "ending it WITH someone"
+    r"|not\s+be(?:ing)?\s+here"
+    r"|not\s+wak(?:e|ing)\s+up)"
+)
+
+CRISIS_CORE_PATTERNS = [
+    # Explicit self-directed lethality — escalate on sight, no framing needed.
+    rf"\b{_KILL}\s+(?:my)?self\b",
+    rf"\b(?:{_HURT}|{_HARM})\s+(?:my)?self\b",
+    rf"\b{_END}\s+my\s+(?:own\s+)?life\b",
+    rf"\b{_END}\s+it\s+all\b",
+    r"\btak(?:e|es|ing|en)\s+my\s+own\s+life\b",
+    rf"\b{_OVERDOSE}\b",
+    r"\bself[-\s]?harm(?:s|ed|ing)?\b",
+    r"\bsuicid(?:e|al)\b",
+    # Ideation framing + lethal target.
+    rf"\b{_IDEATION_FRAME}\b[^.?!]{{0,40}}?\b{_LETHAL_TARGET}\b",
+]
+
+
 CRISIS_PATTERNS = [
-    r"\bkill myself\b",
+    *CRISIS_CORE_PATTERNS,
     r"\bkill me\b",
-    r"\bend my life\b",
-    r"\bi want to die\b",
     r"\bi do not want to live\b",
     r"\bnot be alive\b",
-    r"\bsuicid(e|al)\b",
-    r"\bself[-\s]?harm\b",
-    r"\bhurt myself\b",
-    r"\bharm myself\b",
-    r"\boverdose\b",
     r"\bno reason to live\b",
     r"\bimmediate danger\b",
     r"\bgoing to hurt\b",

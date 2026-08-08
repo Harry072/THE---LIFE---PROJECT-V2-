@@ -1,8 +1,6 @@
-import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Icon from "../Icon";
-import DiscoverDrawer from "../DiscoverDrawer";
-import { PRIMARY_NAV } from "../../data/lifeNavigation";
+import { SIDEBAR_NAV } from "../../data/lifeNavigation";
 import { useUserStore } from "../../store/userStore";
 import { getPreferredInitial, getPreferredUsername, toTitleCase } from "../../utils/userDisplayName";
 
@@ -14,14 +12,13 @@ function isActiveRoute(item, pathname) {
 }
 
 /**
- * Desktop navigation: a 60px icon-only rail. No text labels, no category
- * headers, no widgets — icons guide the curious, the Discover drawer holds
- * everything else. Hidden on mobile (bottom tab bar takes over).
+ * Desktop navigation: a ~180px rail with text labels beside icons — all
+ * seven destinations directly reachable, no Discover drawer needed here.
+ * Hidden on mobile (bottom tab bar takes over).
  */
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [discoverOpen, setDiscoverOpen] = useState(false);
   const user = useUserStore((state) => state.user);
   const profile = useUserStore((state) => state.profile);
   const initial = getPreferredInitial(user, profile);
@@ -47,7 +44,7 @@ export default function Sidebar() {
         </button>
 
         <nav className="rail-nav">
-          {PRIMARY_NAV.map((item) => {
+          {SIDEBAR_NAV.map((item) => {
             const active = isActiveRoute(item, location.pathname);
             return (
               <button
@@ -62,23 +59,13 @@ export default function Sidebar() {
                 {active && <span className="rail-active-bar" aria-hidden="true" />}
                 <Icon
                   name={item.icon}
-                  size={20}
+                  size={18}
                   color={active ? "var(--green-bright)" : "currentColor"}
                 />
+                <span className="rail-btn-label">{item.label}</span>
               </button>
             );
           })}
-
-          <button
-            type="button"
-            className={`rail-btn${discoverOpen ? " is-active" : ""}`}
-            onClick={() => setDiscoverOpen(true)}
-            aria-label="Discover"
-            aria-haspopup="dialog"
-            title="Discover"
-          >
-            <Icon name="compass" size={20} />
-          </button>
         </nav>
 
         <div className="rail-avatar">
@@ -87,62 +74,21 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      {discoverOpen ? (
-        <DiscoverDrawer onClose={() => setDiscoverOpen(false)} />
-      ) : null}
-
       <style>{`
         .app-sidebar {
           position: fixed;
           top: 0;
           left: 0;
           bottom: 0;
-          width: 56px;
+          width: 180px;
           background: var(--bg-sidebar);
           border-right: 1px solid var(--border);
           display: flex;
           flex-direction: column;
-          align-items: center;
-          padding: 18px 0 16px;
+          align-items: stretch;
+          padding: 18px 14px 16px;
           z-index: 50;
           overflow: hidden;
-        }
-
-        .rail-avatar {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 4px;
-          padding-top: 10px;
-          flex-shrink: 0;
-        }
-
-        .rail-avatar-circle {
-          width: 32px;
-          height: 32px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 50%;
-          background: rgba(46, 204, 113, 0.15);
-          border: 1px solid var(--green-bright);
-          color: var(--green-bright);
-          font-family: var(--font-body);
-          font-size: 13px;
-          font-weight: 600;
-        }
-
-        .rail-avatar-name {
-          margin: 0;
-          max-width: 50px;
-          color: var(--text-faint);
-          font-family: var(--font-body);
-          font-size: 10px;
-          text-align: center;
-          line-height: 1.2;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
         }
 
         .rail-logo {
@@ -162,26 +108,35 @@ export default function Sidebar() {
         .rail-nav {
           display: flex;
           flex-direction: column;
-          align-items: center;
-          gap: 8px;
+          gap: 4px;
           flex: 1;
           min-height: 0;
         }
 
         .rail-btn {
           position: relative;
-          width: 44px;
-          height: 44px;
-          display: inline-flex;
+          min-height: 44px;
+          width: 100%;
+          display: flex;
           align-items: center;
-          justify-content: center;
+          gap: 12px;
+          padding: 0 12px;
           border: 0;
           border-radius: var(--r-sm);
           background: transparent;
           color: var(--text-dim);
           cursor: pointer;
+          font-family: var(--font-body);
           transition: color 0.2s ease-in-out, background 0.2s ease-in-out;
           flex-shrink: 0;
+        }
+
+        .rail-btn-label {
+          font-size: 13px;
+          font-weight: 500;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .rail-btn:hover {
@@ -195,7 +150,7 @@ export default function Sidebar() {
 
         .rail-active-bar {
           position: absolute;
-          left: -8px;
+          left: -14px;
           top: 50%;
           transform: translateY(-50%);
           width: 3px;
@@ -203,6 +158,44 @@ export default function Sidebar() {
           background: var(--green-bright);
           border-radius: 2px;
           box-shadow: 0 0 8px var(--green-glow);
+        }
+
+        .rail-avatar {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 12px 0;
+          flex-shrink: 0;
+          border-top: 1px solid var(--border);
+          margin-top: 10px;
+        }
+
+        .rail-avatar-circle {
+          flex-shrink: 0;
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          background: rgba(46, 204, 113, 0.15);
+          border: 1px solid var(--green-bright);
+          color: var(--green-bright);
+          font-family: var(--font-body);
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .rail-avatar-name {
+          margin: 0;
+          min-width: 0;
+          color: var(--text-faint);
+          font-family: var(--font-body);
+          font-size: 12px;
+          line-height: 1.2;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         @media (max-width: 767px) {

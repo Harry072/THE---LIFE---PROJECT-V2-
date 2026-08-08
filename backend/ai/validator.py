@@ -2,7 +2,7 @@ import json
 import re
 
 from .context import CORE_CATEGORY_ORDER, normalize_category
-from .companion_intents import normalize_intent
+from .companion_intents import CRISIS_CORE_PATTERNS, normalize_intent
 
 
 class TaskValidationError(Exception):
@@ -253,19 +253,15 @@ SOURCE_LEAKAGE_PATTERNS = [
     r"\bon page \d+\b",
 ]
 
+# Morphology-tolerant core shared with companion_agent's DISTRESS_SIGNALS and
+# companion_intents' own nets — see companion_intents.CRISIS_CORE_PATTERNS.
+# Everything below the splat is additional coverage specific to this net.
 CRISIS_PATTERNS = [
-    r"\bkill myself\b",
+    *CRISIS_CORE_PATTERNS,
     r"\bkill me\b",
-    r"\bend my life\b",
-    r"\bi want to die\b",
     r"\bi don't want to live\b",
     r"\bi do not want to live\b",
     r"\bnot be alive\b",
-    r"\bsuicid(e|al)\b",
-    r"\bself[-\s]?harm\b",
-    r"\bhurt myself\b",
-    r"\bharm myself\b",
-    r"\boverdose\b",
     r"\bno reason to live\b",
     r"\bimmediate danger\b",
     r"\bi might hurt\b",

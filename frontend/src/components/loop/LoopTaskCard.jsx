@@ -1,37 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 
-const DIFFICULTY_LABELS = {
-  gentle: "Gentle",
-  normal: "Steady",
-  deeper: "Deeper",
-};
-
-const sentenceBeforeAction = (value = "") => (
-  String(value).split(/\bAction:\s*/i)[0]?.trim() || ""
-);
-
 const actionAfterMarker = (value = "") => (
   String(value).split(/\bAction:\s*/i)[1]?.trim() || ""
 );
 
-function DetailRow({ icon, label, children }) {
-  return (
-    <div className="loop-task-detail-row">
-      <div className="loop-task-detail-icon" aria-hidden="true">
-        <Icon name={icon} size={18} strokeWidth={1.8} />
-      </div>
-      <p className="loop-task-detail-label">{label}</p>
-      <p className="loop-task-detail-value">{children}</p>
-    </div>
-  );
+// Static local paths only — all four confirmed present in
+// public/media/dashboard/ before wiring this map in. "reset" has no
+// approved image; those cards render with no background rather than a
+// substituted one.
+const FEATURE_IMAGES = {
+  action: "/media/dashboard/focus_mountain_landscape.png",
+  awareness: "/media/dashboard/companion_forest_leaves.png",
+  reflection: "/media/dashboard/reflection_journal_desk.png",
+  growth: "/media/dashboard/growth_tree_morning_mist.png",
+};
+
+function handleBgImageError(category) {
+  return (event) => {
+    console.warn(`LoopTaskCard: background image failed to load for category "${category}"`);
+    event.currentTarget.style.display = "none";
+  };
 }
 
-export default function LoopTaskCard({ task, onToggle, onSkip }) {
-  const [expanded, setExpanded] = useState(false);
+export default function LoopTaskCard({ task, onToggle }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDone, setIsDone] = useState(Boolean(task.done ?? task.completed_at));
-  const [hasBegun, setHasBegun] = useState(false);
 
   useEffect(() => {
     const nextDoneState = Boolean(task.done ?? task.completed_at);
@@ -41,14 +35,7 @@ export default function LoopTaskCard({ task, onToggle, onSkip }) {
 
   const display = useMemo(() => {
     const detailText = task.detail_description || "";
-    const whyText = (
-      task.ikigai_purpose ||
-      task.why_this_helps ||
-      task.why ||
-      sentenceBeforeAction(detailText) ||
-      "This step matters because it turns intention into one visible action."
-    );
-    const actionText = (
+    const description = (
       task.waar_action ||
       actionAfterMarker(detailText) ||
       task.success_condition ||
@@ -58,11 +45,7 @@ export default function LoopTaskCard({ task, onToggle, onSkip }) {
     return {
       title: task.title || "Complete one honest step",
       kotlerTag: task.kotler_tag || "Clear Waar",
-      duration: task.duration_minutes || task.estimated_duration_mins || 15,
-      difficulty: DIFFICULTY_LABELS[task.difficulty_level] || task.difficulty_level || "Steady",
-      whyText,
-      actionText,
-      smallerVersion: task.smaller_version || task.easier_version || "Do the smallest honest version for 2 minutes.",
+      description,
     };
   }, [task]);
 
@@ -82,88 +65,48 @@ export default function LoopTaskCard({ task, onToggle, onSkip }) {
     }
   };
 
-  const handleBegin = () => {
-    setHasBegun(true);
-  };
-
-  const handleSkip = () => {
-    if (isDone || task.skipped || !task.id) return;
-    onSkip?.(task.id);
-  };
+  const bgSrc = FEATURE_IMAGES[task.category];
 
   return (
     <article
-      className={[
-        "loop-funnel-task",
-        expanded ? "is-expanded" : "",
-        isDone ? "is-complete" : "",
-      ].filter(Boolean).join(" ")}
+      className={`loop-funnel-task${isDone ? " is-complete" : ""}`}
+      aria-label={`${display.title}: ${display.description}`}
     >
-      <div className="loop-task-topline">
-        <button
-          type="button"
-          className="loop-task-check"
-          onClick={handleComplete}
-          disabled={isSubmitting || isDone}
-          aria-label={isDone ? "Task completed" : "Mark task complete"}
-        >
-          {isDone ? <Icon name="check" size={18} strokeWidth={2.6} /> : null}
-        </button>
-
-        <button
-          type="button"
-          className="loop-task-summary"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-        >
-          <span className="loop-task-title-row">
-            <span className="loop-task-title">{display.title}</span>
-            <Icon
-              name="arrow"
-              size={20}
-              strokeWidth={1.7}
-              className="loop-task-chevron"
-              style={{ transform: expanded ? "rotate(-90deg)" : "rotate(90deg)" }}
-            />
-          </span>
-
-          <span className="loop-task-meta-row">
-            <span className="loop-task-kotler">
-              <span aria-hidden="true" />
-              {display.kotlerTag}
-            </span>
-            <span className="loop-task-meta-dot" aria-hidden="true" />
-            <span>{display.duration} min</span>
-            <span className="loop-task-difficulty">{display.difficulty}</span>
-          </span>
-        </button>
-      </div>
-
-      {expanded && (
-        <div className="loop-task-expanded">
-          <DetailRow icon="leaf" label="Why this matters">
-            {display.whyText}
-          </DetailRow>
-          <DetailRow icon="check" label="Done when">
-            {display.actionText}
-          </DetailRow>
-          <DetailRow icon="sprout" label="Smaller version">
-            {display.smallerVersion}
-          </DetailRow>
-
-          {!isDone && (
-            <div className="loop-task-actions">
-              <button type="button" className="loop-task-primary" onClick={handleBegin}>
-                {hasBegun ? "Continue task" : "Begin this step"}
-                <Icon name="arrow" size={20} strokeWidth={1.8} />
-              </button>
-              <button type="button" className="loop-task-skip" onClick={handleSkip}>
-                Too much today
-              </button>
-            </div>
-          )}
-        </div>
+      {bgSrc && (
+        <>
+          <img
+            className="loop-task-bg"
+            src={bgSrc}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            onError={handleBgImageError(task.category)}
+          />
+          <span className="loop-task-bg-gradient" aria-hidden="true" />
+        </>
       )}
+
+      <div className="loop-task-content">
+        <span className="loop-task-kotler">{display.kotlerTag}</span>
+        <h2 className="loop-task-title">{display.title}</h2>
+        <p className="loop-task-description">{display.description}</p>
+
+        {isDone ? (
+          <span className="loop-task-done-badge" aria-label="Task completed">
+            <Icon name="check" size={18} strokeWidth={2.6} />
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="loop-task-mark-done"
+            onClick={handleComplete}
+            disabled={isSubmitting}
+          >
+            Mark as done
+            <Icon name="check" size={16} strokeWidth={2.2} />
+          </button>
+        )}
+      </div>
     </article>
   );
 }

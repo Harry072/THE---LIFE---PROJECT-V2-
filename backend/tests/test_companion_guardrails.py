@@ -265,12 +265,14 @@ class ResponseFormatTests(unittest.TestCase):
         self.assertIn("you want to create", text)
         self.assertNotIn("banned_opener_sentence_dropped", notes)
 
-    def test_echo_repetition_sentence_dropped_whole(self):
-        # Isolated to prove the NEW check, not the opener check by
-        # coincidence: "You've been struggling with your sleep lately"
-        # does not match any _BANNED_OPENERS pattern (no you're/you are/
-        # you seem to be/you want/feel/think/need/know/wish), so this can
-        # only be caught by word-overlap against the user's own message.
+    def test_echo_repetition_shadow_logged_not_dropped(self):
+        # SHADOW MODE (two-week measurement window): the ratio still fires
+        # on this exact near-duplicate — "You've been struggling with your
+        # sleep lately" does not match any _BANNED_OPENERS pattern (no
+        # you're/you are/you seem to be/you want/feel/think/need/know/wish),
+        # so the note can only come from the shadow echo check, not the
+        # opener check — but the sentence is no longer dropped. It must
+        # survive in the output, with the shadow note recorded alongside it.
         user_message = "I've been struggling with my sleep lately."
         reply = (
             "You've been struggling with your sleep lately. "
@@ -280,9 +282,9 @@ class ResponseFormatTests(unittest.TestCase):
             reply, questions_allowed=True, user_message=user_message,
         )
 
-        self.assertNotIn("struggling with your sleep", text)
+        self.assertIn("struggling with your sleep", text)
         self.assertIn("Let's start with one small thing tonight", text)
-        self.assertIn("echo_repetition_sentence_dropped", notes)
+        self.assertIn("echo_repetition_shadow_would_drop", notes)
         self.assertNotIn("banned_opener_sentence_dropped", notes)
 
     def test_echo_repetition_below_threshold_is_kept(self):

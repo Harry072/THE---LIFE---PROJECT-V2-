@@ -71,6 +71,11 @@ export function useLifeCompanion() {
   const { user } = useAppState();
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState(null);
+  // Set only by a session-capped response. Response-level, never persisted:
+  // a capped conversation can never unfreeze, so the composer retires
+  // rather than accepting input the backend will not answer. Cleared by
+  // startNewChat and by loading any other conversation.
+  const [conversationClosed, setConversationClosed] = useState(false);
   const [messages, setMessages] = useState(() => [createWelcomeMessage()]);
   const [loadingConversations, setLoadingConversations] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -159,6 +164,7 @@ export function useLifeCompanion() {
     selectConversationId(null);
     setMessages([createWelcomeMessage()]);
     setError("");
+    setConversationClosed(false);
   }, [selectConversationId]);
 
   const appendLocalAssistant = useCallback((payload) => {
@@ -241,6 +247,9 @@ export function useLifeCompanion() {
       const loadedMessages = (payload?.messages || []).map(mapPersistedMessage);
       selectConversationId(conversationId);
       setMessages(loadedMessages.length ? loadedMessages : [createWelcomeMessage()]);
+      // Closed-ness belongs to the conversation we just left, not this one.
+      // The cap is re-evaluated server-side on the next send anyway.
+      setConversationClosed(false);
       return loadedMessages;
     } catch (requestError) {
       const messageText = requestError?.message || "Could not load that conversation.";
@@ -337,6 +346,7 @@ export function useLifeCompanion() {
       };
 
       setMessages((current) => [...current, assistantMessage]);
+      if (payload.conversation_closed) setConversationClosed(true);
 
       const responseConversationId = payload.conversation_id || activeConversationId;
       if (responseConversationId) {
@@ -408,5 +418,7 @@ export function useLifeCompanion() {
     startNewChat,
     appendLocalAssistant,
     clearError,
+    conversationClosed,
+    setConversationClosed,
   };
 }

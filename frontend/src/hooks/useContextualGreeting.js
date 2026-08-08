@@ -54,6 +54,14 @@ function chooseWhisper({ loopRows, resetRows, weeklyRows, streak }) {
   const resetTagCounts = countBy(resetRows, (row) => row.reflection_tag);
   const skippedActionCount = loopRows.filter((row) => row.skipped && row.category === "action").length;
   const completedCount = loopRows.filter((row) => row.completed_at || row.done).length;
+  // Rule 6 needs same-day completion, not just recent momentum — a user
+  // who hasn't acted yet today shouldn't be told their rhythm is holding.
+  // Rows without a for_date can't be attributed to today, so they simply
+  // don't count (never inflate this toward a false positive).
+  const today = getLocalDate();
+  const completedToday = loopRows.filter((row) => (
+    row.for_date === today && (row.completed_at || row.done)
+  )).length;
   const latestWeekly = weeklyRows[0]?.synthesis_json || {};
   const nextFocus = typeof latestWeekly.next_focus === "string" ? latestWeekly.next_focus : "";
   const numericStreak = Number(streak || 0);
@@ -104,8 +112,10 @@ function chooseWhisper({ loopRows, resetRows, weeklyRows, streak }) {
     return "You have room for a slightly stronger step today; keep the smaller version nearby.";
   }
 
-  // Rule 6: steady streak and good completion → keep the rhythm
-  if (completedCount >= 3 && numericStreak > 2) {
+  // Rule 6: steady streak and good completion AND something done today →
+  // keep the rhythm. Without the same-day check this could fire before
+  // the user has touched anything today, based purely on past momentum.
+  if (completedCount >= 3 && numericStreak > 2 && completedToday >= 1) {
     return "You kept your rhythm. Today stays steady.";
   }
 

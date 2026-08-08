@@ -6,7 +6,12 @@ import time
 from time import perf_counter
 
 from ai.companion_classifier import map_from_classification
-from ai.companion_intents import detect_emotional_state, detect_intent, detect_refused_features
+from ai.companion_intents import (
+    PANIC_SIGNALS,
+    detect_emotional_state,
+    detect_intent,
+    detect_refused_features,
+)
 from ai.companion_knowledge import detect_companion_intent, get_rag_filter_tags
 from ai.companion_playbooks.loader import retrieve_playbook_chunks
 from ai.context import get_companion_session, save_companion_session
@@ -427,7 +432,41 @@ def merge_with_safety_net(classification: dict, latest_message: str) -> dict:
     return classification
 
 
-def _validator_intent_from_classification(classification: dict, user_message: str, mode: str) -> str:
+# Agent response modes whose directive structurally cannot satisfy a
+# SAFETY_INTENT content contract. REFLECT's directive forbids advice, so it
+# cannot emit the body-based grounding step validate_direct_output_contract
+# requires (breath/feet/floor/ground/body/jaw/shoulder) — the reply is
+# rejected 100% of the time and a canned fallback is served instead.
+# QUESTION is here for the same reason as REFLECT: its directive is "Ask
+# exactly one sharp clarifying question. Nothing else." — structurally
+# incapable of emitting a grounding step. 2 real messages route here with a
+# safety contract; neither carries an acute marker, and the acute-marker
+# override still protects genuine panic on this path.
+_MODES_WITHOUT_GROUNDING_CAPABILITY = {"REFLECT", "QUESTION"}
+
+
+def _has_acute_panic_marker(user_message: str) -> bool:
+    """True when the message carries an ACUTE panic marker.
+
+    Reuses PANIC_SIGNALS from companion_intents — the same list detect_intent
+    already uses to return "ground_first", which is itself the signal
+    UNDERSTANDING_PROMPT defines as "active panic now (racing heart, can't
+    breathe)". Deliberately NOT a parallel list: one vocabulary, one place to
+    maintain it. Same substring-on-lowercased-text semantics as detect_intent.
+    """
+    text = str(user_message or "").lower().strip()
+    return any(signal in text for signal in PANIC_SIGNALS)
+
+
+def _validator_intent_from_classification(
+    classification: dict,
+    user_message: str,
+    mode: str,
+    *,
+    agent_mode: str = "",
+) -> str:
+    """`mode` is the companion UI mode; `agent_mode` is the ReAct loop's FINAL
+    response mode (REFLECT/INSIGHT/QUESTION/DIRECT) for this turn."""
     intent = classification.get("intent")
     subject = classification.get("subject")
     if intent == "safety_path":
@@ -448,7 +487,40 @@ def _validator_intent_from_classification(classification: dict, user_message: st
             "career": "career_skill_guidance",
         }
         return subject_map.get(subject, "general_question")
-    return detect_companion_intent(user_message, mode)
+
+    inferred = detect_companion_intent(user_message, mode)
+
+    # ── Classifier-collision narrowing ────────────────────────────────────
+    # Two independent keyword classifiers run on every message: perceive()
+    # picks the agent's response MODE, this one picks the VALIDATOR CONTRACT.
+    # When perceive() says normal_chat -> REFLECT ("no advice") and this
+    # keyword inference says anxiety_grounding, the strict contract demands
+    # grounding language REFLECT was explicitly instructed not to produce.
+    # Measured: 7/162 real user messages collide, failing deterministically
+    # (not intermittently) and serving a canned fallback instead of the reply.
+    #
+    # Only the INFERRED path is narrowed. Every deliberate safety signal is
+    # untouched and still returns above: classification intent "safety_path"
+    # -> "safety" and "ground_first" -> "anxiety_grounding". Crisis never
+    # reaches this function at all — detect_distress() and the crisis safety
+    # signal escalate in main.py before the agent loop runs.
+    #
+    # PRECEDENCE: acute panic markers override the narrowing. If the message
+    # carries one, anxiety_grounding stands regardless of the agent's mode —
+    # the contract is the second net for someone actually panicking whom
+    # perceive() happened to file as normal_chat, and that net is preserved.
+    if (
+        _normalize_intent_gw(inferred) in SAFETY_INTENTS
+        and str(agent_mode or "").strip().upper() in _MODES_WITHOUT_GROUNDING_CAPABILITY
+        and not _has_acute_panic_marker(user_message)
+    ):
+        print(
+            "COMPANION_INTENT_NARROWED "
+            f"inferred={inferred} -> emotional_talk agent_mode={agent_mode} "
+            "reason=mode_cannot_satisfy_safety_contract acute_marker=false"
+        )
+        return "emotional_talk"
+    return inferred
 
 
 _WEB_SEARCH_TRIGGER_PHRASES = {
@@ -1072,7 +1144,11 @@ def generate_life_companion_response(
 
     # ── STAGE 2a: Format memory properly (fixes empty-summary bug) ────────
     _safe_memory = (context or {}).get("safe_memory_summary") or {}
-    _formatted_memory = format_memory_for_prompt(_safe_memory, user_intent.intent)
+    _formatted_memory = format_memory_for_prompt(
+        _safe_memory,
+        user_intent.intent,
+        has_grounding=bool((context or {}).get("has_memory_grounding")),
+    )
     # ───────────────────────────────────────────────────────────────────────
 
     # ── STAGE 2b: Route knowledge by intent ───────────────────────────────
@@ -1107,7 +1183,12 @@ def generate_life_companion_response(
 
     provider_order = get_companion_provider_order()
     attempts: list[CompanionProviderAttempt] = []
-    expected_intent = _validator_intent_from_classification(classification, user_message, mode)
+    expected_intent = _validator_intent_from_classification(
+        classification,
+        user_message,
+        mode,
+        agent_mode=(context or {}).get("agent_response_mode") or "",
+    )
 
     if expected_intent == "safety" or emotional_state == "crisis":
         companion_response = generate_life_companion_crisis_response()

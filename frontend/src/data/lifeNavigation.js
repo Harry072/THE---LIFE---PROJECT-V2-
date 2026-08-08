@@ -185,6 +185,20 @@ export const PRIMARY_NAV = [
   { id: "reflection", label: "Reflect", icon: "pen", path: "/reflection" },
 ];
 
+// ── Dashboard Finalization Part C — text-labeled sidebar ──────────────────
+// All seven destinations directly reachable from the rail; no Discover
+// drawer trigger here (MobileBottomNav still uses DiscoverDrawer/
+// DISCOVER_FEATURES independently — those stay untouched).
+export const SIDEBAR_NAV = [
+  { id: "dashboard", label: "Home", icon: "house", path: "/dashboard" },
+  { id: "loop", label: "Loop", icon: "loop", path: "/loop" },
+  { id: "reflection", label: "Reflection", icon: "pen", path: "/reflection" },
+  { id: "companion", label: "Companion", icon: "chat", path: "/companion" },
+  { id: "reset", label: "Reset Space", icon: "meditate", path: "/meditation" },
+  { id: "tree", label: "Growth Tree", icon: "sprout", path: "/progress" },
+  { id: "curator", label: "Curator", icon: "books", path: "/curator" },
+];
+
 export const DISCOVER_FEATURES = [
   {
     id: "reset",

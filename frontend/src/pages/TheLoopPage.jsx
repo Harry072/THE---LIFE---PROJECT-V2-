@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useLoopTasks } from "../hooks/useLoopTasks";
 import { useAppState } from "../contexts/AppStateContext";
 import { useGrowthTree } from "../hooks/useGrowthTree";
@@ -7,7 +8,9 @@ import LoopIntroVideo from "../components/loop/LoopIntroVideo";
 import LoopNotificationToast from "../components/loop/LoopNotificationToast";
 import PostActionFeedbackModal from "../components/loop/PostActionFeedbackModal";
 import PatternRevealModal from "../components/dashboard/PatternRevealModal";
+import ContinuationCard from "../components/ContinuationCard";
 import { usePatternReveal } from "../hooks/usePatternReveal";
+import { evaluateCompletion, endChain } from "../hooks/useContinuationChain";
 import { useContextualGreeting } from "../hooks/useContextualGreeting";
 import { useEnsureTodayLoopTasks } from "../hooks/useEnsureTodayLoopTasks";
 import Icon from "../components/Icon";
@@ -61,9 +64,15 @@ export default function TheLoopPage() {
   const { user, user_tree } = useAppState();
   const { stageUp, dismissStageUp } = useGrowthTree();
   const { whisper } = useContextualGreeting(user?.id, user_tree?.streak ?? 0);
+  const navigate = useNavigate();
+  const [chainResult, setChainResult] = useState(null);
 
   const tasks = useMemo(() => loopData?.tasks || [], [loopData?.tasks]);
-  const { preparingTodayPlan, autoGenerationError } = useEnsureTodayLoopTasks({
+  // Return values aren't consumed here — the empty state no longer
+  // distinguishes "still preparing" from "failed to prepare" (one calm
+  // message covers both) — but the hook call itself must stay: it's what
+  // actually triggers auto-generation as a side effect.
+  useEnsureTodayLoopTasks({
     user,
     tasks,
     hasFetched,
@@ -90,14 +99,22 @@ export default function TheLoopPage() {
   const currentToastRef = useRef(null);
   const toastQueueRef = useRef([]);
 
+  // Fix 4 live trace found this never fired: the backend generates
+  // _RETRIEVAL_TASK_COUNT (2) tasks/day spanning 2 of the 5 CORE_CATS, by
+  // design (backend/main.py:2565, "always _RETRIEVAL_TASK_COUNT tasks,
+  // never all of CORE_CATEGORY_ORDER") — so requiring all 5 categories
+  // represented meant allDone, and therefore the continuation chain, could
+  // never fire on the Loop page at all. Completeness is now "every core
+  // task we actually have is done or skipped," not "all 5 categories
+  // exist."
   const coreSorted = sorted.filter((task) => CORE_CATS.includes(task.category));
-  const hasAllCoreCategories = CORE_CATS.every((category) => (
-    coreSorted.some((task) => task.category === category)
-  ));
   const allDone = coreSorted.length > 0
-    && hasAllCoreCategories
     && sorted.every((task) => task.done || task.skipped);
   const signalLine = (whisper || DEFAULT_SIGNAL).trim();
+  // Live count from useLoopTasks' own already-fetched, already-core-filtered
+  // state — bypasses /api/dashboard's 15-minute cache entirely for stage
+  // computation, rather than reading the (possibly stale) cached value.
+  const tasksCompletedToday = sorted.filter((task) => task.done).length;
 
   // Reflection Layer 4 — the pattern reveal fires where tasks are
   // completed. "Later" stays local; /seen fires only via "Show me".
@@ -112,10 +129,54 @@ export default function TheLoopPage() {
   const [showPatternRevealModal, setShowPatternRevealModal] = useState(false);
 
   useEffect(() => {
-    if (allDone) {
-      checkForReveal();
-    }
-  }, [allDone, checkForReveal]);
+    if (!allDone) return undefined;
+    let cancelled = false;
+    // Tracks whether this effect's own async flow already decided
+    // loop_done's fate (fired normally, because the pattern wasn't
+    // pending). If the user leaves the page while still deferring to a
+    // pattern reveal they never engaged — no "Show me", no "Later", just
+    // navigating away — this stays false, and the cleanup below resolves
+    // it as a fallback. That's the third exit path (walking away is the
+    // most common one), alongside the "Later" button and viewing the
+    // reveal, both of which already resolve it themselves.
+    let resolved = false;
+
+    // The Continuation Chain must defer to the pattern reveal when one is
+    // pending — await checkForReveal()'s own return value directly rather
+    // than the hook's `pending` state, which is still stale in this closure
+    // the instant the promise resolves. This is what makes the defer
+    // deterministic instead of racing the reveal's own async check.
+    (async () => {
+      const isPatternPending = await checkForReveal();
+      if (cancelled || isPatternPending) return;
+      resolved = true;
+      const result = await evaluateCompletion("loop_done", undefined, tasksCompletedToday);
+      if (!cancelled && result) setChainResult(result);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (!resolved) {
+        // Fire-and-forget: the page is gone, there's nowhere to show a
+        // card, but 'loop' must still land in completed[] rather than
+        // staying deferred forever. evaluateCompletion's own duplicate
+        // suppression makes this safe even if it races a genuine
+        // pattern_reveal_viewed completion from the same abandoned defer.
+        evaluateCompletion("loop_done", undefined, tasksCompletedToday);
+      }
+    };
+  }, [allDone, checkForReveal, tasksCompletedToday]);
+
+  const handleChainAccept = useCallback(() => {
+    const route = chainResult?.nextRoute;
+    setChainResult(null);
+    if (route) navigate(route);
+  }, [chainResult, navigate]);
+
+  const handleChainDismiss = useCallback(() => {
+    endChain();
+    setChainResult(null);
+  }, []);
 
   useEffect(() => {
     if (error) {
@@ -222,14 +283,6 @@ export default function TheLoopPage() {
     }
   }, [feedbackTask?.id, saveTaskFeedback]);
 
-  const handleSkipTask = useCallback((taskId) => {
-    const task = tasks.find((item) => item.id === taskId);
-    if (!task || task.done || task.skipped) return;
-    setFeedbackIsSkip(true);
-    setFeedbackTask(task);
-    setFeedbackError("");
-  }, [tasks]);
-
   const handlePrepareLoop = useCallback(async () => {
     if (!user?.id) return;
     try {
@@ -247,8 +300,6 @@ export default function TheLoopPage() {
   const replayIntroVideo = useCallback(() => {
     setShowIntroVideo(true);
   }, []);
-
-  const isBusy = (loading || generating || preparingTodayPlan) && sorted.length === 0;
 
   return (
     <main className="loop-funnel-page">
@@ -288,35 +339,35 @@ export default function TheLoopPage() {
           </div>
         )}
 
-        {isBusy ? (
-          <div className="loop-funnel-loading" role="status">
-            <span aria-hidden="true" />
-            <p>Preparing the next clear step.</p>
-          </div>
-        ) : sorted.length > 0 ? (
+        {sorted.length > 0 ? (
           <div className="loop-funnel-list" aria-label="Today's Loop tasks">
             {sorted.map((task) => (
               <LoopTaskCard
                 key={task.id}
                 task={task}
                 onToggle={handleTaskToggle}
-                onSkip={handleSkipTask}
               />
             ))}
           </div>
-        ) : hasFetched && autoGenerationError ? (
-          <div className="loop-funnel-empty">
-            <p>Couldn&apos;t prepare today&apos;s tasks automatically.</p>
+        ) : (
+          <div className="loop-funnel-empty" role="status">
+            <p>Your tasks for today are being prepared.</p>
             <button type="button" onClick={handlePrepareLoop}>
-              Prepare Today&apos;s Loop
+              Generate today&apos;s tasks →
             </button>
           </div>
-        ) : null}
+        )}
 
-        {allDone && (
-          <div className="loop-funnel-complete" role="status">
-            <Icon name="leaf" size={18} />
-            <p>Progress is built in tiny, honest steps.</p>
+        {chainResult && (
+          <div style={{ marginTop: 16 }}>
+            <ContinuationCard
+              headline={chainResult.headline}
+              question={chainResult.question}
+              nextFeatureName={chainResult.nextFeatureName}
+              isTerminal={chainResult.isTerminal}
+              onAccept={handleChainAccept}
+              onDismiss={handleChainDismiss}
+            />
           </div>
         )}
 
@@ -339,7 +390,15 @@ export default function TheLoopPage() {
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 type="button"
-                onClick={dismissPatternRevealForToday}
+                onClick={async () => {
+                  // "Later" resolves the defer just as definitively as
+                  // viewing the reveal does — without this, evaluateCompletion
+                  // never fires for loop_done, and 'loop' never enters
+                  // completed[] until the user happens to engage the reveal.
+                  dismissPatternRevealForToday();
+                  const result = await evaluateCompletion("loop_done", undefined, tasksCompletedToday);
+                  if (result) setChainResult(result);
+                }}
                 style={{
                   padding: "10px 12px",
                   minHeight: 44,
@@ -407,9 +466,12 @@ export default function TheLoopPage() {
         <PatternRevealModal
           description={patternRevealDescription}
           question={patternRevealQuestion}
-          onClose={() => {
+          onClose={async () => {
             setShowPatternRevealModal(false);
             markPatternRevealSeen();
+            // Always terminal (Step 5): insight after action, then stop.
+            const result = await evaluateCompletion("pattern_reveal_viewed", undefined, tasksCompletedToday);
+            if (result) setChainResult(result);
           }}
         />
       ) : null}

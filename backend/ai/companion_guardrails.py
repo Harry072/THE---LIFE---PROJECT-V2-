@@ -15,8 +15,9 @@ GUARDRAIL 5  user data isolation    (lives in companion_security.require_user_id
                                      called by every tool; proven in the tests)
 
 Plus the response format rules (max 3 paragraphs x 2 sentences, no bullets,
-no "It sounds like"/"I understand" openers, echo-repetition, question
-budget) — enforced last.
+no "It sounds like"/"I understand" openers, question budget) — enforced
+last. Echo-repetition is currently SHADOW-LOGGED only (two-week
+measurement window, see enforce_response_format) — not enforced.
 """
 
 from __future__ import annotations
@@ -208,9 +209,10 @@ def enforce_response_format(
 ) -> tuple[str, list[str]]:
     """The response format rules, applied deterministically:
     bullets flattened, sentences opening with a banned phrase dropped
-    whole, sentences that echo the user's own message dropped whole,
-    'I understand' removed, question budget enforced, max 3 paragraphs
-    x 2 sentences — 4 x 3 for INSIGHT specifically.
+    whole, 'I understand' removed, question budget enforced, max 3
+    paragraphs x 2 sentences — 4 x 3 for INSIGHT specifically.
+    Echo-repetition is SHADOW-LOGGED only during a two-week measurement
+    window — computed and noted, never dropped (see the echo check below).
 
     `mode` must be the POST-grounding-check mode (apply_guardrails' own
     final_mode from check_grounded_insight), never the raw incoming mode —
@@ -248,17 +250,20 @@ def enforce_response_format(
                 # in _BANNED_OPENERS, old and new alike.
                 notes.append("banned_opener_sentence_dropped")
                 continue
-            # Audit finding (2026-07-17): ECHO_BLOCK's "don't repeat what
-            # the user said" was the last prompt-only rule in this
-            # companion — zero code enforcement. _word_overlap_ratio
-            # (imported, not reimplemented) turns it into a deterministic
-            # check, same 70% threshold already proven on task titles.
-            # elif, not a second independent check: a sentence already
-            # caught above is already gone, so each sentence attributes to
-            # exactly one guardrail in the trace, never both.
+            # SHADOW MODE (two-week measurement window, started 2026-08-04):
+            # neither the firing rate nor the false-positive rate of this
+            # check is known on live traffic. Echo prevention moved to the
+            # prompt layer (ECHO_BLOCK) because a lexical set-overlap cannot
+            # separate "echo the feeling" (wanted) from "restate the
+            # message" (unwanted) — that distinction is semantic. This
+            # check is logged, not enforced, until measured: it still
+            # computes the ratio and notes when it would have fired, but no
+            # longer drops the sentence — sentences flow through to the
+            # checks below (_I_UNDERSTAND, question budget), which can now
+            # add their own notes for the same sentence (see module
+            # docstring / PHASE B note on double-counting).
             if _word_overlap_ratio(sentence, user_message) >= ECHO_OVERLAP_THRESHOLD:
-                notes.append("echo_repetition_sentence_dropped")
-                continue
+                notes.append("echo_repetition_shadow_would_drop")
             if _I_UNDERSTAND.match(sentence):
                 remainder = _I_UNDERSTAND.sub("", sentence).strip()
                 notes.append("i_understand_removed")

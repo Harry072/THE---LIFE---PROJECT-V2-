@@ -17,6 +17,8 @@ import { supabase } from "../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { API_BASE_URL } from "../lib/apiConfig";
 import { useAppState } from "../contexts/AppStateContext";
+import ContinuationCard from "../components/ContinuationCard";
+import { evaluateCompletion, endChain } from "../hooks/useContinuationChain";
 import "./MeditationPage.css";
 
 const normalizeResetMood = (value) => String(value || "")
@@ -35,6 +37,7 @@ export default function ResetSpace() {
   const [activeNeed, setActiveNeed] = useState("");
   const [activeSession, setActiveSession] = useState(null);
   const [completedSessionId, setCompletedSessionId] = useState("");
+  const [chainResult, setChainResult] = useState(null);
 
   const guidedSessions = useMemo(
     () => filterByNeed(GUIDED_SESSIONS, activeNeed),
@@ -54,8 +57,24 @@ export default function ResetSpace() {
     setActiveSession(session);
   };
 
-  const handleComplete = useCallback((session) => {
+  const handleComplete = useCallback(async (session) => {
     setCompletedSessionId(session.id);
+    // AudioPlayer's onComplete already unifies natural end, ambient-timer
+    // completion, and finish-early into this single call site — no
+    // duration gate here, all three fire identically.
+    const result = await evaluateCompletion("reset_finished");
+    if (result) setChainResult(result);
+  }, []);
+
+  const handleChainAccept = useCallback(() => {
+    const route = chainResult?.nextRoute;
+    setChainResult(null);
+    if (route) navigate(route);
+  }, [chainResult, navigate]);
+
+  const handleChainDismiss = useCallback(() => {
+    endChain();
+    setChainResult(null);
   }, []);
 
   const handleClosePlayer = () => {
@@ -182,6 +201,19 @@ export default function ResetSpace() {
             Session complete. Choose one useful action next.
           </div>
         ) : null}
+
+        {chainResult && (
+          <div style={{ marginTop: 16 }}>
+            <ContinuationCard
+              headline={chainResult.headline}
+              question={chainResult.question}
+              nextFeatureName={chainResult.nextFeatureName}
+              isTerminal={chainResult.isTerminal}
+              onAccept={handleChainAccept}
+              onDismiss={handleChainDismiss}
+            />
+          </div>
+        )}
       </div>
 
       {activeSession ? (

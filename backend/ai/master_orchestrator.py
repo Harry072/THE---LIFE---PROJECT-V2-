@@ -258,7 +258,22 @@ def _fetch_context_signals(supabase, user_id: str) -> dict:
 
 
 def _fetch_tasks_today(supabase, user_id: str) -> dict:
-    """Same core-task classification the scoring RPC uses."""
+    """Same core-task classification the scoring RPC uses.
+
+    KNOWN ISSUE, logged not fixed (found during Loop Feature: Expert
+    Implementation, Part 4): the `core` filter below only recognizes
+    category in ("awareness", "action", "meaning") — three values, and
+    "meaning" is the pre-five-category name normalize_loop_category now
+    maps to "growth" on the frontend. "reflection" and "reset" are missing
+    entirely. Since the Loop only ever generates CORE_CATEGORY_ORDER's
+    2-of-5 categories per day (main.py:_RETRIEVAL_TASK_COUNT), this
+    all_done/total/completed computation can undercount or overcount
+    depending on which 2 categories today's tasks happen to be — the same
+    class of bug Fix 4 found and fixed in TheLoopPage.jsx's own allDone.
+    Every caller of this function's all_done value inherits the bug.
+    Deliberately not fixed here — this file has been treated as read-only
+    all session; flagging for a dedicated pass.
+    """
     today = _utc_today().isoformat()
     result = {"total": 0, "completed": 0, "all_done": False, "all_skipped": False}
     try:

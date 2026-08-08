@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useGrowthTree } from "../hooks/useGrowthTree";
 import { useTreeSeason } from "../hooks/useTreeSeason";
 import { getTreeAssetState } from "../lib/treeAssetState";
+import { getLocalDate } from "../hooks/usePatternReveal";
 
 const MILESTONE_VISIBLE_MS = 12000;
-const MILESTONE_FADE_MS = 800;
+const MILESTONE_FADE_MS = 600;
 
 // Fallback copy for when the season endpoint is unreachable — the tree
 // then renders exactly as it did before the season engine existed.
@@ -83,7 +84,6 @@ function formatMissedDays(daysMissed) {
 export default function GrowthTree({ compact = false }) {
   const {
     score,
-    tasks,
     loading,
     lastCompletedDate,
   } = useGrowthTree();
@@ -96,13 +96,13 @@ export default function GrowthTree({ compact = false }) {
 
   const milestone = devMilestone || season?.milestone;
 
-  // Earned silence: the line fades in (0.8s), stays 12s, fades out (0.8s),
-  // and is never shown again this session (sessionStorage latch per stage).
+  // Earned silence: the line fades in (0.6s), stays 12s, fades out (0.6s),
+  // and is never shown again this session (sessionStorage latch per day).
   useEffect(() => {
     if (!milestone?.crossed || !milestone?.stage_message) return undefined;
 
     if (!devMilestone) {
-      const latchKey = `tlp.tree.milestone.${milestone.stage_name}`;
+      const latchKey = `tlp.tree.milestone.${getLocalDate()}`;
       try {
         if (window.sessionStorage.getItem(latchKey)) return undefined;
         window.sessionStorage.setItem(latchKey, "1");
@@ -162,6 +162,23 @@ export default function GrowthTree({ compact = false }) {
     >
       {!compact && <p className="growth-tree-kicker">Growth Tree</p>}
 
+      <div className="growth-tree-stat-panel">
+        <div className="growth-tree-stat-row">
+          <div className="growth-tree-score">
+            <TreeMark size={compact ? 16 : 18} />
+            <span>Resilience</span>
+            <strong>{treeState.score} pts.</strong>
+          </div>
+        </div>
+
+        <div className="growth-tree-progress-track">
+          <div
+            className="growth-tree-progress-fill"
+            style={{ width: `${treeState.progress}%` }}
+          />
+        </div>
+      </div>
+
       <div className="growth-tree-frame">
         <img
           key={treeState.assetPath}
@@ -191,26 +208,6 @@ export default function GrowthTree({ compact = false }) {
               }}
             />
           ))}
-        </div>
-
-        <div className="growth-tree-stat-panel">
-          <div className="growth-tree-stat-row">
-            <div className="growth-tree-score">
-              <TreeMark size={compact ? 16 : 18} />
-              <span>Resilience</span>
-              <strong>{treeState.score} pts.</strong>
-            </div>
-            <span className="growth-tree-task-count">
-              {tasks.done}/{tasks.total} {compact ? "Tasks" : "Tasks Completed"}
-            </span>
-          </div>
-
-          <div className="growth-tree-progress-track">
-            <div
-              className="growth-tree-progress-fill"
-              style={{ width: `${treeState.progress}%` }}
-            />
-          </div>
         </div>
       </div>
 
