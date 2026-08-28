@@ -604,7 +604,15 @@ textarea,
 .loop-intro-video-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  /* Above .mobile-bottom-nav's z-index:120 (MobileBottomNav.jsx) on purpose:
+     this is a blocking dialog (aria-modal="true") mounted while the nav bar
+     is still present underneath (App.jsx renders it globally). At z-index:100
+     the nav painted OVER the bottom of this card on short viewports, hiding
+     Skip behind it -- since both are position:fixed with no scroll container,
+     that was an unrecoverable dead end, not something scrolling could reach.
+     Raising this above the nav means the full-viewport backdrop below covers
+     the nav entirely while the modal is open, so overlap no longer matters. */
+  z-index: 200;
   display: grid;
   place-items: center;
   padding: 22px;
@@ -757,10 +765,17 @@ textarea,
 
   .loop-intro-video-overlay {
     padding: 12px;
+    /* Same pattern as ProgressPage's continuation dock: protects the iOS
+       home-indicator gesture zone independent of the z-index fix above. */
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   .loop-intro-video-card {
-    max-height: 92vh;
+    /* Was 92vh -- LOOSER than desktop's 88vh, backwards for the viewport
+       that most needs margin. Tightened below desktop's ratio so Skip has
+       real breathing room on a short phone instead of nearly filling the
+       screen with zero margin either side. */
+    max-height: 84vh;
     gap: 14px;
     padding: 16px;
     border-radius: 22px;
@@ -771,7 +786,10 @@ textarea,
   }
 
   .loop-intro-video-frame video {
-    max-height: 56vh;
+    /* Was 56vh. The grid's minmax(0, 1fr) middle row already keeps Skip
+       (an auto row) from being squeezed regardless of this value -- this
+       tightening is margin, not the load-bearing fix. */
+    max-height: 48vh;
   }
 
   .loop-intro-video-skip {

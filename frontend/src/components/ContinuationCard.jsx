@@ -48,7 +48,12 @@ export default function ContinuationCard({
         <p className="continuation-card-question">{question}</p>
       ) : null}
 
-      {!isTerminal ? (
+      {/* A terminal card normally carries no actions -- it is a full stop. The
+          one exception is the session's closing companion beat, which IS
+          terminal but ships an offer: it passes nextFeatureName, so it gets
+          the buttons. Every other terminal passes none and renders exactly as
+          before, so Loop / Reflection / Reset are unaffected. */}
+      {(!isTerminal || nextFeatureName) ? (
         <div className="continuation-card-actions">
           <button
             ref={acceptButtonRef}

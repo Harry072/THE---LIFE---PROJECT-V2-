@@ -1081,6 +1081,7 @@ def persist_companion_exchange(
     user_message: str,
     companion_response: dict,
     companion_intent: str | None = None,
+    guardrails_fired: list[str] | None = None,
 ) -> dict:
     safety = companion_response.get("safety") or {}
     assistant_reply = companion_response.get("reply") or ""
@@ -1111,6 +1112,14 @@ def persist_companion_exchange(
                 "action": suggested_action or {},
                 "sections": companion_response.get("sections") or [],
                 "reply_format": companion_response.get("reply_format") or "conversation",
+                # Guardrail note NAMES only -- never the stripped text and never
+                # user content, matching the signals-only rule the tools follow.
+                # Without this the notes are printed and discarded, so an empty
+                # reply has to be reconstructed from server logs after the fact.
+                "guardrails_fired": [
+                    clean_metadata_text(note, max_chars=48)
+                    for note in (guardrails_fired or [])
+                ],
             },
             "tone": companion_response.get("tone"),
             "risk_level": safety.get("risk_level") or "none",
@@ -2057,17 +2066,34 @@ def _maybe_feed_loop_completion_signal(background_tasks: BackgroundTasks, user_i
 
 @app.get("/api/dashboard")
 async def get_dashboard(
+    fresh: int = 0,
     authorization: str | None = Header(default=None),
     background_tasks: BackgroundTasks = None,
 ):
     """Master orchestrator — the dashboard's single payload. user_id from
     the token only. The module fails safe internally; this catch-all is the
-    last line: the dashboard always renders, never errors."""
+    last line: the dashboard always renders, never errors.
+
+    `fresh=1` skips the 15-minute cache READ for THIS caller only. Task
+    completion is a direct client->Supabase RPC with no backend round-trip,
+    so there is no server-side seam to invalidate the cache from; the
+    continuation chain sends the hint after a completion event instead.
+    The dashboard page itself never sends it, so ordinary rendering still
+    reads cache and the cache is not perpetually defeated.
+
+    SECURITY: `fresh` is a bare int flag and carries no identity. The cache
+    key is token_user_id, resolved from the validated bearer token on the
+    line below and never from query input, so this can only bypass the
+    caller's own entry. It skips the CACHE, not the pipeline: the same
+    token validation, the same user-scoped RLS-backed reads, and the same
+    fresh crisis check all still run underneath."""
     token_user_id = validate_supabase_access_token(authorization)
     if background_tasks is None:
         background_tasks = BackgroundTasks()
     try:
-        payload = get_dashboard_payload(supabase, token_user_id)
+        payload = get_dashboard_payload(
+            supabase, token_user_id, force_fresh=bool(fresh)
+        )
         _maybe_feed_loop_completion_signal(background_tasks, token_user_id)
         return payload
     except Exception as error:
@@ -2393,6 +2419,9 @@ async def life_companion_chat(
         # ── AGENT: guardrails on the LLM reply. Applied only to live model
         # output — deterministic safety/fallback copy is already controlled,
         # and the crisis reply's own safety question must never be stripped.
+        # Empty unless guardrails actually ran: they apply to live model output
+        # only, so a gateway failure or fallback reply records no notes.
+        _guardrails_fired: list[str] = []
         if gateway_result.status == "success":
             _reply = str(gateway_result.companion_response.get("reply") or "")
             _questions_allowed = count_questions_asked(conversation_history) < 2
@@ -2403,8 +2432,10 @@ async def life_companion_chat(
                 tool_results=agent_turn.tool_results,
                 questions_allowed=_questions_allowed,
                 user_message=user_message,
+                classification=agent_turn.classification,
             )
             gateway_result.companion_response["reply"] = _guard.reply
+            _guardrails_fired = _guard.fired
         log_life_companion_event(
             status=gateway_result.status,
             mode=mode,
@@ -2435,6 +2466,7 @@ async def life_companion_chat(
                 user_message=user_message,
                 companion_response=gateway_result.companion_response,
                 companion_intent=detected_intent,
+                guardrails_fired=_guardrails_fired,
             )
 
         # ── AGENT STEP 7: orchestrator feed. Fire-and-forget after the

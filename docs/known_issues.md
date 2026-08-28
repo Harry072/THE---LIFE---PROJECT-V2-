@@ -50,3 +50,30 @@ of these three (message 8, trial 6) produced a reply short and malformed
 enough that `_BANNED_OPENERS` deleted it entirely, triggering
 `SAFE_FALLBACK_LINE`. The real production quality floor includes 8b
 output at a measured ~10% rate, not just 70b.
+
+## 4. `TheLoopPage` computes two different "completed today" counts
+
+`frontend/src/pages/TheLoopPage.jsx` derives completion two ways, six lines
+apart, from the same `sorted` array:
+
+- `:111` — `allDone` uses `coreSorted` (filtered to `CORE_CATS`) and counts
+  `task.done || task.skipped`
+- `:117` — `tasksCompletedToday` uses the **unfiltered** `sorted` and counts
+  `task.done` only
+
+`tasksCompletedToday` is the value passed to `evaluateCompletion` as
+`liveTasksCompletedToday`, where it drives the companion stage gate in
+`getStagePool` (`reflectionsCount >= 1 || tasksCompletedToday >= 2`).
+
+The two agree today because the Loop generates exactly two tasks
+(`_RETRIEVAL_TASK_COUNT = 2`, `backend/main.py:2675`) and both are core
+categories, so the core filter is a no-op. They would diverge if a
+non-core task were ever generated or added: a completed non-core task
+would count toward `tasksCompletedToday` (opening the companion gate)
+while not counting toward `allDone`.
+
+A third variant exists in `frontend/src/components/dashboard/PrimaryActionCard.jsx`,
+which computes its own live count as core-filtered on `completed_at` rather
+than `done`.
+
+**Logged, not fixed** — no current code path makes them disagree.

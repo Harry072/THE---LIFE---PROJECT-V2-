@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Icon from "../../components/Icon";
 import {
@@ -18,7 +18,8 @@ import { supabase } from "../../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../../lib/appAuth";
 import { API_BASE_URL } from "../../lib/apiConfig";
 import { useAppState } from "../../contexts/AppStateContext";
-import { evaluateCompletion } from "../../hooks/useContinuationChain";
+import ContinuationCard from "../../components/ContinuationCard";
+import { endChain, evaluateCompletion } from "../../hooks/useContinuationChain";
 import "./CuratorPage.css";
 
 export default function CuratorPage() {
@@ -37,6 +38,18 @@ export default function CuratorPage() {
     [shelf.activeBookIds]
   );
   const curatorIntelligence = useCuratorIntelligence(user, shelf.activeBookIds);
+  const [chainResult, setChainResult] = useState(null);
+
+  const handleChainAccept = useCallback(() => {
+    const route = chainResult?.nextRoute;
+    setChainResult(null);
+    if (route) navigate(route, { state: { fromChain: true } });
+  }, [chainResult, navigate]);
+
+  const handleChainDismiss = useCallback(() => {
+    endChain();
+    setChainResult(null);
+  }, []);
 
   useEffect(() => {
     if (!queryBookId) return;
@@ -44,14 +57,29 @@ export default function CuratorPage() {
     const book = getBookById(queryBookId);
     if (!book) return;
 
-    // Browsing the shelf is not engagement; opening a book detail is.
-    evaluateCompletion("curator_explored");
+    // Browsing the shelf is not engagement; opening a book detail is. That
+    // deliberate action IS the completion moment, exactly like saving a
+    // journal entry or finishing a reset -- so this renders a card whatever
+    // route the user took to get here, and needs no fromChain gate. Only
+    // tree_viewed needs one, because only its completion is bare arrival.
+    let cancelled = false;
+    (async () => {
+      const result = await evaluateCompletion(
+        "curator_explored", undefined, undefined, { rendersCard: true },
+      );
+      if (!cancelled && result) setChainResult(result);
+    })();
 
-    window.setTimeout(() => {
+    const scrollTimer = window.setTimeout(() => {
       document
         .getElementById(`curator-path-${book.pathSlug}`)
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(scrollTimer);
+    };
   }, [queryBookId]);
 
   const saveCuratorInteraction = async ({
@@ -200,6 +228,19 @@ export default function CuratorPage() {
           onBeginRitual={handleBeginRitual}
           onFindBook={handleFindBook}
         />
+
+        {chainResult && (
+          <div style={{ marginTop: 16, marginBottom: 16 }}>
+            <ContinuationCard
+              headline={chainResult.headline}
+              question={chainResult.question}
+              nextFeatureName={chainResult.nextFeatureName}
+              isTerminal={chainResult.isTerminal}
+              onAccept={handleChainAccept}
+              onDismiss={handleChainDismiss}
+            />
+          </div>
+        )}
 
         <MysteryPathGrid paths={CURATOR_PATHS} onSelectPath={handlePathSelect} />
 

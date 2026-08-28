@@ -170,7 +170,10 @@ export default function TheLoopPage() {
   const handleChainAccept = useCallback(() => {
     const route = chainResult?.nextRoute;
     setChainResult(null);
-    if (route) navigate(route);
+    // fromChain marks this as a chain hand-off, not a direct visit. Router
+    // state is per-navigation: it dies on refresh and is never stored, so
+    // it cannot drift out of sync the way a localStorage flag could.
+    if (route) navigate(route, { state: { fromChain: true } });
   }, [chainResult, navigate]);
 
   const handleChainDismiss = useCallback(() => {

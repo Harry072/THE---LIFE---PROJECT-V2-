@@ -256,6 +256,44 @@ def has_any(text: str, phrases: list[str]) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
+# Word-boundary keyword matching for detect_companion_intent.
+#
+# has_any above is substring-based, which made 11 keywords fire inside
+# unrelated words: "friend" inside "friendly" (a request to talk in a friendly
+# register classified as relationship_understanding), "app" inside "happy" /
+# "appreciate" / "happened" -> app_guidance, "eq" inside "request" /
+# "equipment" / "frequent" -> empathy_eq, "low" inside "slow" / "follow" /
+# "allow" -> emotional_talk, plus "list", "plan", "spot", "exam", "sad",
+# "alone", "friends".
+#
+# A plain \b...\b fix would have been a regression: 126 of the 145 single-token
+# keywords have a plural or inflected form that is NOT separately listed
+# ("relationship" -> "relationships", "discipline" -> "disciplined",
+# "workout" -> "workouts") and currently match only because of substring
+# behaviour. _inflected() -- already written above for the crisis vocabulary --
+# covers base/-s/-ed/-ing with silent-e elision, so those keep matching while
+# "friendly" (‑ly is not an inflection) correctly stops matching "friend".
+_WORD_PATTERN_CACHE: dict[str, "re.Pattern[str]"] = {}
+
+
+def _word_pattern(phrase: str) -> "re.Pattern[str]":
+    cached = _WORD_PATTERN_CACHE.get(phrase)
+    if cached is not None:
+        return cached
+    tokens = phrase.split()
+    parts = [re.escape(token) for token in tokens[:-1]]
+    last = tokens[-1]
+    parts.append(_inflected(last) if last.isalpha() else re.escape(last))
+    compiled = re.compile(r"\b" + r"\s+".join(parts) + r"\b", re.I)
+    _WORD_PATTERN_CACHE[phrase] = compiled
+    return compiled
+
+
+def has_word(text: str, phrases: list[str]) -> bool:
+    """Whole-word (inflection-tolerant) variant of has_any."""
+    return any(_word_pattern(phrase).search(text) for phrase in phrases)
+
+
 def has_pattern(text: str, patterns: list[str]) -> bool:
     return any(re.search(pattern, text, re.I) for pattern in patterns)
 
@@ -391,48 +429,48 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
     ]
     _is_book_only = (
         has_pattern(text, [r"\b(novels?|books?|reads?)\b"])
-        and not has_any(text, _PLACE_LOCATION_TERMS)
+        and not has_word(text, _PLACE_LOCATION_TERMS)
     )
     if not _is_book_only:
         # Explicit suggestion verb + place/location term → place recommendation
-        if has_any(text, _SUGGESTION_VERBS) and has_any(text, _PLACE_LOCATION_TERMS):
+        if has_word(text, _SUGGESTION_VERBS) and has_word(text, _PLACE_LOCATION_TERMS):
             return "peaceful_knowledge_place_recommendation"
         # Explicit suggestion verb + peace/calm quality + any spatial word → place recommendation
-        if has_any(text, _SUGGESTION_VERBS) and has_any(text, _PEACE_QUALITIES) and has_any(
+        if has_word(text, _SUGGESTION_VERBS) and has_word(text, _PEACE_QUALITIES) and has_word(
             text, ["place", "location", "where", "visit", "go", "spot", "somewhere"]
         ):
             return "peaceful_knowledge_place_recommendation"
     # Place/location term + peace quality (no suggestion verb required)
-    if has_any(text, _PLACE_LOCATION_TERMS) and has_any(text, _PEACE_QUALITIES):
+    if has_word(text, _PLACE_LOCATION_TERMS) and has_word(text, _PEACE_QUALITIES):
         return "peaceful_knowledge_place_recommendation"
 
-    if has_any(text, ["app", "feature", "where should i go", "which section", "which page", "how to use"]) and has_any(
+    if has_word(text, ["app", "feature", "where should i go", "which section", "which page", "how to use"]) and has_word(
         text,
         ["life project", "loop", "reflection", "reset", "curator", "weekly mirror", "growth tree", "feature", "app"],
     ):
         return "app_guidance"
 
-    if has_any(text, ["quote", "caption", "one line", "speech line", "seminar quote", "motivation line"]):
+    if has_word(text, ["quote", "caption", "one line", "speech line", "seminar quote", "motivation line"]):
         return "quote_request"
-    if has_any(text, ["seminar", "presentation", "speech", "stage"]) and has_any(text, ["line", "quote", "words"]):
+    if has_word(text, ["seminar", "presentation", "speech", "stage"]) and has_word(text, ["line", "quote", "words"]):
         return "quote_request"
 
     if has_pattern(text, [r"\b(novels?|fiction|books?|reads?)\b", r"\bwhat should i read\b", r"\bi want to read\b"]):
         return "book_recommendation"
 
-    if has_any(text, ["scrolling", "screen time", "phone addiction", "doomscroll", "doom scrolling"]):
+    if has_word(text, ["scrolling", "screen time", "phone addiction", "doomscroll", "doom scrolling"]):
         return "scrolling_distraction"
 
-    if has_any(text, ["mental toughness", "discipline", "willpower", "procrastination", "procrastinating", "procrastinate", "laziness", "productivity"]):
+    if has_word(text, ["mental toughness", "discipline", "willpower", "procrastination", "procrastinating", "procrastinate", "laziness", "productivity"]):
         return "productivity"
 
-    if has_any(text, ["psychology", "mindset", "self improvement", "wealth", "money mindset", "financial"]):
+    if has_word(text, ["psychology", "mindset", "self improvement", "wealth", "money mindset", "financial"]):
         return "life_clarity"
 
-    if has_any(text, ["confidence", "self esteem", "self worth"]):
+    if has_word(text, ["confidence", "self esteem", "self worth"]):
         return "emotional_talk"
 
-    if has_any(
+    if has_word(
         text,
         [
             "breakup", "break up", "broke up", "heartbreak", "heart broken",
@@ -442,19 +480,19 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
     ):
         return "emotional_talk"
 
-    if has_any(text, ["study", "studies", "exam", "academic", "college", "university"]) and has_any(
+    if has_word(text, ["study", "studies", "exam", "academic", "college", "university"]) and has_word(
         text,
         ["gym", "fitness", "workout", "exercise", "training"],
-    ) and has_any(text, ["routine", "schedule", "plan", "structure", "timetable", "manage"]):
+    ) and has_word(text, ["routine", "schedule", "plan", "structure", "timetable", "manage"]):
         return "study_gym_plan"
 
-    if has_any(text, ["study", "studies", "exam", "academic", "college", "school"]) and has_any(
+    if has_word(text, ["study", "studies", "exam", "academic", "college", "school"]) and has_word(
         text,
         ["focus", "cannot focus", "concentrate", "distracted", "distraction", "procrastinating"],
     ):
         return "routine_plan"
 
-    if has_any(
+    if has_word(
         text,
         [
             "gym", "fitness", "workout", "training", "muscle", "strength",
@@ -464,7 +502,7 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
     ):
         return "fitness_guidance"
 
-    if has_any(
+    if has_word(
         text,
         [
             "career", "internship", "coding", "programming", "skill", "skills",
@@ -473,7 +511,7 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
     ):
         return "career_skill_guidance"
 
-    if has_any(
+    if has_word(
         text,
         [
             "build empathy", "develop empathy", "be more empathetic", "empathy",
@@ -484,7 +522,7 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
     ):
         return "empathy_eq"
 
-    if has_any(
+    if has_word(
         text,
         [
             "relationship", "friend", "friends", "family", "parents", "conflict",
@@ -494,32 +532,32 @@ def detect_companion_intent(message: str, mode: str | None = None) -> str:
     ):
         return "relationship_understanding"
 
-    if has_any(text, ["physical action", "real-world action", "body action", "one physical action"]):
+    if has_word(text, ["physical action", "real-world action", "body action", "one physical action"]):
         return "physical_action"
-    if has_any(text, ["what should i do now", "give me one action", "one thing i can do now", "next action now"]):
+    if has_word(text, ["what should i do now", "give me one action", "one thing i can do now", "next action now"]):
         return "physical_action"
 
-    if has_any(text, ["routine", "schedule", "timetable", "time table", "daily structure", "daily plan"]):
+    if has_word(text, ["routine", "schedule", "timetable", "time table", "daily structure", "daily plan"]):
         return "routine_plan"
 
-    if has_any(text, ["how do i complete", "stop procrastinating", "procrastinate", "take action", "task help", "finish this", "get started"]):
+    if has_word(text, ["how do i complete", "stop procrastinating", "procrastinate", "take action", "task help", "finish this", "get started"]):
         return "task_help"
-    if has_any(text, ["give me steps", "make a plan", "create a plan", "roadmap", "checklist"]):
+    if has_word(text, ["give me steps", "make a plan", "create a plan", "roadmap", "checklist"]):
         return "task_help"
 
-    if has_any(text, ["purpose", "direction", "meaning", "identity", "who am i", "lost in life", "feel lost", "confused about life"]):
+    if has_word(text, ["purpose", "direction", "meaning", "identity", "who am i", "lost in life", "feel lost", "confused about life"]):
         return "life_clarity"
 
-    if has_any(text, ["spiritual", "soul", "god", "prayer", "philosophy", "philosophical", "meaning of life"]):
+    if has_word(text, ["spiritual", "soul", "god", "prayer", "philosophy", "philosophical", "meaning of life"]):
         return "spiritual_reflection"
 
-    if has_any(text, ["anxious", "anxiety", "panic", "panicking", "overwhelmed", "overthinking", "spiral", "restless", "mentally crowded", "too much in my mind"]):
+    if has_word(text, ["anxious", "anxiety", "panic", "panicking", "overwhelmed", "overthinking", "spiral", "restless", "mentally crowded", "too much in my mind"]):
         return "anxiety_grounding"
 
-    if has_any(text, ["worry", "rumination", "loneliness", "isolation", "connection"]):
+    if has_word(text, ["worry", "rumination", "loneliness", "isolation", "connection"]):
         return "emotional_talk"
 
-    if has_any(text, ["i feel", "i am feeling", "sad", "heavy", "lonely", "alone", "empty", "hurt", "low", "tired", "vent", "talk to me", "can we talk", "need to talk"]):
+    if has_word(text, ["i feel", "i am feeling", "sad", "heavy", "lonely", "alone", "empty", "hurt", "low", "tired", "vent", "talk to me", "can we talk", "need to talk"]):
         return "emotional_talk"
 
     return "general_question"

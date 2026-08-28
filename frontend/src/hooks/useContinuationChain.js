@@ -1,6 +1,6 @@
 import { fetchDashboardPayload } from "./useDashboard";
 import { getLocalDate } from "./usePatternReveal";
-import { FEATURE_LABELS } from "../components/dashboard/FeatureGrid";
+import { CHAIN_ORDER, FEATURE_LABELS } from "../data/features";
 import { supabase } from "../lib/supabase";
 import { getSupabaseOrAppAccessToken } from "../lib/appAuth";
 import { API_BASE_URL } from "../lib/apiConfig";
@@ -15,6 +15,13 @@ const STORAGE_KEY_PREFIX = "tlp.chain.";
 // "what has this user finished today"; offersShown answers "how many offers
 // have we made" — two questions, two fields, neither inferred from the other.
 const EMPTY_CHAIN = { offersShown: 0, completed: [], closed: false };
+// Counts EVENTS, not offer cards: the terminal check below fires at
+// (offersShown + 1) >= MAX_CHAIN_DEPTH, so the terminal itself is the third
+// event. A session therefore shows at most TWO offer cards, then a terminal —
+// not three offers. Two is deliberate, not an off-by-one: the product
+// minimizes engagement (one action, one natural follow-on, then rest), so it
+// is not a nudge to keep a volunteer clicking through a third and fourth
+// card. Do not "fix" the arithmetic to mean three offers.
 const MAX_CHAIN_DEPTH = 3;
 const GENERIC_TERMINAL_HEADLINE = "That's enough for today.";
 const EVENING_START_HOUR = 18;
@@ -55,9 +62,29 @@ const EVENT_CONFIG = {
   // for these. It is declared here rather than inferred from "has no
   // headline" so the two concerns — recording a completion vs. spending an
   // offer — stay separable and readable. See offersShown below.
-  companion_engaged: { feature: "companion", passive: true },
-  tree_viewed: { feature: "tree", passive: true },
-  curator_explored: { feature: "curator", passive: true },
+  // `passive: true` means "produces no card BY DEFAULT". It is no longer the
+  // whole story: a caller that will actually render the result passes
+  // { rendersCard: true } and the event becomes offer-bearing for that call
+  // only. tree_viewed needs this because its completion moment is bare
+  // ARRIVAL -- the chain sends users to the tree (journey position 2), and a
+  // destination the chain chose must not be a dead end. Browsing to the tree
+  // from the sidebar still renders nothing and still costs no depth, which is
+  // the F3 guarantee.
+  companion_engaged: {
+    feature: "companion",
+    passive: true,
+    headline: "You said it out loud.",
+  },
+  tree_viewed: {
+    feature: "tree",
+    passive: true,
+    headline: "That's where your tree is today.",
+  },
+  curator_explored: {
+    feature: "curator",
+    passive: true,
+    headline: "That's on your shelf now.",
+  },
 };
 
 // The question must describe the button the user is about to press.
@@ -78,6 +105,19 @@ const NEXT_STEP_QUESTIONS = {
   companion: "Want to talk any of it through?",
   reset: "Want to take a few quiet minutes?",
   curator: "Want something to read?",
+};
+
+// The session's CLOSING card. Not a third forward offer -- it is the terminal,
+// carrying an invitation instead of a full stop, for the one case where the
+// journey's own next step is companion. Accepting goes to Companion; declining
+// ends the session with no second card. Either way the chain is already closed
+// by the terminal branch, so nothing can follow it.
+//
+// An invitation, never a request: no streaks, no counts, no praise, no
+// loss-aversion, no obligation, no "you should".
+const COMPANION_CLOSING_COPY = {
+  headline: "That's a lot to sit with.",
+  question: "Want to talk it through?",
 };
 
 const storageKey = () => `${STORAGE_KEY_PREFIX}${getLocalDate()}`;
@@ -226,13 +266,43 @@ function recordOffered(feature) {
 // which is not part of the /api/dashboard payload the chain already fetches.
 // Fetched lazily here (never on page mount) — this does mean a second
 // network call per chain evaluation, alongside the existing dashboard fetch.
+// Same value and same mechanism as DASHBOARD_FETCH_TIMEOUT_MS in
+// useDashboard.js — one timeout idiom in this file family, not two.
+//
+// This endpoint had no timeout while its sibling /api/dashboard did. A
+// try/catch catches a REJECTION, never a HANG: on a cold-started or stalled
+// backend the await below simply never settled, so evaluateCompletion never
+// returned, setChainResult was never called, and the user saw no card, no
+// error, and nothing written to localStorage — the exact "nothing happens"
+// symptom, and one no amount of clearing chain state could fix.
+const SEASON_FETCH_TIMEOUT_MS = 8000;
+
 async function fetchSeasonStats() {
   const accessToken = await getSupabaseOrAppAccessToken(supabase);
   if (!accessToken) return null;
 
-  const response = await fetch(`${API_BASE_URL}/api/growth-tree/season`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), SEASON_FETCH_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/growth-tree/season`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    // Abort returns null, which the call site already turns into
+    // seasonStats = null -> reflectionsCount 0 -> companion and curator stay
+    // OUT of the pool. That is the documented fail-safe direction: it
+    // under-offers, and can never grant unearned access to a gated feature.
+    // Any other failure rethrows exactly as before; evaluateCompletion's own
+    // try/catch around this call already maps that to null too.
+    if (error?.name === "AbortError") return null;
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   if (!response.ok) return null;
 
   const data = await response.json().catch(() => null);
@@ -312,16 +382,39 @@ export function getAdvancedPrimaryFeature(payload, completed, liveTasksCompleted
   return { card: poolEligible[0] || null, isAllComplete: false };
 }
 
-// Priority-ordered featureCards, filtered to the stage pool and to
-// not-yet-completed features, then features never offered before (this
-// session onward, tracked in tlp.journey.offered) come before features
-// already offered — per-bucket order still follows orchestrator priority.
-export function selectNextFeature(featureCards, completed, pool, offered) {
-  const sorted = [...featureCards].sort((a, b) => a.priority - b.priority);
-  const eligible = sorted.filter((card) => pool.includes(card.feature) && !completed.includes(card.feature));
-  const notYetOffered = eligible.filter((card) => !offered.includes(card.feature));
-  const alreadyOffered = eligible.filter((card) => offered.includes(card.feature));
-  return notYetOffered[0] || alreadyOffered[0] || null;
+// Walks CHAIN_ORDER (the fixed journey path), NOT card.priority. Returns the
+// first feature that is both in the stage pool and not completed today.
+//
+// card.priority still exists and still governs the dashboard primary card via
+// getAdvancedPrimaryFeature — it is deliberately not consulted here. Ordering
+// the chain by priority is what let Companion (server priority 2) be offered
+// straight after Loop while the journey row numbered it 4, visibly skipping
+// steps 2 and 3.
+//
+// The previous `offered` tie-break (prefer never-offered features) is
+// deliberately gone: it reordered the path per user history, which is exactly
+// what a stable numbered path must not do. A dismissed-but-incomplete Tree is
+// still step 2 and is offered again. recordOffered still tracks offers for the
+// journey store; selection simply no longer consults it.
+export function selectNextFeature(featureCards, completed, pool) {
+  const cards = Array.isArray(featureCards) ? featureCards : [];
+  const byFeature = new Map(cards.map((card) => [card.feature, card]));
+
+  // Anything the server sends that CHAIN_ORDER doesn't know about keeps its
+  // relative priority order at the tail — unknown features stay reachable
+  // instead of being silently dropped from the chain entirely.
+  const trailing = cards
+    .filter((card) => !CHAIN_ORDER.includes(card.feature))
+    .sort((a, b) => a.priority - b.priority)
+    .map((card) => card.feature);
+
+  for (const feature of [...CHAIN_ORDER, ...trailing]) {
+    if (!pool.includes(feature)) continue;
+    if (completed.includes(feature)) continue;
+    const card = byFeature.get(feature);
+    if (card) return card;
+  }
+  return null;
 }
 
 // Step 5B — three terminal-copy variants. Pure and independently testable.
@@ -351,7 +444,12 @@ export function pickTerminalCopy(pool, completed, now = new Date()) {
 // The payload is fetched lazily, here, on-demand — never on page mount —
 // so pages that wire this in make zero /api/dashboard calls unless a
 // completion event actually fires.
-export async function evaluateCompletion(eventKey, now = new Date(), liveTasksCompletedToday) {
+export async function evaluateCompletion(
+  eventKey,
+  now = new Date(),
+  liveTasksCompletedToday,
+  { rendersCard = false } = {},
+) {
   touchJourneyDaysActive();
 
   if (isChainClosed()) return null;
@@ -361,7 +459,10 @@ export async function evaluateCompletion(eventKey, now = new Date(), liveTasksCo
 
   let payload = null;
   try {
-    payload = await fetchDashboardPayload();
+    // fresh: a completion event just fired, so the cached tasks_today from
+    // before it is exactly the wrong number to reason about. Only this path
+    // asks for it -- the dashboard's own render still reads cache.
+    payload = await fetchDashboardPayload({ fresh: true });
   } catch {
     payload = null;
   }
@@ -371,8 +472,24 @@ export async function evaluateCompletion(eventKey, now = new Date(), liveTasksCo
   const featureCards = payload.feature_cards;
   if (!Array.isArray(featureCards) || featureCards.length === 0) return null;
 
+  // ── ATOMIC CLAIM ─────────────────────────────────────────────────────────
+  // These two statements are deliberately adjacent and synchronous. The claim
+  // used to sit AFTER the fetchSeasonStats await below, which made this a
+  // check -> await -> write sequence: two concurrent invocations both read
+  // `before` before either wrote, both passed the guard, and both reached
+  // recordOfferShown() -- so a single completion counted as two offers.
+  // StrictMode's dev double-invoke of a mount effect triggers this every time
+  // (ProgressPage's tree_viewed), which is what turned a Reflection offer into
+  // a terminal card: offersShown hit 2, then (2+1) >= MAX_CHAIN_DEPTH.
+  // localStorage read-modify-write cannot interleave, so claiming here closes
+  // the window without any new state.
+  //
+  // Placement is load-bearing: this sits AFTER the fail-closed payload check
+  // and AFTER the crisis check above, so a turn that returns null for safety
+  // or because the backend hung never consumes the feature.
   const before = readChain();
   if (before.completed.includes(config.feature)) return null;
+  const chain = recordStep(config.feature);
 
   let seasonStats = null;
   try {
@@ -382,10 +499,7 @@ export async function evaluateCompletion(eventKey, now = new Date(), liveTasksCo
   }
   const pool = getStagePool(payload, seasonStats, now, liveTasksCompletedToday);
 
-  const chain = recordStep(config.feature);
-  const journey = readJourney();
-
-  const nextFeature = selectNextFeature(featureCards, chain.completed, pool, journey.offered);
+  const nextFeature = selectNextFeature(featureCards, chain.completed, pool);
 
   // `chain.offersShown + 1` reproduces the previous arithmetic exactly:
   // recordStep used to increment first and the check compared the already-
@@ -393,21 +507,63 @@ export async function evaluateCompletion(eventKey, now = new Date(), liveTasksCo
   // number of cards and terminates on the same event as before. The only
   // difference is that passive events no longer contribute to the count, and
   // are never terminated BY it (they show no card to terminate).
+  // Only the CALLER knows whether a card reaches the screen, so a passive
+  // event that is being rendered this call counts as a real offer: it is
+  // terminal-by-depth like any other, and it spends an offer below.
+  const isPassive = Boolean(config.passive) && !rendersCard;
+
+  // +1 here is "if we showed this one" — so this is the CEILING check, not a
+  // count of offers already shown. At MAX_CHAIN_DEPTH=3 that ceiling is hit
+  // on the event that would be the third, which is why it becomes the
+  // terminal instead of a third offer: two offers shown, then stop.
   const isTerminal = Boolean(config.forceTerminal)
-    || (!config.passive && (chain.offersShown + 1) >= MAX_CHAIN_DEPTH)
+    || (!isPassive && (chain.offersShown + 1) >= MAX_CHAIN_DEPTH)
     || !nextFeature;
 
   if (isTerminal) {
-    endChain();
+    // Closing is what "That's enough for today" MEANS to the user, so it may
+    // only happen when they actually saw it. isPassive is already this file's
+    // term for "no card reaches the screen" (F3), so a direct visit to the
+    // tree that finds nothing eligible now records the visit and leaves the
+    // chain OPEN -- previously it fired endChain() silently and killed the
+    // rest of the user's day from a page that displayed nothing.
+    // A genuine terminal (depth max, or forceTerminal's pattern reveal) is
+    // never passive, so it still closes and still renders its copy.
+    if (!isPassive) endChain();
     if (config.forceTerminal) {
       return { isTerminal: true, headline: config.headline, question: config.question };
     }
+
+    // The closing beat. The journey walk above ALREADY established that
+    // companion is in the stage pool and not yet completed -- that is what it
+    // means for nextFeature to be companion -- so this cannot force a
+    // companion offer onto a session that never earned it. A session that
+    // stopped short of reflection has nextFeature = reflection (or null) and
+    // falls through to the bare terminal below, unchanged.
+    //
+    // forceTerminal is handled above, so the pattern reveal keeps its own
+    // terminal. Crisis never reaches here at all (evaluateCompletion returns
+    // null on crisis_active long before this).
+    //
+    // Still isTerminal: endChain() has already run, and recordOfferShown()
+    // below is unreachable from this branch, so offersShown stays at the
+    // two-offer ceiling and nothing can chain after it.
+    if (nextFeature && nextFeature.feature === "companion") {
+      return {
+        isTerminal: true,
+        headline: COMPANION_CLOSING_COPY.headline,
+        question: COMPANION_CLOSING_COPY.question,
+        nextFeatureName: FEATURE_LABELS.companion || "Companion",
+        nextRoute: nextFeature.route,
+      };
+    }
+
     const copy = pickTerminalCopy(pool, chain.completed, now);
     return { isTerminal: true, headline: copy.headline, question: copy.question };
   }
 
   recordOffered(nextFeature.feature);
-  if (!config.passive) recordOfferShown();
+  if (!isPassive) recordOfferShown();
 
   return {
     isTerminal: false,

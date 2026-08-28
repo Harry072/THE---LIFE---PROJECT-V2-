@@ -42,7 +42,13 @@ const SAFE_DEFAULT = {
 // behavior on top of this for the dashboard page itself.
 const DASHBOARD_FETCH_TIMEOUT_MS = 8000;
 
-export async function fetchDashboardPayload() {
+// `fresh` skips the server's 15-minute cache READ for this user only (see
+// the /api/dashboard handler). Task completion is a direct client->Supabase
+// RPC with no backend round-trip, so nothing can invalidate that cache
+// server-side; the continuation chain asks for fresh data after a completion
+// instead. Default false so the dashboard page's own render keeps using the
+// cache -- passing it everywhere would delete the cache in all but name.
+export async function fetchDashboardPayload({ fresh = false } = {}) {
   const accessToken = await getSupabaseOrAppAccessToken(supabase);
   if (!accessToken) return null;
 
@@ -51,7 +57,7 @@ export async function fetchDashboardPayload() {
 
   let response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/dashboard`, {
+    response = await fetch(`${API_BASE_URL}/api/dashboard${fresh ? "?fresh=1" : ""}`, {
       headers: { "Authorization": `Bearer ${accessToken}` },
       signal: controller.signal,
     });

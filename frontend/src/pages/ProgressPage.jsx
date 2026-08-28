@@ -2,14 +2,18 @@
  * ProgressPage — Full-size tree view with detailed growth stats.
  * Primary view of the Growth Tree with stage timeline below.
  */
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAppState } from "../contexts/AppStateContext";
 import GrowthTree from "../components/GrowthTree";
 import { useGrowthTree } from "../hooks/useGrowthTree";
 import { useTreeSeason } from "../hooks/useTreeSeason";
 import TreeStatCards from "../components/TreeStatCards";
 import Sidebar from "../components/dashboard/Sidebar";
 import TopBar from "../components/dashboard/TopBar";
-import { evaluateCompletion } from "../hooks/useContinuationChain";
+import ContinuationCard from "../components/ContinuationCard";
+import ChainDebugOverlay from "../components/ChainDebugOverlay";
+import { endChain, evaluateCompletion } from "../hooks/useContinuationChain";
 
 // "2026-05-05" -> "May 5" (year shown only when it isn't this year).
 function formatJourneyDate(isoDate) {
@@ -25,12 +29,61 @@ function formatJourneyDate(isoDate) {
 export default function ProgressPage() {
   const { stage, STAGES } = useGrowthTree();
   const { journey } = useTreeSeason({ includeJourney: true });
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [chainResult, setChainResult] = useState(null);
+  // GlobalNowPlaying (App.jsx) is fixed to bottom:0 at height 72 / z-index 100
+  // whenever a track is playing. Reading the same state here lets the dock sit
+  // ABOVE it rather than underneath it.
+  const { currentTrack } = useAppState();
+  const dockOffset = currentTrack ? 72 : 0;
 
-  // Fires once on page open — the feature's ask is "look at your tree,"
-  // and opening satisfies it. No scroll or time threshold: that would be
-  // inventing an obstacle the feature never had.
+  // Set only when the chain itself sent the user here (see the accept
+  // handlers in TheLoopPage/ReflectionPage/ResetSpace). Router state is
+  // per-navigation, so a refresh or a direct visit simply has none.
+  const fromChain = Boolean(location.state?.fromChain);
+
+  // Memoizes the in-flight evaluation itself, not a "did we start" boolean,
+  // so StrictMode's dev double-mount awaits the SAME result instead of making
+  // a second call. Same technique and same reason as usePatternReveal's
+  // checkPromiseRef.
+  //
+  // Without this the card never rendered in dev, and the cause was the atomic
+  // duplicate guard added to evaluateCompletion: mount 1 claimed "tree" and
+  // returned the offer, but its own StrictMode cleanup had already set
+  // cancelled=true so the offer was thrown away; mount 2 then hit the guard,
+  // got null, and never called setChainResult. The winning result was
+  // discarded and the surviving one was empty, so chainResult stayed null and
+  // nothing rendered. One promise, awaited twice, fixes it without touching
+  // the guard — evaluateCompletion is now only ever called once here.
+  //
+  // A card only renders on a chain hand-off. Arriving from the sidebar or
+  // the dashboard still records the visit and still costs no depth, because
+  // rendersCard stays false and the event remains passive (the F3 rule:
+  // depth counts offers SHOWN).
+  const evaluationRef = useRef(null);
   useEffect(() => {
-    evaluateCompletion("tree_viewed");
+    let cancelled = false;
+    if (!evaluationRef.current) {
+      evaluationRef.current = evaluateCompletion(
+        "tree_viewed", undefined, undefined, { rendersCard: fromChain },
+      );
+    }
+    evaluationRef.current.then((result) => {
+      if (!cancelled && fromChain && result) setChainResult(result);
+    });
+    return () => { cancelled = true; };
+  }, [fromChain]);
+
+  const handleChainAccept = useCallback(() => {
+    const route = chainResult?.nextRoute;
+    setChainResult(null);
+    if (route) navigate(route, { state: { fromChain: true } });
+  }, [chainResult, navigate]);
+
+  const handleChainDismiss = useCallback(() => {
+    endChain();
+    setChainResult(null);
   }, []);
 
   return (
@@ -105,6 +158,8 @@ export default function ProgressPage() {
           }}>
             <TreeStatCards />
           </div>
+
+
 
           {/* Tree Memory — real milestones only; hidden below 2 items.
               No icons, no dots, no lines. The words carry the weight. */}
@@ -296,12 +351,57 @@ export default function ProgressPage() {
             </div>
           </div>
         </div>
+        {/* Keeps the last content scrollable clear of the fixed dock. */}
+        {chainResult && <div style={{ height: 132 + dockOffset }} aria-hidden="true" />}
       </main>
+
+      {/* Docked to the bottom of the VIEWPORT, never above the tree: the user
+          was sent here to look at something, so the content leads and the next
+          action stays reachable without scrolling. z-index 90 sits above page
+          content but below GlobalNowPlaying's 100, and dockOffset lifts it
+          clear of that player when a track is running. ContinuationCard itself
+          is unchanged — it is still the same inline block, and Reflection,
+          Reset Space and The Loop keep rendering it inline. */}
+      {chainResult && (
+        <div className="tree-continuation-dock" style={{ bottom: dockOffset }}>
+          <ContinuationCard
+            headline={chainResult.headline}
+            question={chainResult.question}
+            nextFeatureName={chainResult.nextFeatureName}
+            isTerminal={chainResult.isTerminal}
+            onAccept={handleChainAccept}
+            onDismiss={handleChainDismiss}
+          />
+        </div>
+      )}
+
+      <ChainDebugOverlay fromChain={fromChain} chainResult={chainResult} />
 
       {/* Responsive CSS — the rail is 60px at all desktop widths */}
       <style>{`
+        .tree-continuation-dock {
+          position: fixed;
+          left: 180px;
+          right: 0;
+          z-index: 90;
+          padding: 12px 32px;
+          padding-bottom: max(12px, env(safe-area-inset-bottom));
+          pointer-events: none;
+        }
+
+        .tree-continuation-dock > * {
+          pointer-events: auto;
+          max-width: 900px;
+          margin: 0 auto;
+        }
+
         @media (max-width: 767px) {
           main { margin-left: 0 !important; }
+          .tree-continuation-dock {
+            left: 0;
+            padding: 12px;
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+          }
           .tree-stat-grid {
             grid-template-columns: repeat(2, 1fr) !important;
           }

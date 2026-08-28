@@ -2,6 +2,11 @@ import { Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import Icon from "../Icon";
 import { readChain } from "../../hooks/useContinuationChain";
+import {
+  FEATURE_LABELS,
+  JOURNEY_ORDER,
+  RESPONSIVE_ORDER,
+} from "../../data/features";
 
 // Zone 3 — the Journey Path. Two fixed-order rows: four sequential features
 // (Row 1, numbered, a real path that doesn't reorder per user state) and two
@@ -10,15 +15,6 @@ import { readChain } from "../../hooks/useContinuationChain";
 // or which feature the orchestrator currently has primary. That fixed-order
 // guarantee is what makes the old primary-feature exclusion unnecessary:
 // a step in a path can't disappear just because it's the current focus.
-
-export const FEATURE_LABELS = {
-  loop: "The Loop",
-  companion: "Companion",
-  reflection: "Reflection",
-  tree: "Growth Tree",
-  curator: "Curator",
-  reset: "Reset Space",
-};
 
 // Observations, not praise: no exclamation marks, no "great job," no emoji.
 const COMPLETION_LINES = {
@@ -33,7 +29,6 @@ const COMPLETION_LINES = {
 // Fixed, static descriptions — this row describes the shape of the journey
 // itself, not a per-user dynamic headline, so it reads the same for
 // everyone and never reorders.
-const JOURNEY_ORDER = ["loop", "tree", "reflection", "companion"];
 const JOURNEY_DESCRIPTIONS = {
   loop: "Take action today.",
   tree: "See the impact of your actions.",
@@ -41,7 +36,6 @@ const JOURNEY_DESCRIPTIONS = {
   companion: "Talk it through. Find clarity and guidance.",
 };
 
-const RESPONSIVE_ORDER = ["reset", "curator"];
 const RESPONSIVE_DESCRIPTIONS = {
   reset: "When you feel overwhelmed, reset and find calm.",
   curator: "Explore wisdom and knowledge that helps you grow.",
@@ -461,3 +455,7 @@ export default function FeatureGrid({ payload }) {
     </>
   );
 }
+
+// Re-exported so existing importers of FEATURE_LABELS from this module keep
+// working; the definition now lives in data/features.js.
+export { FEATURE_LABELS };

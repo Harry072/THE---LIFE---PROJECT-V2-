@@ -7,7 +7,8 @@ import CompanionChatPanel from "../components/companion/CompanionChatPanel";
 import ConversationSidebar from "../components/companion/ConversationSidebar";
 import { useLifeCompanion } from "../hooks/useLifeCompanion";
 import { COMPANION_MODES } from "../data/companionModes";
-import { evaluateCompletion } from "../hooks/useContinuationChain";
+import ContinuationCard from "../components/ContinuationCard";
+import { endChain, evaluateCompletion } from "../hooks/useContinuationChain";
 
 const REAL_WORLD_STORAGE_KEY = "lifeProject.lifeCompanion.realWorldAction";
 
@@ -34,6 +35,7 @@ export default function LifeCompanionPage() {
   const [activeMode, setActiveMode] = useState("understand_me");
   const [input, setInput] = useState("");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [chainResult, setChainResult] = useState(null);
   const userInteractedBeforeHydrationRef = useRef(false);
   // This session's sent-message count (not messages hydrated from a
   // reloaded past conversation). One message is a test, two is a
@@ -99,7 +101,12 @@ export default function LifeCompanionPage() {
 
     sentMessageCountRef.current += 1;
     if (sentMessageCountRef.current === 2) {
-      evaluateCompletion("companion_engaged");
+      // Two sent messages is the completion moment -- a deliberate action, so
+      // the card renders regardless of how the user arrived, matching
+      // Reflection and Reset Space. No fromChain gate needed here.
+      evaluateCompletion(
+        "companion_engaged", undefined, undefined, { rendersCard: true },
+      ).then((result) => { if (result) setChainResult(result); });
     }
 
     await sendMessage({
@@ -107,6 +114,17 @@ export default function LifeCompanionPage() {
       mode: activeMode,
       message: cleanInput,
     });
+  };
+
+  const handleChainAccept = () => {
+    const route = chainResult?.nextRoute;
+    setChainResult(null);
+    if (route) navigate(route, { state: { fromChain: true } });
+  };
+
+  const handleChainDismiss = () => {
+    endChain();
+    setChainResult(null);
   };
 
   const handleSuggestedAction = (action) => {
@@ -214,6 +232,19 @@ export default function LifeCompanionPage() {
             {error && (
               <div className="companion-error" role="status">
                 {error}
+              </div>
+            )}
+
+            {chainResult && (
+              <div style={{ padding: "0 16px 12px" }}>
+                <ContinuationCard
+                  headline={chainResult.headline}
+                  question={chainResult.question}
+                  nextFeatureName={chainResult.nextFeatureName}
+                  isTerminal={chainResult.isTerminal}
+                  onAccept={handleChainAccept}
+                  onDismiss={handleChainDismiss}
+                />
               </div>
             )}
 

@@ -28,7 +28,32 @@ from dataclasses import dataclass, field
 from .validator import _word_overlap_ratio
 
 
-SAFE_FALLBACK_LINE = "I'm here. Stay with what you just said for a moment."
+SAFE_FALLBACK_LINE = "I'm here. Tell me more when you're ready."
+
+# When every sentence is stripped the guardrails have SUCCEEDED -- but the user
+# still gets a reply, and the old single line ("Stay with what you just said
+# for a moment") asked them to pause. After a light or social message that is a
+# non-sequitur, and it stalls the conversation instead of handing it back.
+# Measured at 4.4% of replies (14/319 live), so it is not a rare path.
+#
+# Selection is a plain dict lookup on the agent's own classification -- fully
+# deterministic, so hitting this twice in a row gives the identical line rather
+# than two different ones that read as the system malfunctioning. No variant is
+# a question: the question budget was just enforced above and a question here
+# would bypass it.
+REGISTER_FALLBACK_LINES = {
+    "normal_chat": "I'm here. Tell me what's going on.",
+    "practical_question": (
+        "Tell me more about what you're working with, and I'll be specific."
+    ),
+}
+
+
+def fallback_line_for(classification: str = "") -> str:
+    """Register-appropriate empty-reply fallback. Unknown/absent classification
+    falls back to SAFE_FALLBACK_LINE, which also covers the reflective
+    classifications (pattern_question, journal_reference, progress_question)."""
+    return REGISTER_FALLBACK_LINES.get(str(classification or ""), SAFE_FALLBACK_LINE)
 
 # Same technique, same threshold as validator.py's already-tuned
 # similar-recent-title check (word-set Jaccard overlap, >= 0.70 = same
@@ -309,6 +334,7 @@ def apply_guardrails(
     tool_results: dict,
     questions_allowed: bool,
     user_message: str = "",
+    classification: str = "",
 ) -> GuardrailResult:
     """Run every guardrail in order. If a check fires, the reply is rewritten —
     the original is never sent. An empty result falls back to a safe line
@@ -334,7 +360,7 @@ def apply_guardrails(
     fired.extend(format_notes)
 
     if not text.strip():
-        text = SAFE_FALLBACK_LINE
+        text = fallback_line_for(classification)
         fired.append("empty_after_guardrails_fallback")
 
     if fired:

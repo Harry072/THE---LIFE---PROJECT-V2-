@@ -23,6 +23,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 
+from ai.context import CORE_CATEGORY_ORDER, normalize_category
 from ai.growth_tree_intelligence import check_milestone_crossed, compute_season
 
 
@@ -257,29 +258,54 @@ def _fetch_context_signals(supabase, user_id: str) -> dict:
     return signals
 
 
-def _fetch_tasks_today(supabase, user_id: str) -> dict:
-    """Same core-task classification the scoring RPC uses.
+# Mirrors frontend isCoreLoopTask (useLoopTasks.js:94-99) so the server's
+# tasks_today counts and the client's live counts can never disagree.
+_OPTIONAL_TRUE_VALUES = (True, "true", "True", "1", 1)
 
-    KNOWN ISSUE, logged not fixed (found during Loop Feature: Expert
-    Implementation, Part 4): the `core` filter below only recognizes
-    category in ("awareness", "action", "meaning") — three values, and
-    "meaning" is the pre-five-category name normalize_loop_category now
-    maps to "growth" on the frontend. "reflection" and "reset" are missing
-    entirely. Since the Loop only ever generates CORE_CATEGORY_ORDER's
-    2-of-5 categories per day (main.py:_RETRIEVAL_TASK_COUNT), this
-    all_done/total/completed computation can undercount or overcount
-    depending on which 2 categories today's tasks happen to be — the same
-    class of bug Fix 4 found and fixed in TheLoopPage.jsx's own allDone.
-    Every caller of this function's all_done value inherits the bug.
-    Deliberately not fixed here — this file has been treated as read-only
-    all session; flagging for a dedicated pass.
+
+def _is_core_task(row: dict) -> bool:
+    category = normalize_category(row.get("category"))
+    if category not in CORE_CATEGORY_ORDER:
+        return False
+    is_optional = row.get("is_optional") in _OPTIONAL_TRUE_VALUES
+    if not is_optional:
+        return True
+    # The frontend keeps optional "…Practice" rows as core; matching that
+    # exactly is what keeps the two counts identical.
+    return "practice" in str(row.get("subtitle") or "").lower()
+
+
+def _fetch_tasks_today(supabase, user_id: str) -> dict:
+    """Same core-task classification the frontend uses.
+
+    This previously filtered to a hardcoded ("awareness", "action",
+    "meaning") — three values, one of them ("meaning") the pre-rename name
+    for "growth". "reflection" and "reset" were invisible entirely, so
+    total/completed/all_done undercounted whenever the day's 2 generated
+    categories fell outside that set. Measured on real rows: 0% of older
+    task rows sat in an unseen category but 26.4% of recent ones did (the
+    vocabulary migrated and this filter never followed), and 10% of
+    2-task days collapsed to total=0. Because tasks_today.completed is
+    what getStagePool falls back to when a caller passes no live count,
+    a zeroed count dropped "reflection" from the stage pool and dead-ended
+    the continuation chain on the tree page.
+
+    Now mirrors frontend isCoreLoopTask (useLoopTasks.js:94-99) exactly, so
+    the two agree: normalize the category (which also folds the legacy
+    "meaning" back to "growth"), require membership in the CANONICAL
+    CORE_CATEGORY_ORDER imported from ai.context rather than a second
+    hardcoded copy, and exclude is_optional tasks apart from the
+    "practice" compat carve-out the frontend also honours. Excluding
+    optional matters: 45 of 313 real rows are optional, and counting them
+    would OVER-count, which is the one direction the stage pool must never
+    err in.
     """
     today = _utc_today().isoformat()
     result = {"total": 0, "completed": 0, "all_done": False, "all_skipped": False}
     try:
         rows = (
             supabase.table("loop_tasks")
-            .select("completed_at,skipped,category")
+            .select("completed_at,skipped,category,is_optional,subtitle")
             .eq("user_id", user_id)
             .eq("for_date", today)
             .execute()
@@ -292,7 +318,7 @@ def _fetch_tasks_today(supabase, user_id: str) -> dict:
         )
         return result
 
-    core = [r for r in rows if str(r.get("category") or "") in ("awareness", "action", "meaning")]
+    core = [r for r in rows if _is_core_task(r)]
     total = len(core)
     completed = sum(1 for r in core if r.get("completed_at"))
     skipped = sum(1 for r in core if r.get("skipped"))
@@ -604,16 +630,36 @@ def _build_payload(supabase, user_id: str, crisis_active: bool) -> dict:
     }
 
 
-def get_dashboard_payload(supabase, user_id: str) -> dict:
+def get_dashboard_payload(supabase, user_id: str, *, force_fresh: bool = False) -> dict:
     """The endpoint-facing entry. Crisis check fresh every request (bypasses
     the cache); non-crisis payloads cached 15 minutes; ANY failure returns
     the safe default. Never raises past this function except for a missing
-    user_id (a programming error, not a data problem)."""
+    user_id (a programming error, not a data problem).
+
+    force_fresh skips the cache READ only — nothing else. Everything below
+    it is unchanged: the same auth-derived user_id, the same user-scoped
+    queries, the same crisis check (which already ran above and is never
+    reached through the cache anyway), and the same write-back, so a fresh
+    recomputation also repairs the cached copy every other reader sees.
+
+    It exists because task completion is a direct client->Supabase RPC
+    (complete_loop_task_v4) with no backend round-trip, so there is no
+    server-side seam at which to invalidate this cache. Without it the
+    15-minute TTL serves tasks_today.completed=0 for the whole of a first
+    session: the user finishes the Loop, taps through to the tree, and the
+    stale zero drops "reflection" from the stage pool and dead-ends the
+    continuation chain.
+
+    SECURITY: this is a boolean. The cache key is user_id, which comes from
+    the caller's validated token and never from request input, so a caller
+    can only ever bypass their OWN entry — there is no key to name, inject,
+    or enumerate, and no other user's payload is readable or evictable
+    through this path."""
     user_id = require_user_id(user_id, "get_dashboard_payload")
 
     crisis_active = _fetch_crisis_flag(supabase, user_id)
 
-    if not crisis_active:
+    if not crisis_active and not force_fresh:
         cached = _dashboard_cache.get(user_id)
         if cached is not None:
             payload, stored_at = cached

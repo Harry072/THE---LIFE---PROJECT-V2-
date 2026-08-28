@@ -16,6 +16,7 @@ import CuratorPage from './features/curator/CuratorPage';
 import LifeCompanionPage from './pages/LifeCompanionPage';
 import WeeklyMirrorPage from './pages/WeeklyMirrorPage';
 import MobileBottomNav from './components/MobileBottomNav';
+import DevChainReset from "./components/DevChainReset";
 
 const ProtectedRoute = ({ children }) => {
   const user = useUserStore(state => state.user);
@@ -36,6 +37,7 @@ function AppRoutes() {
   return (
     <>
       <GlobalNowPlaying />
+      <DevChainReset />
       <Routes>
         {/* Public */}
         <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" /> : <Onboarding />} />

@@ -3,6 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { useUserStore } from "../../store/userStore";
 import { getPreferredAvatarUrl } from "../../utils/userDisplayName";
 
+// Search, "Go Premium", and the notification bell were removed here
+// (2026-08-25 audit): the search input had no handler and no ⌘K listener
+// existed anywhere in the app; "Go Premium" pointed at a query param
+// (?tab=premium) that ProfilePage never read, and no billing/subscription
+// flow exists anywhere in the codebase; the bell's onClick was a no-op.
+// All three were decorative dead weight. The profile icon is untouched —
+// it is the sole route to /profile, which is the sole signOut surface in
+// the app (ProfilePage.jsx's handleSignOut) — removing it would strip the
+// user's only way to sign out.
 export default function TopBar() {
   const navigate = useNavigate();
   const user = useUserStore(state => state.user);
@@ -11,93 +20,15 @@ export default function TopBar() {
   return (
     <header style={{
       display: "flex", alignItems: "center",
-      justifyContent: "space-between",
+      justifyContent: "flex-end",
       padding: "20px 32px",
-      gap: 24,
     }}>
-      {/* Search */}
-      <div style={{
-        flex: 1, maxWidth: 480, position: "relative",
-      }}>
-        <Icon name="search" size={16}
-          color="var(--text-faint)"
-          style={{
-            position: "absolute", left: 16,
-            top: "50%", transform: "translateY(-50%)",
-          }}
-        />
-        <input
-          type="text"
-          placeholder="Search..."
-          style={{
-            width: "100%", height: 40,
-            padding: "0 48px 0 42px",
-            background: "var(--bg-card)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            color: "var(--text)",
-            fontFamily: "var(--font-body)",
-            fontSize: 14, outline: "none",
-            transition: "border-color 0.3s",
-          }}
-          onFocus={e => e.target.style.borderColor
-            = "var(--border-strong)"}
-          onBlur={e => e.target.style.borderColor
-            = "var(--border)"}
-        />
-        <kbd style={{
-          position: "absolute", right: 12,
-          top: "50%", transform: "translateY(-50%)",
-          padding: "2px 6px",
-          background: "rgba(255,255,255,0.05)",
-          border: "1px solid var(--border)",
-          borderRadius: 4,
-          color: "var(--text-faint)",
-          fontSize: 11, fontFamily: "var(--font-body)",
-        }}>⌘K</kbd>
-      </div>
-
-      {/* Actions */}
-      <div style={{ display: "flex", alignItems: "center",
-        gap: 12 }}>
-        <button
-          onClick={() => navigate("/profile?tab=premium")}
-          style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "8px 16px",
-            background: "linear-gradient(135deg, "
-              + "var(--green) 0%, var(--green-bright) 100%)",
-            border: "none",
-            borderRadius: 20,
-            color: "white", fontFamily: "var(--font-body)",
-            fontWeight: 500, fontSize: 13,
-            cursor: "pointer",
-            boxShadow: "0 4px 16px var(--green-glow)",
-            transition: "all 0.3s",
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.transform = "translateY(-1px)";
-            e.currentTarget.style.boxShadow
-              = "0 6px 20px var(--green-glow)";
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.transform = "translateY(0)";
-            e.currentTarget.style.boxShadow
-              = "0 4px 16px var(--green-glow)";
-          }}
-        >
-          Go Premium
-          <Icon name="sparkle" size={14} filled color="white" />
-        </button>
-
-        <IconButton iconName="bell" onClick={() => {}} />
-        <IconButton
-          iconName="user"
-          avatarUrl={avatarUrl}
-          ariaLabel="Open profile"
-          onClick={() => navigate("/profile")}
-        />
-      </div>
+      <IconButton
+        iconName="user"
+        avatarUrl={avatarUrl}
+        ariaLabel="Open profile"
+        onClick={() => navigate("/profile")}
+      />
     </header>
   );
 }
