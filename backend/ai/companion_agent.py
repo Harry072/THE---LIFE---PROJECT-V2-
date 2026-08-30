@@ -23,7 +23,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from .companion_intents import CRISIS_CORE_PATTERNS
+from .companion_intents import CRISIS_CORE_PATTERNS, normalize_typography
 from .companion_security import (
     RateLimitStatus,
     sanitize_untrusted_text,
@@ -87,7 +87,11 @@ _COMPILED_DISTRESS = {
 def detect_distress(message: str) -> str | None:
     """Returns the severity tier, or None. Hardest tier wins. Absolute —
     there is deliberately no 'but the context seems okay' logic here."""
-    text = str(message or "")
+    # normalize_typography before matching: "i can’t go on anymore" (iOS
+    # smart apostrophe) scored None while the ASCII form scored
+    # persistent_distress -- the patterns are untouched and ASCII input is
+    # byte-identical after normalization, so this only widens coverage.
+    text = normalize_typography(str(message or ""))
     for tier in ("crisis", "self_harm_adjacent", "persistent_distress"):
         if any(pattern.search(text) for pattern in _COMPILED_DISTRESS[tier]):
             return tier
@@ -251,6 +255,24 @@ MODE_DIRECTIVES = {
     ),
 }
 
+# Emitted only for light social messages -- a greeting, "can we talk", casual
+# check-ins. A prior audit measured 73.7% of real user messages classifying as
+# normal_chat and receiving a therapeutic frame; the live failure was "hey
+# reet how's you" answered with an analysis of relational dynamics. The gate
+# below (in the RESPOND step) requires classification == normal_chat AND no
+# detected emotion AND no distress tier AND a short message -- any hint of
+# weight fails the gate and the full framing applies. The note itself repeats
+# that escape hatch so a borderline read still errs toward taking the user
+# seriously, never toward brushing them off.
+SOCIAL_REGISTER_NOTE = (
+    "[REGISTER] This message is light social conversation -- a greeting or a "
+    "casual check-in, not disclosure. Reply the way a friend replies to hi: "
+    "warm, brief, one or two sentences, plain words. Do not analyze the "
+    "relationship, read between the lines, or reflect their state back at "
+    "them. If anything in the message carries real weight, ignore this note "
+    "entirely and take it seriously."
+)
+
 SOFT_CLOSE_NOTE = (
     "[SESSION NOTE] This session is nearing its natural end. Close warmly this "
     "turn — no new threads, no questions."
@@ -287,8 +309,10 @@ You sound like this:
 
 You never sound like this:
 → 'You're feeling X and that is completely valid'
+→ 'You're reaching out, wanting Y...' / 'You're looking for Z...'
 → 'It sounds like you are torn between...'
 → 'I understand that must be difficult...'
+→ Any opening that describes the user to themselves instead of talking to them.
 These make people feel processed, not heard.
 
 YOUR BOUNDARY — this is non-negotiable:
@@ -300,9 +324,11 @@ Wisdom means seeing clearly — not telling people what to do with what you see.
 
 RESPONSE_STRUCTURE_BLOCK = """RESPONSE FORMAT:
 
-[FIRST LINE — name what you actually heard]
-Not what they said. What they meant underneath it.
-This line makes them feel: 'yes, exactly that.'
+[FIRST LINE — respond to what you actually heard]
+Speak TO them, never ABOUT them. Do not narrate the user back to
+themselves: never open with 'You're feeling...', 'You're looking for...',
+'You're reaching out...' or any sentence whose subject is a description of
+their state. A friend answers; a therapist describes. Answer.
 Maximum 2 sentences. No summaries. No echoing.
 
 [MIDDLE — the one real thing]
@@ -567,6 +593,17 @@ def run_react_loop(
         )
     if journal_search_returned_nothing:
         directive_lines.append(NO_JOURNAL_MATCH_NOTE)
+    # Social register (see SOCIAL_REGISTER_NOTE). detect_distress here is
+    # belt-and-braces: a distress tier escalates in main.py before this loop
+    # ever runs, but the gate must not depend on that ordering to be safe.
+    is_light_social = (
+        classification == "normal_chat"
+        and message_emotion is None
+        and detect_distress(sanitized.text) is None
+        and len(sanitized.text.split()) <= 8
+    )
+    if is_light_social:
+        directive_lines.append(SOCIAL_REGISTER_NOTE)
     if rate_status and rate_status.soft_close:
         directive_lines.append(SOFT_CLOSE_NOTE)
     signals = _render_tool_signals(tool_results)

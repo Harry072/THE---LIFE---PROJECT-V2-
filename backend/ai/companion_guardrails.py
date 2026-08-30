@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass, field
 
 from .validator import _word_overlap_ratio
+from .companion_intents import normalize_typography
 
 
 SAFE_FALLBACK_LINE = "I'm here. Tell me more when you're ready."
@@ -339,6 +340,14 @@ def apply_guardrails(
     """Run every guardrail in order. If a check fires, the reply is rewritten —
     the original is never sent. An empty result falls back to a safe line
     rather than silence."""
+    # gpt-oss emits typographic Unicode punctuation (curly apostrophes, smart
+    # quotes, non-breaking hyphens) where Llama emitted ASCII. Four live
+    # replies opening "You’re ..." shipped past the you'?re banned-opener
+    # pattern because U+2019 is not an ASCII apostrophe; the memory-claim
+    # pattern you'?ve been has the same blind spot. Canonicalizing here fixes
+    # every pattern check in this pipeline at once, and shipping ASCII
+    # punctuation is exactly what the previous model did for months.
+    reply = normalize_typography(reply)
     fired: list[str] = []
 
     final_mode, g4 = check_grounded_insight(mode, tool_results)

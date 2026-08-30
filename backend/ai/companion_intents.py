@@ -98,7 +98,9 @@ def detect_emotional_state(message: str) -> str:
     Returns: "crisis" | "active_pain" | "moderate" | "mild" | "none"
     Priority order: crisis > active_pain > moderate > mild > none
     """
-    text = message.lower().strip()
+    # normalize_typography: iOS smart punctuation must not evade the crisis
+    # keyword net (see the map's comment). ASCII input is unchanged by this.
+    text = normalize_typography(message).lower().strip()
     # Shared regex vocabulary first: EMOTIONAL_STATE_SIGNALS["crisis"] below is
     # substring-only and therefore blind to inflection ("killing myself" does
     # not contain the substring "kill myself"). Consulting CRISIS_CORE_PATTERNS
@@ -250,6 +252,28 @@ def normalize_text(value: str) -> str:
     for source, target in replacements.items():
         cleaned = cleaned.replace(source, target)
     return " ".join(cleaned.split())
+
+
+# gpt-oss (2026-08 Groq migration) emits typographic Unicode punctuation --
+# curly apostrophes (U+2019), smart quotes, en/em/non-breaking dashes -- where
+# Llama emitted ASCII. Every apostrophe-bearing regex in this codebase
+# (banned openers' you'?re, memory claims' you'?ve been, distress patterns'
+# can'?t / don'?t) silently stops matching on that output. iOS smart
+# punctuation does the same thing to USER input: "i can’t go on anymore"
+# scored None while "i can't go on anymore" scored persistent_distress.
+# Canonicalize before matching. Strictly widening: ASCII text passes through
+# byte-identical, so nothing that matched before can stop matching.
+_TYPOGRAPHY_MAP = str.maketrans({
+    "‘": "'", "’": "'", "ʼ": "'", "‛": "'",
+    "“": '"', "”": '"',
+    "–": "-", "—": "-", "―": "-", "‑": "-",
+    " ": " ", " ": " ", " ": " ",
+    "…": "...",
+})
+
+
+def normalize_typography(text: str) -> str:
+    return str(text or "").translate(_TYPOGRAPHY_MAP)
 
 
 def has_any(text: str, phrases: list[str]) -> bool:

@@ -23,8 +23,36 @@ except ImportError:  # pragma: no cover - exercised when dependency is not insta
 
 PROVIDER_GROQ = "groq"
 GROQ_OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
-GROQ_FAST_COMPANION_MODEL = "llama-3.1-8b-instant"
-GROQ_QUALITY_COMPANION_MODEL = "llama-3.3-70b-versatile"
+# 2026-08-30: llama-3.1-8b-instant and llama-3.3-70b-versatile were
+# decommissioned by Groq (announced 2026-06-17, cutoff August 2026) --
+# confirmed live: both now return HTTP 404 model_not_found. Replaced with
+# Groq's own recommended equivalents, verified against the live /v1/models
+# list and load-tested through this file's own call path.
+#
+# gpt-oss is a REASONING model family: unlike Llama, part of every
+# completion's token budget goes to an internal reasoning pass before the
+# visible reply. At the default reasoning effort this measurably burned
+# 28-43% of a 500-token budget on short replies and, on a longer
+# INSIGHT-shaped reply, consumed the ENTIRE budget and either returned
+# truncated JSON or a hard 400 (json_validate_failed) -- silently
+# reintroducing the exact "no valid reply" failure this migration fixes.
+# See create_groq_chat_completion below: reasoning_effort="low" for this
+# family cut reasoning from 320->68 tokens (120b) and 500->6 tokens (20b)
+# on the same prompt, both producing complete, valid JSON.
+#
+# qwen/qwen3.6-27b was tested as Groq's alternate recommendation and
+# rejected: its reasoning trace is NOT split into a separate channel like
+# gpt-oss's -- it prints raw "<think>...</think>" directly into the
+# message content, which consumed the full 500-token budget and left the
+# JSON reply truncated. Do not switch to Qwen without first teaching
+# extract_groq_output_text to strip <think> blocks.
+GROQ_FAST_COMPANION_MODEL = "openai/gpt-oss-20b"
+GROQ_QUALITY_COMPANION_MODEL = "openai/gpt-oss-120b"
+
+# Substring-based (mirrors the pre-existing is_8b_model heuristic below):
+# matches the whole gpt-oss family so a future GROQ_COMPANION_MODEL swap
+# within that family keeps working without another code change.
+_REASONING_MODEL_MARKER = "gpt-oss"
 
 REASON_AUTH_FAILED = "authentication_failed"
 REASON_DEPENDENCY_MISSING = "provider_dependency_missing"
@@ -189,11 +217,26 @@ def create_groq_chat_completion(client, *, model: str, messages: list[dict], jso
     kwargs = {
         "model": model,
         "messages": messages,
-        "max_tokens": 500,
+        # Was 500. Bumped for the gpt-oss migration: even WITH
+        # reasoning_effort="low" below, a genuinely long companion reply
+        # (INSIGHT mode's 4-paragraph cap) measured 394/500 tokens on the
+        # 20b model -- 79% of the old budget on a single realistic case.
+        # Headroom here, not the reasoning-effort fix itself, is what
+        # prevents an occasional truncated-JSON failure on a verbose turn.
+        "max_tokens": 650,
         "temperature": 0.7,
     }
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
+    if _REASONING_MODEL_MARKER in str(model or "").lower():
+        # Default reasoning effort on this family measured spending its
+        # ENTIRE token budget on the internal reasoning pass for a longer
+        # prompt, returning either truncated JSON or a hard 400
+        # (json_validate_failed, empty failed_generation) -- i.e. the exact
+        # "no valid reply" failure being fixed here, just relocated. "low"
+        # is sufficient for a conversational reply; this is not an
+        # agentic/tool-planning call that needs deep reasoning.
+        kwargs["reasoning_effort"] = "low"
     return client.chat.completions.create(**kwargs)
 
 
